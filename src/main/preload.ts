@@ -1,0 +1,52 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+contextBridge.exposeInMainWorld('desktopApi', {
+  getWorkspaceMeta: () => ipcRenderer.invoke('workspace:get-meta'),
+  getActiveAgentBootstrap: () => ipcRenderer.invoke('agent:get-bootstrap'),
+  listSoulProposals: (payload?: unknown) => ipcRenderer.invoke('soul:list-proposals', payload),
+  createSoulProposal: (payload: unknown) => ipcRenderer.invoke('soul:create-proposal', payload),
+  approveSoulProposal: (payload: unknown) => ipcRenderer.invoke('soul:approve-proposal', payload),
+  rejectSoulProposal: (payload: unknown) => ipcRenderer.invoke('soul:reject-proposal', payload),
+  listAgents: () => ipcRenderer.invoke('agents:list'),
+  getStateSnapshot: () => ipcRenderer.invoke('state:get-snapshot'),
+  getRuntimeTasks: () => ipcRenderer.invoke('runtime:get-tasks'),
+  listScheduledTasks: () => ipcRenderer.invoke('scheduled-tasks:list'),
+  createScheduledTask: (payload: unknown) => ipcRenderer.invoke('scheduled-tasks:create', payload),
+  deleteScheduledTask: (payload: unknown) => ipcRenderer.invoke('scheduled-tasks:delete', payload),
+  setScheduledTaskEnabled: (payload: unknown) => ipcRenderer.invoke('scheduled-tasks:set-enabled', payload),
+  runScheduledTaskNow: (payload: unknown) => ipcRenderer.invoke('scheduled-tasks:run-now', payload),
+  onUiEvent: (handler: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload);
+    ipcRenderer.on('ui:event', listener);
+    return () => ipcRenderer.off('ui:event', listener);
+  },
+  sendPrompt: (payload: unknown) => ipcRenderer.invoke('prompt:send', payload),
+  stopRun: (payload?: unknown) => ipcRenderer.invoke('run:stop', payload),
+  createAgent: (payload: unknown) => ipcRenderer.invoke('agents:create', payload),
+  setActiveAgent: (payload: unknown) => ipcRenderer.invoke('agents:set-active', payload),
+  createThread: () => ipcRenderer.invoke('threads:create'),
+  selectThread: (payload: unknown) => ipcRenderer.invoke('threads:select', payload),
+  deleteThread: (payload: unknown) => ipcRenderer.invoke('threads:delete', payload),
+  resolveApproval: (payload: unknown) => ipcRenderer.invoke('approval:resolve', payload),
+  openPromptAttachment: (payload: unknown) => ipcRenderer.invoke('attachment:open', payload),
+  getLlmProviderCatalog: () => ipcRenderer.invoke('llm:get-catalog'),
+  listLlmProviders: () => ipcRenderer.invoke('llm:get-catalog'),
+  listLlmProviderKinds: () => ipcRenderer.invoke('llm:list-kinds'),
+  getLlmProviderDefinitions: () => ipcRenderer.invoke('llm:list-kinds'),
+  updateLlmProviderModels: (payload: unknown) => ipcRenderer.invoke('llm:update-models', payload),
+  discoverLlmModels: (payload: unknown) => ipcRenderer.invoke('llm:discover-models', payload),
+  refreshLlmProviderModels: (payload: unknown) => ipcRenderer.invoke('llm:refresh-models', payload),
+  openPiCodexLogin: () => ipcRenderer.invoke('llm:open-pi-codex-login'),
+  upsertLlmProvider: (payload: unknown) => ipcRenderer.invoke('llm:upsert-provider', payload),
+  setActiveLlmProvider: (payload: unknown) => ipcRenderer.invoke('llm:set-active', payload),
+  listSkills: () => ipcRenderer.invoke('skills:list'),
+  logDiagnostic: (level: string, message: string, meta?: unknown) => console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info'](message, meta),
+  getPluginRegistry: () => ipcRenderer.invoke('plugins:get-registry'),
+  discoverPlugins: () => ipcRenderer.invoke('plugins:discover'),
+  discoverPluginsInDirectory: (payload: unknown) => ipcRenderer.invoke('plugins:discover', payload),
+  loadPlugins: (payload?: unknown) => ipcRenderer.invoke('plugins:load', payload),
+  choosePluginDirectory: () => ipcRenderer.invoke('plugins:choose-directory'),
+  setPluginEnabled: (payload: unknown) => ipcRenderer.invoke('plugins:set-enabled', payload),
+  getPluginConfig: (payload: unknown) => ipcRenderer.invoke('plugins:get-config', payload),
+  savePluginConfig: (payload: unknown) => ipcRenderer.invoke('plugins:save-config', payload)
+});

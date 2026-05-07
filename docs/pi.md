@@ -1,0 +1,358 @@
+# Pi Agent 集成开发指导
+
+> 目标：参照 OpenClaw 的 Pi 集成方式，为 OpenAgent 设计一层可落地、可替换、可观测的 agent runtime。本文是开发路线文档，不代表当前代码已经全部实现。
+
+## 1. 参考结论
+
+OpenClaw 的关键做法不是把 `pi` 当成外部 CLI 子进程来调用，而是把 Pi SDK 嵌入到应用运行时中：
+
+- 使用 `@mariozechner/pi-coding-agent` 提供的 `createAgentSession()` 创建 `AgentSession`。
+- 使用 `SessionManager` 管理 JSONL transcript、历史、分支和压缩。
+- 由应用自己的 Gateway / Runtime 负责：会话路由、工具注入、权限策略、事件转发、UI 状态同步。
+- Pi 负责核心 agent loop：LLM 调用、tool call、streaming、turn 生命周期。
+
+OpenAgent 应采用同样的方向：**不要先做 Pi CLI 包壳；优先做 Embedded Pi Runtime Adapter**。
+
+## 2. OpenAgent 中的目标分层
+
+```mermaid
+flowchart LR
+  UI[Renderer / Desktop UI] --> IPC[Electron IPC]
+  IPC --> Runtime[OpenAgent Runtime]
+  Runtime --> Session[Session Store / Transcript]
+  Runtime --> Adapter[Pi Runtime Adapter]
+  Adapter --> Pi[Pi AgentSession]
+  Pi --> Tools[OpenAgent Tools]
+  Tools --> Policy[Policy / Sandbox / Approval]
+  Runtime --> Events[UI Event Stream]
+```
+
+### 2.1 UI 层
+
+职责：
+
+- 提交 prompt、附件、模型选择、skill 选择。
+- 展示 message、reasoning、tool call、approval、patch、run log。
+- 不直接了解 Pi SDK 细节。
+
+当前 OpenAgent 已有的 `desktopApi.sendPrompt()` / `onUiEvent()` 可以继续作为边界。
+
+### 2.2 Runtime 层
+
+职责：
+
+- 接收 UI 请求并创建一次 run。
+- 生成 `runId`、定位 `threadId`、解析当前 agent、workspace、provider、model。
+- 决定本轮允许哪些 tools、skills、MCP、sandbox、审批策略。
+- 调用 Pi Runtime Adapter。
+- 把 Adapter 事件转换成 OpenAgent UI 事件。
+
+建议新增目录：
+
+```text
+src/main/runtime/
+├── runtime-service.ts          # prompt/run 总入口
+├── run-state.ts                # active run、取消、状态机
+├── event-bus.ts                # 统一 UI 事件分发
+├── session-store.ts            # thread/session 文件定位与元数据
+└── pi/
+    ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 的主适配层
+    ├── pi-session.ts           # createAgentSession / SessionManager
+    ├── pi-events.ts            # Pi events -> OpenAgent UiEvent
+    ├── pi-tools.ts             # OpenAgent tools -> Pi ToolDefinition
+    ├── pi-system-prompt.ts     # 系统提示词构建
+    ├── pi-model.ts             # provider/model/auth 解析
+    └── pi-errors.ts            # failover、abort、context overflow 分类
+```
+
+## 3. Runtime Adapter 契约
+
+先定义 OpenAgent 自己的运行时契约，避免业务层直接依赖 Pi 类型。
+
+```ts
+export interface AgentRuntimeRunInput {
+  runId: string;
+  threadId: string;
+  agentId: string;
+  workspaceRoot: string;
+  sessionFile: string;
+  prompt: string;
+  attachments?: PromptAttachmentDescriptor[];
+  providerId: string;
+  model: string;
+  systemPrompt: string;
+  tools: OpenAgentTool[];
+  abortSignal: AbortSignal;
+}
+
+export interface AgentRuntimeRunResult {
+  status: 'completed' | 'cancelled' | 'failed';
+  summary?: string;
+  error?: string;
+}
+
+export interface AgentRuntimeAdapter {
+  run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult>;
+  compact?(input: { threadId: string; sessionFile: string }): Promise<void>;
+}
+```
+
+Pi 只是该接口的一个实现：`PiRuntimeAdapter`。以后如果要接 Codex、Claude Code、OpenAI Responses 原生 loop，也不会污染 UI 和业务状态机。
+
+## 4. Pi Session 创建流程
+
+OpenAgent 的 `PiRuntimeAdapter.run()` 建议流程：
+
+1. 解析 `workspaceRoot`，确保只落在当前 agent workspace 或用户授权路径内。
+2. 打开或创建当前 thread 对应的 `sessionFile`。
+3. 初始化 Pi 的：
+   - `SessionManager`
+   - `SettingsManager`
+   - `DefaultResourceLoader`
+   - `AuthStorage`
+   - `ModelRegistry`
+4. 构建 OpenAgent 自己的 tools，并适配为 Pi `ToolDefinition`。
+5. 调用 `createAgentSession()`。
+6. 覆盖/追加系统提示词。
+7. 订阅 Pi session 事件。
+8. 调用 `session.prompt(prompt, { images })`。
+9. 在完成、取消或失败时清理订阅和 active run 状态。
+
+伪代码：
+
+```ts
+const sessionManager = SessionManager.open(input.sessionFile);
+const resourceLoader = new DefaultResourceLoader({
+  cwd: input.workspaceRoot,
+  agentDir,
+  settingsManager,
+  additionalExtensionPaths,
+});
+await resourceLoader.reload();
+
+const { session } = await createAgentSession({
+  cwd: input.workspaceRoot,
+  agentDir,
+  authStorage,
+  modelRegistry,
+  model,
+  tools: [],
+  customTools: toPiToolDefinitions(input.tools),
+  sessionManager,
+  settingsManager,
+  resourceLoader,
+});
+
+applySystemPromptOverrideToSession(session, input.systemPrompt);
+subscribePiEvents(session, openAgentEventBus, input.runId);
+await session.prompt(input.prompt, { images });
+```
+
+## 5. Tool 策略
+
+参考 OpenClaw，OpenAgent 不应直接暴露 Pi 默认工具，而应该统一走自己的工具策略：
+
+1. 基础工具：read、write、edit、shell、apply_patch。
+2. OpenAgent 工具：workspace、git、browser、plugin、memory、task、approval。
+3. MCP 工具：由已启用插件或 MCP server 注入。
+4. 策略过滤：根据 agent、workspace、sandbox、审批要求过滤。
+5. Schema 归一化：对不同 provider 的 tool schema 兼容做清洗。
+6. Abort 包装：所有长任务都必须尊重 `AbortSignal`。
+
+建议默认：
+
+- `tools: []`
+- `customTools: toPiToolDefinitions(openAgentTools)`
+
+也就是**完全由 OpenAgent 管理工具集合**，不要混用 Pi 内置工具和 OpenAgent 工具，避免权限绕过和 UI 状态不可控。
+
+## 6. Tool Adapter 约定
+
+OpenAgent 自己的工具接口建议保持稳定：
+
+```ts
+export interface OpenAgentTool {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: unknown;
+  execute(args: {
+    toolCallId: string;
+    input: unknown;
+    signal: AbortSignal;
+    onUpdate?: (update: unknown) => void;
+  }): Promise<unknown>;
+}
+```
+
+转换到 Pi：
+
+```ts
+function toPiToolDefinitions(tools: OpenAgentTool[]): ToolDefinition[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    label: tool.label ?? tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+    execute: async (toolCallId, params, onUpdate, _ctx, signal) => {
+      return tool.execute({
+        toolCallId,
+        input: params,
+        signal,
+        onUpdate,
+      });
+    },
+  }));
+}
+```
+
+## 7. System Prompt 构建
+
+系统提示词不要散落在代码里。建议独立 `pi-system-prompt.ts`，由结构化 section 拼装：
+
+- OpenAgent identity
+- 当前 agent / thread / workspace
+- 工具调用规范
+- 文件编辑规范
+- shell / git / approval 安全规则
+- skills 摘要
+- enabled plugins 摘要
+- MCP tools 摘要
+- memory 摘要
+- 当前 run metadata
+- 附加用户配置 prompt
+
+注意：
+
+- skills 不应全量无脑注入；只注入 enabled + loaded + 当前任务相关摘要。
+- 大段 docs / memory 走检索或按需加载，不放进每轮系统 prompt。
+- 子 agent / 后台任务应使用 minimal prompt。
+
+## 8. Session / Memory / Compaction
+
+建议文件布局：
+
+```text
+~/.openagent/
+├── agents/
+│   └── <agentId>/
+│       ├── workspace/
+│       ├── sessions/
+│       │   ├── sessions.json
+│       │   └── <threadId>.jsonl
+│       ├── MEMORY.md
+│       ├── USER.md
+│       └── skills/
+├── settings/
+└── logs/
+```
+
+规则：
+
+- `threadId` 对应一个 transcript JSONL。
+- `sessions.json` 保存 thread/session 元数据映射。
+- Pi 的 `SessionManager` 负责 JSONL transcript 读写。
+- OpenAgent 自己维护 thread list、title、updatedAt、runCount 等 UI 元数据。
+- compaction 先做手动入口，再接自动 context overflow 触发。
+
+## 9. Event 映射
+
+Pi 事件需要转换为 OpenAgent UI 事件：
+
+| Pi 事件 | OpenAgent 事件 |
+| --- | --- |
+| `agent_start` / `turn_start` | `run.started` / `plan.updated` |
+| `message_update` | `message.delta` 或本地聚合后 `message.completed` |
+| `tool_execution_start` | `tool.started` |
+| `tool_execution_update` | `tool.updated` / `terminal.delta` |
+| `tool_execution_end` | `tool.completed` / `tool.failed` |
+| `compaction_start` | `memory.updated` 或 `run-log` |
+| `agent_end` / `turn_end` | `run.completed` |
+
+当前 `UiEvent` 类型如果不够，需要补充 delta 类事件，而不是把所有 streaming 都塞进最终 message。
+
+## 10. Auth / Model Resolution
+
+OpenAgent 不要把 provider/model 解析写死在 Pi Adapter 中。
+
+建议：
+
+- `settings/config.yml` 保存 provider、baseUrl、apiKey 引用、defaultModel。
+- `model-config-store.ts` 负责读写配置。
+- `pi-model.ts` 只负责把 OpenAgent provider config 转为 Pi 的 `AuthStorage` + `ModelRegistry` + `Model`。
+- 支持 provider fallback，但第一期可以只做单 provider 明确失败。
+
+第一期目标：
+
+- Pi ModelRegistry 作为默认模型目录和 provider 选择来源
+- Pi AuthStorage 作为默认认证来源，OpenAgent 仅提供 `~/.openagent/settings/pi-auth.json` 路径与环境变量注入
+- local demo 仅作为显式 `OPENAGENT_RUNTIME_ENGINE=local-demo` 的调试 fallback
+
+## 11. Sandbox / Approval
+
+Pi 工具执行前必须经过 OpenAgent policy：
+
+- workspace read：默认允许当前 workspace。
+- workspace write：允许但需要记录 patch。
+- shell：高风险命令需要 approval。
+- git：创建分支、切换分支、push、reset 等需要明确策略。
+- external path：默认要求 approval 或通过 shell 安全边界处理。
+- destructive action：默认 approval。
+
+不要让 Pi 默认工具绕过这些策略。
+
+## 12. 开发里程碑
+
+### M1：文档和边界
+
+- 确定 Runtime Adapter 接口。
+- 新增 session 文件布局。
+- 明确 UI event 类型。
+- 保留当前 local-demo runtime。
+
+### M2：最小 Pi Run
+
+- 安装 Pi SDK 依赖。
+- 实现 `PiRuntimeAdapter.run()`。
+- 只接文本 prompt。
+- 只接 read-only 工具或无工具。
+- UI 能看到 assistant 最终回复。
+
+### M3：Streaming 和 Tool Events
+
+- 接入 message delta。
+- 接入 tool start/update/end。
+- 接入 run cancel。
+- run log 可定位错误。
+
+### M4：OpenAgent Tools
+
+- read/write/edit/shell 走 OpenAgent tool policy。
+- 支持 approval。
+- 支持 patch 展示。
+
+### M5：Skills / Plugins / MCP
+
+- enabled plugin skills 进入 system prompt 摘要。
+- MCP tools 转 OpenAgent tools，再转 Pi tools。
+- schema normalization。
+
+### M6：Session / Compaction / Memory
+
+- JSONL transcript 持久化。
+- thread 选择恢复上下文。
+- 手动 compaction。
+- memory 摘要按需注入。
+
+## 13. 暂不做的事情
+
+- 不先实现多平台 Gateway，如 WhatsApp/Slack/Telegram。
+- 不先做 channel-specific action tools。
+- 不直接复制 OpenClaw 的所有 tool 和 sandbox 目录结构。
+- 不让 UI 直接依赖 Pi SDK 类型。
+- 不把 skills、memory、docs 全量塞入每轮 prompt。
+
+## 14. 参考资料
+
+- OpenClaw Pi Integration Architecture: <https://github.com/openclaw/openclaw/blob/main/docs/pi.md>
+- OpenClaw Architecture Concepts: <https://github.com/openclaw/openclaw/blob/main/docs/concepts/architecture.md>
