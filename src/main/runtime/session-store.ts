@@ -117,6 +117,17 @@ export class SessionStore {
   }
 }
 
+
+function isOpenAgentTranscriptRecord(record: { type?: string; message?: RuntimeMessage }): record is { type: 'message'; message: RuntimeMessage } {
+  return (
+    record.type === 'message' &&
+    Boolean(record.message) &&
+    typeof record.message.id === 'string' &&
+    typeof record.message.createdAt === 'string' &&
+    typeof record.message.content === 'string'
+  );
+}
+
 function readTranscriptMessages(filePath: string): RuntimeMessage[] {
   try {
     return readFileSync(filePath, 'utf8')
@@ -125,7 +136,7 @@ function readTranscriptMessages(filePath: string): RuntimeMessage[] {
       .flatMap((line) => {
         try {
           const record = JSON.parse(line) as { type?: string; message?: RuntimeMessage };
-          return record.type === 'message' && record.message ? [record.message] : [];
+          return isOpenAgentTranscriptRecord(record) ? [record.message] : [];
         } catch {
           return [];
         }

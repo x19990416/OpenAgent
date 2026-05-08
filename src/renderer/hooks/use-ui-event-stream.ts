@@ -626,7 +626,7 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
       };
     }
     case 'memory.updated': {
-      const payload = event.payload as { snapshot?: MainAgentBootstrapSnapshot | null };
+      const payload = event.payload as { snapshot?: MainAgentBootstrapSnapshot | null; summary?: string };
       if (!payload.snapshot) {
         return prev;
       }
@@ -634,7 +634,7 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
       return {
         ...prev,
         agentBootstrap: payload.snapshot,
-        runLog: [...prev.runLog, makeLog(event, 'info', 'Memory updated')]
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.summary || 'Memory updated')]
       };
     }
     default:

@@ -14,6 +14,7 @@ export interface SoulChangeProposal {
   targetSection: string;
   currentText?: string;
   proposedText: string;
+  ruleId?: string;
   diff: string;
   riskLevel: SoulProposalRisk;
   status: SoulProposalStatus;
@@ -42,8 +43,30 @@ export interface SoulChangeRequest {
   reason: string;
   proposedText: string;
   targetSection: string;
+  ruleId?: string;
+  identityName?: string;
+  identityRole?: string;
   confidence: 'low' | 'medium' | 'high';
   requiresApproval: true;
+  evidence?: string;
+}
+
+export interface UserMemoryUpdateRequest {
+  shouldUpdateUser: boolean;
+  category: 'communication' | 'git' | 'development' | 'documentation' | 'project_management' | 'tooling' | 'other';
+  statement: string;
+  reason: string;
+  confidence: 'medium' | 'high';
+  evidence?: string;
+}
+
+export interface ProjectMemoryUpdateRequest {
+  shouldUpdateMemory: boolean;
+  scope: string;
+  topic: string;
+  summary: string;
+  reuse: string;
+  confidence: 'medium' | 'high';
   evidence?: string;
 }
 
@@ -212,12 +235,15 @@ export class SoulManager {
     const now = new Date().toISOString();
     const targetSection = normalizeTargetSection(request.targetSection, request.updateKind);
     const proposedText = normalizeRuleLine(request.proposedText);
+    const ruleId = sanitizeRuleId(request.ruleId);
     this.backupSoul(now);
     const current = this.readMarkdown(this.soulPath);
     const next =
       request.updateKind === 'identity'
         ? applyIdentitySoulChange(current, request, proposedText)
-        : appendManagedRule(current, proposedText);
+        : ruleId
+          ? upsertManagedRuleById(current, ruleId, proposedText)
+          : appendManagedRule(current, proposedText);
     writeFileSync(this.soulPath, next, 'utf8');
     return {
       id: `soul-direct-${randomUUID()}`,
@@ -226,6 +252,7 @@ export class SoulManager {
       reason: request.reason,
       targetSection,
       proposedText,
+      ruleId,
       diff: buildAppendDiff(proposedText),
       riskLevel: request.updateKind === 'identity' || request.confidence === 'high' ? 'high' : 'medium',
       status: 'applied' as const,
@@ -240,74 +267,74 @@ export class SoulManager {
     };
   }
 
-  detectSoulProposalFromPrompt(input: { prompt: string; runId: string; threadId: string }) {
-    const prompt = input.prompt.trim();
-    if (!prompt) return null;
-
-    const identityName = extractIdentityName(prompt);
-    const explicit =
-      Boolean(identityName) ||
-      /(写到|加入|增加|更新|保存到).{0,12}SOUL\.md/i.test(prompt) ||
-      /(以后|后续|默认).{0,20}(这个|当前)?\s*(Agent|智能体|你)/i.test(prompt);
-    if (!explicit) return null;
-
-    const proposedText = identityName ? buildIdentityRule(identityName) : extractLikelyRule(prompt);
-    if (!proposedText) return null;
-
-    return this.createProposal({
-      title: identityName ? `将当前 Agent 命名为 ${identityName}` : '根据用户指令建议更新 SOUL.md',
-      reason: identityName
-        ? '检测到用户为当前 Agent 指定了持久名称。该变更不会静默写入，需要用户审批后更新 SOUL.md。'
-        : '检测到用户表达了可能影响 Agent 长期行为方式的规则。该变更不会自动写入，需要用户审批。',
-      targetSection: identityName ? '## 1. Identity' : inferTargetSection(proposedText),
-      proposedText,
-      riskLevel: 'high',
+  applyUserUpdateRequest(
+    request: UserMemoryUpdateRequest,
+    source: NonNullable<SoulChangeProposal['source']>
+  ) {
+    const normalized = normalizeUserMemoryUpdateRequest(request);
+    if (!normalized) return null;
+    const now = new Date().toISOString();
+    this.backupMarkdown('USER', this.userPath, now);
+    const current = this.readMarkdown(this.userPath);
+    const line = `- [${normalized.category}] ${normalized.statement}`;
+    const next = upsertManagedLine(current, line);
+    if (next === current) return null;
+    writeFileSync(this.userPath, next, 'utf8');
+    return {
+      id: `user-memory-${randomUUID()}`,
+      agentId: this.options.agentId,
+      title: `更新 USER.md：${normalized.category}`,
+      reason: normalized.reason,
+      targetPath: this.userPath,
+      proposedText: line,
+      status: 'applied' as const,
+      createdAt: now,
+      updatedAt: now,
+      appliedAt: now,
       source: {
-        kind: 'runtime_detection',
-        runId: input.runId,
-        threadId: input.threadId,
-        excerpt: prompt.slice(0, 500)
-      }
-    });
+        ...source,
+        excerpt: normalized.evidence || source.excerpt
+      },
+      snapshot: this.getBootstrapSnapshot()
+    };
   }
 
-  detectSoulChangeRequestFromPrompt(input: { prompt: string; runId: string; threadId: string }): SoulChangeRequest | null {
-    const prompt = input.prompt.trim();
-    if (!prompt) return null;
-
-    const identityName = extractIdentityName(prompt);
-    if (identityName) {
-      return {
-        shouldUpdateSoul: true,
-        updateKind: 'identity',
-        title: `将当前 Agent 命名为 ${identityName}`,
-        reason: '检测到用户为当前 Agent 指定了持久名称。',
-        proposedText: buildIdentityRule(identityName),
-        targetSection: '## 1. Identity',
-        confidence: 'high',
-        requiresApproval: true,
-        evidence: prompt.slice(0, 500)
-      };
-    }
-
-    const explicit =
-      /(写到|加入|增加|更新|保存到).{0,12}SOUL\.md/i.test(prompt) ||
-      /(以后|后续|默认).{0,20}(这个|当前)?\s*(Agent|智能体|你)/i.test(prompt);
-    if (!explicit) return null;
-
-    const proposedText = extractLikelyRule(prompt);
-    if (!proposedText) return null;
-
+  applyProjectMemoryUpdateRequest(
+    request: ProjectMemoryUpdateRequest,
+    source: NonNullable<SoulChangeProposal['source']>
+  ) {
+    const normalized = normalizeProjectMemoryUpdateRequest(request);
+    if (!normalized) return null;
+    const now = new Date().toISOString();
+    this.backupMarkdown('MEMORY', this.memoryPath, now);
+    const current = this.readMarkdown(this.memoryPath);
+    const entry = [
+      `## ${new Date(now).toISOString().slice(0, 10)} ${normalized.topic}`,
+      '',
+      `scope: ${normalized.scope}`,
+      '',
+      `- ${normalized.summary}`,
+      `- Reuse: ${normalized.reuse}`
+    ].join('\n');
+    const next = appendUniqueSection(current, entry);
+    if (next === current) return null;
+    writeFileSync(this.memoryPath, next, 'utf8');
     return {
-      shouldUpdateSoul: true,
-      updateKind: sectionToUpdateKind(inferTargetSection(proposedText)),
-      title: '根据用户指令更新 SOUL.md',
-      reason: '检测到用户表达了可能影响 Agent 长期行为方式的规则。',
-      proposedText,
-      targetSection: inferTargetSection(proposedText),
-      confidence: 'medium',
-      requiresApproval: true,
-      evidence: prompt.slice(0, 500)
+      id: `project-memory-${randomUUID()}`,
+      agentId: this.options.agentId,
+      title: `更新 MEMORY.md：${normalized.topic}`,
+      reason: normalized.reuse,
+      targetPath: this.memoryPath,
+      proposedText: entry,
+      status: 'applied' as const,
+      createdAt: now,
+      updatedAt: now,
+      appliedAt: now,
+      source: {
+        ...source,
+        excerpt: normalized.evidence || source.excerpt
+      },
+      snapshot: this.getBootstrapSnapshot()
     };
   }
 
@@ -362,7 +389,6 @@ export class SoulManager {
   }
 
   private readMarkdown(filePath: string) {
-    this.ensureReady();
     try {
       return readFileSync(filePath, 'utf8');
     } catch {
@@ -386,9 +412,19 @@ export class SoulManager {
   }
 
   private backupSoul(timestamp: string) {
+    this.backupMarkdown('SOUL', this.soulPath, timestamp);
+  }
+
+  private backupMarkdown(prefix: string, filePath: string, timestamp: string) {
     mkdirSync(this.historyDir, { recursive: true });
     const safeTimestamp = timestamp.replace(/[:.]/g, '-');
-    writeFileSync(path.join(this.historyDir, `SOUL.${safeTimestamp}.md`), this.readMarkdown(this.soulPath), 'utf8');
+    let current = '';
+    try {
+      current = readFileSync(filePath, 'utf8');
+    } catch {
+      current = '';
+    }
+    writeFileSync(path.join(this.historyDir, `${prefix}.${safeTimestamp}.md`), current, 'utf8');
   }
 
   private buildConfig(): AgentBootstrapSnapshot['config'] {
@@ -407,24 +443,39 @@ export class SoulManager {
   }
 }
 
-export function extractOpenAgentMetadata(content: string): { cleanContent: string; soulChangeRequests: SoulChangeRequest[] } {
+export function extractOpenAgentMetadata(content: string): {
+  cleanContent: string;
+  soulChangeRequests: SoulChangeRequest[];
+  userUpdates: UserMemoryUpdateRequest[];
+  memoryUpdates: ProjectMemoryUpdateRequest[];
+} {
   const metadataRegex = /<!--\s*openagent:metadata\s*([\s\S]*?)\s*-->/i;
   const match = content.match(metadataRegex);
   if (!match) {
-    return { cleanContent: content, soulChangeRequests: [] };
+    return { cleanContent: content, soulChangeRequests: [], userUpdates: [], memoryUpdates: [] };
   }
 
   const cleanContent = content.replace(metadataRegex, '').trim();
   try {
-    const parsed = JSON.parse(match[1].trim()) as { soulChangeRequests?: unknown };
+    const parsed = JSON.parse(match[1].trim()) as { soulChangeRequests?: unknown; userUpdates?: unknown; memoryUpdates?: unknown };
     const soulChangeRequests = Array.isArray(parsed.soulChangeRequests)
       ? parsed.soulChangeRequests
           .map(normalizeSoulChangeRequest)
           .filter((request): request is SoulChangeRequest => Boolean(request))
       : [];
-    return { cleanContent, soulChangeRequests };
+    const userUpdates = Array.isArray(parsed.userUpdates)
+      ? parsed.userUpdates
+          .map(normalizeUserMemoryUpdateRequest)
+          .filter((request): request is UserMemoryUpdateRequest => Boolean(request))
+      : [];
+    const memoryUpdates = Array.isArray(parsed.memoryUpdates)
+      ? parsed.memoryUpdates
+          .map(normalizeProjectMemoryUpdateRequest)
+          .filter((request): request is ProjectMemoryUpdateRequest => Boolean(request))
+      : [];
+    return { cleanContent, soulChangeRequests, userUpdates, memoryUpdates };
   } catch {
-    return { cleanContent, soulChangeRequests: [] };
+    return { cleanContent, soulChangeRequests: [], userUpdates: [], memoryUpdates: [] };
   }
 }
 
@@ -487,6 +538,11 @@ function normalizeSoulChangeRequest(value: unknown): SoulChangeRequest | null {
   if (!confidence) return null;
   if (!item.title?.trim() || !item.reason?.trim() || !item.proposedText?.trim()) return null;
   const updateKind = item.updateKind as SoulChangeRequest['updateKind'];
+  const ruleId = sanitizeRuleId(item.ruleId);
+  const identityName = normalizeOptionalText(item.identityName);
+  const identityRole = normalizeOptionalText(item.identityRole);
+  if (updateKind === 'identity' && !identityName && !identityRole) return null;
+  if (updateKind !== 'identity' && !ruleId) return null;
   return {
     shouldUpdateSoul: true,
     updateKind,
@@ -494,10 +550,69 @@ function normalizeSoulChangeRequest(value: unknown): SoulChangeRequest | null {
     reason: item.reason.trim(),
     proposedText: item.proposedText.trim(),
     targetSection: normalizeTargetSection(String(item.targetSection || ''), updateKind),
+    ruleId,
+    identityName,
+    identityRole,
     confidence,
     requiresApproval: true,
     evidence: item.evidence?.trim()
   };
+}
+
+function normalizeUserMemoryUpdateRequest(value: unknown): UserMemoryUpdateRequest | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Partial<UserMemoryUpdateRequest>;
+  if (item.shouldUpdateUser !== true) return null;
+  const confidence = normalizeAutoMemoryConfidence(item.confidence);
+  if (!confidence) return null;
+  const category = normalizeUserMemoryCategory(item.category);
+  const statement = normalizeOptionalText(item.statement);
+  const reason = normalizeOptionalText(item.reason);
+  if (!statement || !reason) return null;
+  return {
+    shouldUpdateUser: true,
+    category,
+    statement: stripBulletPrefix(statement),
+    reason,
+    confidence,
+    evidence: normalizeOptionalText(item.evidence)
+  };
+}
+
+function normalizeProjectMemoryUpdateRequest(value: unknown): ProjectMemoryUpdateRequest | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Partial<ProjectMemoryUpdateRequest>;
+  if (item.shouldUpdateMemory !== true) return null;
+  const confidence = normalizeAutoMemoryConfidence(item.confidence);
+  if (!confidence) return null;
+  const scope = normalizeOptionalText(item.scope);
+  const topic = normalizeOptionalText(item.topic);
+  const summary = normalizeOptionalText(item.summary);
+  const reuse = normalizeOptionalText(item.reuse);
+  if (!scope || !topic || !summary || !reuse) return null;
+  return {
+    shouldUpdateMemory: true,
+    scope,
+    topic,
+    summary: stripBulletPrefix(summary),
+    reuse: stripBulletPrefix(reuse),
+    confidence,
+    evidence: normalizeOptionalText(item.evidence)
+  };
+}
+
+function normalizeAutoMemoryConfidence(confidence: unknown): 'medium' | 'high' | null {
+  const normalized = normalizeConfidence(confidence);
+  if (normalized === 'medium' || normalized === 'high') return normalized;
+  return null;
+}
+
+function normalizeUserMemoryCategory(category: unknown): UserMemoryUpdateRequest['category'] {
+  const value = typeof category === 'string' ? category.trim() : '';
+  if (['communication', 'git', 'development', 'documentation', 'project_management', 'tooling', 'other'].includes(value)) {
+    return value as UserMemoryUpdateRequest['category'];
+  }
+  return 'other';
 }
 
 function isValidSoulChangeRequest(value: unknown): value is SoulChangeRequest {
@@ -601,8 +716,35 @@ function appendManagedRule(markdown: string, proposedText: string) {
   return markdown.replace(MANAGED_END, `${insertion}\n${MANAGED_END}`);
 }
 
-function applyIdentitySoulChange(markdown: string, request: SoulChangeRequest, proposedText: string) {
-  const name = extractIdentityNameFromText(`${request.proposedText}\n${request.title}\n${request.evidence ?? ''}`) ?? extractIdentityNameFromText(proposedText);
+function upsertManagedLine(markdown: string, line: string) {
+  const normalizedLine = normalizeRuleLine(line);
+  if (normalizeForCompare(markdown).includes(normalizeForCompare(normalizedLine))) {
+    return markdown.endsWith('\n') ? markdown : `${markdown}\n`;
+  }
+
+  let next = markdown;
+  if (!next.includes(MANAGED_START) || !next.includes(MANAGED_END)) {
+    next = `${next.trimEnd()}\n\n## Learned preferences (managed)\n\n${MANAGED_START}\n\n${MANAGED_END}\n`;
+  }
+  next = next.replace(/\n-\s*TODO: 等待长期偏好沉淀。\n/g, '\n');
+  return next.replace(MANAGED_END, `\n${normalizedLine}\n\n${MANAGED_END}`);
+}
+
+function appendUniqueSection(markdown: string, section: string) {
+  const normalizedSection = section.trim();
+  const comparable = normalizeForCompare(normalizedSection);
+  if (normalizeForCompare(markdown).includes(comparable)) {
+    return markdown.endsWith('\n') ? markdown : `${markdown}\n`;
+  }
+  let next = markdown.replace(/\n-\s*TODO: 等待任务经验沉淀。\n/g, '\n');
+  return `${next.trimEnd()}\n\n${normalizedSection}\n`;
+}
+
+function stripBulletPrefix(value: string) {
+  return value.replace(/^\s*[-*]\s+/, '').trim();
+}
+
+function applyIdentitySoulChange(markdown: string, request: SoulChangeRequest, _proposedText: string) {
   let next = ensureIdentitySection(markdown);
   next = upsertIdentityLine(
     next,
@@ -610,13 +752,12 @@ function applyIdentitySoulChange(markdown: string, request: SoulChangeRequest, p
     '当用户询问“你是谁”“你叫啥”或身份相关问题时，优先回答本节的 Name 和 Role，不要回答底层模型名称。'
   );
 
-  if (name) {
-    next = upsertIdentityLine(next, 'Name', name);
+  if (request.identityName) {
+    next = upsertIdentityLine(next, 'Name', request.identityName);
   }
 
-  const role = extractIdentityRoleFromText(request.proposedText);
-  if (role) {
-    next = upsertIdentityLine(next, 'Role', role);
+  if (request.identityRole) {
+    next = upsertIdentityLine(next, 'Role', request.identityRole);
   }
 
   return removeConflictingManagedIdentityRules(next);
@@ -636,9 +777,8 @@ function migrateSoulIdentityShape(markdown: string) {
   }
   const identitySection = getSection(next, '## 1. Identity');
   const hasName = /^\s*-\s*Name\s*:/im.test(identitySection);
-  const managedName = extractIdentityNameFromManagedRules(next);
   if (!hasName) {
-    next = upsertIdentityLine(next, 'Name', managedName ?? 'OpenAgent');
+    next = upsertIdentityLine(next, 'Name', 'OpenAgent');
   }
   return removeConflictingManagedIdentityRules(next);
 }
@@ -672,33 +812,6 @@ function getSection(markdown: string, heading: string) {
   return markdown.slice(start, end);
 }
 
-function extractIdentityNameFromManagedRules(markdown: string) {
-  const managed = extractManagedBlock(markdown);
-  return extractIdentityNameFromText(managed);
-}
-
-function extractIdentityNameFromText(text: string) {
-  const patterns = [
-    /-\s*Name\s*:\s*([^\n。]+)/i,
-    /名字是\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/,
-    /名称是\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/,
-    /叫\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    const name = match?.[1]?.trim();
-    if (name && !isInvalidIdentityName(name) && !/待定|TODO/i.test(name)) {
-      return name.replace(/[。.!！,，;；:：].*$/, '').trim();
-    }
-  }
-  return null;
-}
-
-function extractIdentityRoleFromText(text: string) {
-  const match = text.match(/-\s*Role\s*:\s*([^\n]+)/i);
-  return match?.[1]?.trim();
-}
-
 function removeConflictingManagedIdentityRules(markdown: string) {
   if (!markdown.includes(MANAGED_START) || !markdown.includes(MANAGED_END)) return markdown;
   const start = markdown.indexOf(MANAGED_START) + MANAGED_START.length;
@@ -715,6 +828,41 @@ function removeConflictingManagedIdentityRules(markdown: string) {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeOptionalText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function sanitizeRuleId(ruleId: unknown) {
+  if (typeof ruleId !== 'string') return undefined;
+  const normalized = ruleId.trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return normalized || undefined;
+}
+
+function upsertManagedRuleById(markdown: string, ruleId: string, proposedText: string) {
+  const rule = `${buildRuleIdMarker(ruleId)}\n${normalizeRuleLine(proposedText)}`;
+  if (!markdown.includes(MANAGED_START) || !markdown.includes(MANAGED_END)) {
+    const suffix = `\n## 7. Managed Rules\n\n> 本区域由 OpenAgent 在用户审批 SOUL 变更提案后维护。\n\n${MANAGED_START}\n\n${rule}\n\n${MANAGED_END}\n`;
+    return `${markdown.trimEnd()}\n${suffix}`;
+  }
+
+  const start = markdown.indexOf(MANAGED_START) + MANAGED_START.length;
+  const end = markdown.indexOf(MANAGED_END);
+  const managed = markdown.slice(start, end);
+  const marker = buildRuleIdMarker(ruleId);
+  const existingRulePattern = new RegExp(`(?:\\n{0,2})${escapeRegExp(marker)}[\\s\\S]*?(?=\\n{2,}<!-- openagent:rule-id:|\\n{2,}[^\\n]|$)`);
+
+  if (managed.includes(marker)) {
+    const nextManaged = managed.replace(existingRulePattern, `\n\n${rule}`);
+    return `${markdown.slice(0, start)}${nextManaged.trimEnd()}\n\n${markdown.slice(end)}`;
+  }
+
+  return `${markdown.slice(0, end)}\n${rule}\n\n${markdown.slice(end)}`;
+}
+
+function buildRuleIdMarker(ruleId: string) {
+  return `<!-- openagent:rule-id:${ruleId} -->`;
 }
 
 function normalizeRuleLine(text: string) {
@@ -737,69 +885,4 @@ function buildAppendDiff(rule: string) {
     .map((line) => `+${line}`)
     .join('\n');
   return `@@ ## 7. Managed Rules\n${addedLines}\n`;
-}
-
-function extractLikelyRule(prompt: string) {
-  const normalized = prompt.replace(/\s+/g, ' ').trim();
-  const soulMatch = normalized.match(/(?:写到|加入|增加|更新|保存到).{0,12}SOUL\.md[：:\s]*(.+)$/i);
-  if (soulMatch?.[1]) return soulMatch[1].trim();
-
-  const futureMatch = normalized.match(/((?:以后|后续|默认).+)$/i);
-  if (futureMatch?.[1]) return futureMatch[1].trim();
-
-  return normalized.length <= 180 ? normalized : null;
-}
-
-function extractIdentityName(prompt: string) {
-  const normalized = prompt.replace(/\s+/g, ' ').trim();
-  if (/(你叫(?:啥|什么)|你是谁|who are you|what(?:'s| is) your name)/i.test(normalized)) {
-    return null;
-  }
-  const patterns = [
-    /(?:你|当前(?:的)?(?:Agent|智能体)?|这个(?:Agent|智能体)?)(?:现在|以后|后续)?(?:叫做|命名为|命名叫|名字(?:是|叫|为)|改名为)\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/i,
-    /(?:你|当前(?:的)?(?:Agent|智能体)?|这个(?:Agent|智能体)?)(?:现在|以后|后续)(?:叫)\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/i,
-    /(?:把你|将你|给你)(?:.{0,8})(?:叫做|命名为|命名叫|改名为)\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/i,
-    /(?:Agent|智能体)(?:名称|名字)?(?:设为|设置为|命名为|命名叫|叫做)\s*([A-Za-z0-9_\-\u4e00-\u9fa5]{1,40})/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    const name = match?.[1]?.trim();
-    if (name) {
-      const cleaned = name.replace(/[。.!！,，;；:：].*$/, '').trim();
-      if (isInvalidIdentityName(cleaned)) return null;
-      return cleaned;
-    }
-  }
-
-  return null;
-}
-
-function isInvalidIdentityName(name: string) {
-  return /^(啥|什么|谁|哪位|吗|么|what|who)$/i.test(name.trim());
-}
-
-function buildIdentityRule(name: string) {
-  return [
-    `- Name: ${name}`,
-    `- Identity rule: 当前 Agent 的持久名称是 ${name}；当用户询问“你是谁”“你叫啥”或身份相关问题时，应优先使用这个名称回答。`
-  ].join('\n');
-}
-
-function inferTargetSection(rule: string) {
-  if (/Name:|名称|名字|身份|你是谁|你叫啥/.test(rule)) return '## 1. Identity';
-  if (/分支|删除|重置|覆盖|destructive|安全|确认|审批/.test(rule)) return '## 3. Safety Boundaries';
-  if (/工具|命令|shell|build|测试|验证/.test(rule)) return '## 4. Tool Policy';
-  if (/记忆|memory|USER|SOUL/.test(rule)) return '## 5. Memory Policy';
-  return '## 7. Managed Rules';
-}
-
-function sectionToUpdateKind(section: string): SoulChangeRequest['updateKind'] {
-  if (section === '## 1. Identity') return 'identity';
-  if (section === '## 2. Working Style') return 'working_style';
-  if (section === '## 3. Safety Boundaries') return 'safety_boundary';
-  if (section === '## 4. Tool Policy') return 'tool_policy';
-  if (section === '## 5. Memory Policy') return 'memory_policy';
-  if (section === '## 6. Project-Specific Rules') return 'project_specific_rule';
-  return 'project_specific_rule';
 }

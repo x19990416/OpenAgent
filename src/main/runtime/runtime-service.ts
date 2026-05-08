@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
 import { RuntimeEventBus } from './event-bus.js';
 import { RunStateStore } from './run-state.js';
@@ -15,14 +14,19 @@ import { appendLlmResponseLog, appendRuntimeInfoLog, formatRuntimeInfoLogSummary
 import { SoulManager, extractOpenAgentMetadata } from './memory/soul-manager.js';
 import { SubagentService } from './subagents/subagent-service.js';
 import { createShellAgentTool } from './subagents/shell-agent-tool.js';
+import { ApprovalService, type RuntimeApprovalRequest } from './approval-service.js';
+import { KnowledgeService } from './knowledge/knowledge-service.js';
+import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
 
 export class RuntimeService {
   private activeThreadId = 'thread-welcome';
   private readonly createdAt = new Date().toISOString();
   private readonly eventBus: RuntimeEventBus;
+  private readonly approvalService = new ApprovalService();
   private readonly runState = new RunStateStore();
   private readonly sessionStore: SessionStore;
   private readonly soulManager: SoulManager;
+  private readonly knowledgeService: KnowledgeService;
   private readonly toolRegistry: ReturnType<typeof createDefaultToolRegistry>;
   private readonly subagents: SubagentService;
   private readonly messages: RuntimeMessage[] = [];
@@ -34,6 +38,7 @@ export class RuntimeService {
   ) {
     this.eventBus = new RuntimeEventBus(options.emitUiEvent);
     this.sessionStore = new SessionStore(options.agentId);
+    this.knowledgeService = new KnowledgeService(options.agentId);
     this.soulManager = new SoulManager({
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
@@ -43,6 +48,9 @@ export class RuntimeService {
     });
     this.toolRegistry = createDefaultToolRegistry(options.workspaceRoot);
     this.subagents = new SubagentService();
+    for (const tool of createKnowledgeTools(this.knowledgeService)) {
+      this.toolRegistry.register(tool);
+    }
     this.toolRegistry.register(createShellAgentTool(this.subagents, options.workspaceRoot));
 
     const restoredThreads = this.sessionStore.listThreads({
@@ -134,7 +142,27 @@ export class RuntimeService {
       return result;
     }
 
-    return { ok: false, error: `Unknown approval: ${approvalId}` };
+    const result = this.approvalService.resolveApproval({ approvalId, decision });
+    if (result.ok) {
+      if (result.request.runId) {
+        this.runState.update(result.request.runId, {
+          status: result.decision === 'approved' ? 'running' : 'failed',
+          summary: result.decision === 'approved' ? '审批已通过，继续执行。' : '用户拒绝了外部路径访问。'
+        });
+      }
+      this.eventBus.emit('approval.resolved', {
+        approvalId,
+        decision: result.decision,
+        summary: result.decision === 'approved' ? '外部路径访问已批准，agent 将继续执行。' : '外部路径访问已拒绝。'
+      });
+    }
+    return result;
+  }
+
+  private async requestToolApproval(request: RuntimeApprovalRequest) {
+    const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
+    this.eventBus.emit('approval.required', approvalRequest);
+    return decision;
   }
 
   getSnapshot(): RuntimeSnapshot {
@@ -142,7 +170,7 @@ export class RuntimeService {
     return {
       activeAgentId: this.options.agentId,
       latestRun: latestRun ? { status: latestRun.status, summary: latestRun.summary } : { status: 'completed', summary: 'OpenAgent runtime 已就绪。' },
-      pendingApproval: null,
+      pendingApproval: this.approvalService.getPendingApproval(),
       threads: sortThreadsForDisplay([...this.threads.values()]),
       recentRuns: this.runState.list(),
       messages: this.messages,
@@ -158,6 +186,36 @@ export class RuntimeService {
       providerLabel: input.providerLabel,
       model: input.model
     };
+  }
+
+  getKnowledgeHealth(scope: 'system' = 'system') {
+    return this.knowledgeService.health(scope);
+  }
+
+  querySystemWiki(input: { query?: string; limit?: number }) {
+    return this.knowledgeService.search({
+      scope: 'system',
+      query: String(input.query || ''),
+      limit: input.limit
+    });
+  }
+
+  ingestSystemWiki(input: { title?: string; content?: string; sourceId?: string; tags?: string[] }) {
+    return this.knowledgeService.ingest({
+      scope: 'system',
+      title: String(input.title || ''),
+      content: String(input.content || ''),
+      sourceId: input.sourceId,
+      tags: Array.isArray(input.tags) ? input.tags : undefined
+    });
+  }
+
+  lintSystemWiki() {
+    return this.knowledgeService.lintSystemWiki();
+  }
+
+  buildSystemWikiGraph() {
+    return this.knowledgeService.buildSystemWikiGraph();
   }
 
   listRuntimeTasks() {
@@ -202,6 +260,7 @@ export class RuntimeService {
       attachments: payload.attachments ?? []
     };
     this.messages.push(userMessage);
+    this.touchThreadForPrompt(thread, prompt, now);
 
     const sessionFile = this.sessionStore.getSessionFile(thread.threadId);
     const transcript = new TranscriptStore(sessionFile);
@@ -216,7 +275,7 @@ export class RuntimeService {
       ]
     });
 
-    void this.executePromptRun({
+    const runPromise = this.executePromptRun({
       prompt,
       runId,
       thread,
@@ -225,6 +284,11 @@ export class RuntimeService {
       abortSignal: controller.signal
     });
 
+    if (payload.awaitCompletion) {
+      return runPromise;
+    }
+
+    void runPromise;
     return { ok: true, runId, status: 'running' };
   }
 
@@ -254,18 +318,6 @@ export class RuntimeService {
       emitPlan();
     };
 
-    const builtinResult = await this.tryHandleBuiltinMarkdownCountPrompt({
-      prompt,
-      runId,
-      thread,
-      transcript,
-      sessionFile,
-      abortSignal
-    });
-    if (builtinResult) {
-      return builtinResult;
-    }
-
     try {
       const runInput = buildRunInput({
         runId,
@@ -289,7 +341,21 @@ export class RuntimeService {
           if (progressTitle) appendProgressStep(progressTitle);
         },
         emitUiEvent: (type, payload) => {
+          if (type === 'approval.required') {
+            this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户审批。' });
+          }
+          if (type === 'approval.resolved') {
+            const decision = (payload as { decision?: string } | undefined)?.decision;
+            this.runState.update(runId, {
+              status: decision === 'rejected' ? 'failed' : 'running',
+              summary: decision === 'rejected' ? '用户拒绝了审批。' : '审批已通过，继续执行。'
+            });
+          }
           this.eventBus.emit(type, payload);
+        },
+        requestApproval: (request) => {
+          this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户审批外部路径访问。' });
+          return this.requestToolApproval(request);
         }
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
@@ -315,16 +381,25 @@ export class RuntimeService {
         '- The block must be valid JSON and must not be explained to the user.',
         '- Format:',
         '<!-- openagent:metadata',
-        '{"soulChangeRequests":[]}',
+        '{"soulChangeRequests":[],"userUpdates":[],"memoryUpdates":[]}',
         '-->',
         '- If the user asks for a durable Agent identity, role, behavior, safety, tool, memory, or project-specific rule change, add one object to soulChangeRequests.',
         '- Do not add soulChangeRequests for one-off or session-only instructions.',
         '- Every SOUL request must set requiresApproval to true.',
-        '- Object schema: shouldUpdateSoul, updateKind, title, reason, proposedText, targetSection, confidence, requiresApproval, evidence.',
+        '- Object schema: shouldUpdateSoul, updateKind, title, reason, proposedText, targetSection, confidence, requiresApproval, evidence, ruleId, identityName, identityRole.',
         '- confidence must be the string "low", "medium", or "high"; do not use numbers.',
         '- targetSection should be one of the exact SOUL headings, such as "## 1. Identity" or "## 7. Managed Rules".',
         '- updateKind must be one of: identity, working_style, safety_boundary, tool_policy, memory_policy, project_specific_rule.',
-        '- Identity questions such as “你叫啥” or “你是谁” are not SOUL changes by themselves; only create a request when the user assigns or changes a durable identity.'
+        '- ruleId is required for non-identity durable rules; use a stable snake_case id such as "communication_style", "git_safety", or "tool_policy" so OpenAgent can upsert instead of append duplicates.',
+        '- For identity updates, do not expect OpenAgent to parse names from prose; set identityName and/or identityRole explicitly.',
+        '- proposedText must be the final durable rule text, not a restatement of the user command.',
+        '- If the user only says “更新 SOUL.md” or otherwise does not specify the actual durable change, return soulChangeRequests: [] and ask a clarification question in the visible reply.',
+        '- Identity questions such as “你叫啥” or “你是谁” are not SOUL changes by themselves; only create a request when the user assigns or changes a durable identity.',
+        '- Decide whether USER.md or MEMORY.md should be updated after each run. This does not require user approval, so be conservative.',
+        '- Add userUpdates only for stable user preferences or collaboration habits that are likely to apply across future sessions; do not add one-off task instructions.',
+        '- userUpdates object schema: shouldUpdateUser, category, statement, reason, confidence, evidence. category must be one of communication, git, development, documentation, project_management, tooling, other. confidence must be medium or high.',
+        '- Add memoryUpdates only for reusable project/task knowledge, verified root causes, paths, commands, or design decisions that will help a future similar task; do not store raw chat logs or temporary details.',
+        '- memoryUpdates object schema: shouldUpdateMemory, scope, topic, summary, reuse, confidence, evidence. confidence must be medium or high.'
       ].join('\n');
 
       runInput.onLog?.({
@@ -383,29 +458,50 @@ export class RuntimeService {
             })
           )
           .filter((update): update is NonNullable<typeof update> => Boolean(update));
-        if (appliedSoulUpdates.length === 0) {
-          const fallbackRequest = this.soulManager.detectSoulChangeRequestFromPrompt({
-            prompt,
-            runId,
-            threadId: thread.threadId
-          });
-          if (fallbackRequest) {
-            const applied = this.soulManager.applySoulChangeRequest(fallbackRequest, {
+        const appliedUserUpdates = metadata.userUpdates
+          .map((request) =>
+            this.soulManager.applyUserUpdateRequest(request, {
               kind: 'runtime_detection',
               runId,
               threadId: thread.threadId,
-              excerpt: fallbackRequest.evidence || prompt.slice(0, 500)
-            });
-            if (applied) appliedSoulUpdates.push(applied);
-          }
-        }
-        if (appliedSoulUpdates.length > 0) {
+              excerpt: request.evidence || prompt.slice(0, 500)
+            })
+          )
+          .filter((update): update is NonNullable<typeof update> => Boolean(update));
+        const appliedMemoryUpdates = metadata.memoryUpdates
+          .map((request) =>
+            this.soulManager.applyProjectMemoryUpdateRequest(request, {
+              kind: 'runtime_detection',
+              runId,
+              threadId: thread.threadId,
+              excerpt: request.evidence || prompt.slice(0, 500)
+            })
+          )
+          .filter((update): update is NonNullable<typeof update> => Boolean(update));
+        const appliedAutoMemoryUpdates = [...appliedUserUpdates, ...appliedMemoryUpdates];
+        if (appliedSoulUpdates.length > 0 || appliedAutoMemoryUpdates.length > 0) {
+          const memorySummaryParts = [
+            appliedSoulUpdates.length > 0 ? `SOUL.md ${appliedSoulUpdates.length} 条` : '',
+            appliedUserUpdates.length > 0 ? `USER.md ${appliedUserUpdates.length} 条` : '',
+            appliedMemoryUpdates.length > 0 ? `MEMORY.md ${appliedMemoryUpdates.length} 条` : ''
+          ].filter(Boolean);
+          const memorySummary = `已自动更新长期上下文：${memorySummaryParts.join('，')}。`;
           runInput.onLog?.({
             scope: 'runtime',
-            message: '检测到 SOUL.md 变更并已直接应用',
+            message: memorySummary,
             data: {
-              source: metadata.soulChangeRequests.length > 0 ? 'llm-structured-metadata' : 'fallback-detector',
-              updates: appliedSoulUpdates.map((update) => ({
+              source: 'llm-structured-metadata',
+              soulUpdates: appliedSoulUpdates.map((update) => ({
+                updateId: update.id,
+                title: update.title,
+                proposedText: update.proposedText
+              })),
+              userUpdates: appliedUserUpdates.map((update) => ({
+                updateId: update.id,
+                title: update.title,
+                proposedText: update.proposedText
+              })),
+              memoryUpdates: appliedMemoryUpdates.map((update) => ({
                 updateId: update.id,
                 title: update.title,
                 proposedText: update.proposedText
@@ -415,7 +511,9 @@ export class RuntimeService {
           this.eventBus.emit('memory.updated', {
             snapshot: this.getAgentBootstrapSnapshot(),
             soulUpdates: appliedSoulUpdates,
-            summary: '检测到 SOUL.md 变更并已直接应用。'
+            userUpdates: appliedUserUpdates,
+            memoryUpdates: appliedMemoryUpdates,
+            summary: memorySummary
           });
         }
         this.eventBus.emit('run.completed', { runId, summary });
@@ -439,6 +537,7 @@ export class RuntimeService {
     }
   }
 
+
   stopRun(runId?: string) {
     return { ok: this.runState.stop(runId) };
   }
@@ -459,6 +558,19 @@ export class RuntimeService {
     }
     this.activeThreadId = threadId;
     this.loadActiveThreadMessages();
+    return { ok: true, snapshot: this.getSnapshot() };
+  }
+
+  markThreadTitlePrefix(threadId: string, prefix: string) {
+    const thread = this.threads.get(threadId);
+    if (!thread) {
+      return { ok: false, error: `Thread not found: ${threadId}`, snapshot: this.getSnapshot() };
+    }
+    if (!thread.title.startsWith(prefix)) {
+      thread.title = `${prefix}${thread.title}`;
+      thread.updatedAt = new Date().toISOString();
+      this.sessionStore.upsertThread(thread);
+    }
     return { ok: true, snapshot: this.getSnapshot() };
   }
 
@@ -489,6 +601,14 @@ export class RuntimeService {
     return thread;
   }
 
+  private touchThreadForPrompt(thread: RuntimeThread, prompt: string, timestamp: string) {
+    thread.updatedAt = timestamp;
+    if (thread.title === '新的会话' || thread.title === '欢迎使用 OpenAgent') {
+      thread.title = prompt.slice(0, 28) || thread.title;
+    }
+    this.sessionStore.upsertThread(thread);
+  }
+
   private finishThread(thread: RuntimeThread, prompt: string) {
     thread.updatedAt = new Date().toISOString();
     thread.runCount += 1;
@@ -513,105 +633,6 @@ export class RuntimeService {
     };
   }
 
-  private async tryHandleBuiltinMarkdownCountPrompt(input: {
-    prompt: string;
-    runId: string;
-    thread: RuntimeThread;
-    transcript: TranscriptStore;
-    sessionFile: string;
-    abortSignal: AbortSignal;
-  }) {
-    const targetRoot = this.resolveMarkdownCountTarget(input.prompt);
-    if (!targetRoot) return null;
-
-    this.eventBus.emit('plan.updated', {
-      steps: [
-        { id: `${input.runId}-context`, title: '识别只读文件统计任务', status: 'completed' },
-        { id: `${input.runId}-shell-agent`, title: `调用系统 ShellAgent 统计 ${targetRoot}`, status: 'in_progress' },
-        { id: `${input.runId}-persist`, title: '保存 transcript', status: 'pending' }
-      ]
-    });
-    this.eventBus.emit('terminal.delta', {
-      runId: input.runId,
-      text: `开始调用系统 ShellAgent 统计 ${targetRoot} 下的 .md 文件数量…
-`
-    });
-
-    try {
-      const result = await this.subagents.invoke('shell', {
-        task: input.prompt,
-        callerAgentId: this.options.agentId,
-        runId: input.runId,
-        threadId: input.thread.threadId,
-        workspaceRoot: this.options.workspaceRoot,
-        signal: input.abortSignal,
-        onLog: (entry) => {
-          appendRuntimeInfoLog(entry);
-          this.eventBus.emit('terminal.delta', {
-            runId: input.runId,
-            text: formatRuntimeInfoLogSummary(entry)
-          });
-        },
-        emitUiEvent: (type, payload) => this.eventBus.emit(type, payload)
-      });
-      const content = result.summary;
-      const assistantMessage: RuntimeMessage = {
-        id: `assistant-${randomUUID()}`,
-        role: 'assistant',
-        content,
-        createdAt: new Date().toISOString()
-      };
-      this.messages.push(assistantMessage);
-      input.transcript.appendMessage(assistantMessage);
-      this.eventBus.emit('message.completed', assistantMessage);
-      this.eventBus.emit('plan.updated', {
-        steps: [
-          { id: `${input.runId}-context`, title: '识别只读文件统计任务', status: 'completed' },
-          { id: `${input.runId}-shell-agent`, title: `系统 ShellAgent 完成 ${targetRoot} 统计`, status: 'completed' },
-          { id: `${input.runId}-persist`, title: '保存 transcript', status: 'completed' }
-        ]
-      });
-      this.finishThread(input.thread, input.prompt);
-      this.runState.finish(input.runId, { status: result.ok ? 'completed' : 'failed', summary: content });
-      this.eventBus.emit(result.ok ? 'run.completed' : 'run.failed', result.ok ? { runId: input.runId, summary: content } : { summary: content, details: result.error });
-      return { ok: result.ok, runId: input.runId, status: result.ok ? 'completed' : 'failed', error: result.error };
-    } catch (error) {
-      const message = errorToMessage(error);
-      this.runState.finish(input.runId, { status: 'failed', summary: message });
-      this.eventBus.emit('run.failed', { summary: message, details: message });
-      return { ok: false, runId: input.runId, status: 'failed', error: message };
-    }
-  }
-
-  private resolveMarkdownCountTarget(prompt: string) {
-    const sourcePrompt = /^\s*(执行|开始|开始执行|确认执行|继续)\s*$/i.test(prompt)
-      ? this.findPreviousMarkdownCountPrompt()
-      : prompt;
-    if (!sourcePrompt) return null;
-    if (!/(\.md|markdown|md\s*文件)/i.test(sourcePrompt) || !/(统计|多少|数量|count)/i.test(sourcePrompt)) return null;
-
-    const usersPathMatch = sourcePrompt.match(/(\/Users(?:\/[^\s，。；;]*)?)/);
-    if (usersPathMatch?.[1]) {
-      return path.resolve(usersPathMatch[1]);
-    }
-
-    const absolutePathMatch = sourcePrompt.match(/(\/[^\s，。；;]+)/);
-    if (absolutePathMatch?.[1]) {
-      return path.resolve(absolutePathMatch[1]);
-    }
-
-    return null;
-  }
-
-  private findPreviousMarkdownCountPrompt() {
-    for (let index = this.messages.length - 2; index >= 0; index -= 1) {
-      const message = this.messages[index];
-      if (message?.role === 'user' && /(\.md|markdown|md\s*文件)/i.test(message.content) && /(统计|多少|数量|count)/i.test(message.content)) {
-        return message.content;
-      }
-    }
-    return null;
-  }
 
 }
 
@@ -654,18 +675,10 @@ function createDefaultAdapter() {
 
 function sortThreadsForDisplay(threads: RuntimeThread[]) {
   return [...threads].sort((a, b) => {
-    const aIsNew = isNewBlankThread(a);
-    const bIsNew = isNewBlankThread(b);
-    if (aIsNew !== bIsNew) return aIsNew ? -1 : 1;
-
-    const aTime = Date.parse(aIsNew ? a.createdAt : a.updatedAt);
-    const bTime = Date.parse(bIsNew ? b.createdAt : b.updatedAt);
+    const aTime = Date.parse(a.updatedAt || a.createdAt);
+    const bTime = Date.parse(b.updatedAt || b.createdAt);
     return normalizeTime(bTime) - normalizeTime(aTime);
   });
-}
-
-function isNewBlankThread(thread: RuntimeThread) {
-  return thread.runCount === 0 && thread.title === '新的会话';
 }
 
 function normalizeTime(value: number) {

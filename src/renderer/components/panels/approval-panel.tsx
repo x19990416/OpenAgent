@@ -42,7 +42,18 @@ export function ApprovalPanel({
           <div key={approval.id} className="approval-card">
             <div className="text-strong">{approval.title}</div>
             <div className="text-soft mt-6">{getRiskLabel(approval.risk)}</div>
-            <div className="body-copy-soft mt-10">{approval.description}</div>
+            <div className="body-copy-soft mt-10" style={{ whiteSpace: 'pre-wrap' }}>{approval.description}</div>
+            {approval.targetPath ? (
+              <div className="body-copy-soft mt-8 break-all">
+                路径：{approval.targetPath}
+              </div>
+            ) : null}
+            {approval.access || approval.scope || typeof approval.recursive === 'boolean' ? (
+              <div className="body-copy-soft mt-8 text-soft">
+                权限：{formatAccess(approval.access)} · 范围：{formatScope(approval.scope)}
+                {typeof approval.recursive === 'boolean' ? ` · ${approval.recursive ? '包含子目录' : '仅当前文件/目录'}` : ''}
+              </div>
+            ) : null}
             <div className="inline-actions mt-12">
               <button
                 className="success-button"
@@ -107,4 +118,19 @@ function formatDateTime(value: string) {
     minute: '2-digit',
     second: '2-digit'
   });
+}
+
+
+function formatAccess(access: ApprovalRequest['access']) {
+  if (access === 'read') return '只读';
+  if (access === 'write') return '写入';
+  if (access === 'execute') return '执行';
+  return '未指定';
+}
+
+function formatScope(scope: ApprovalRequest['scope']) {
+  if (scope === 'once') return '本次';
+  if (scope === 'session') return '本会话';
+  if (scope === 'always') return '长期';
+  return '本次';
 }

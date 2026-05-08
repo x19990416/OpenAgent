@@ -85,6 +85,48 @@ export interface PromptSubmissionResult {
   [key: string]: unknown;
 }
 
+export interface KnowledgeResult {
+  id: string;
+  title: string;
+  source: 'system-wiki' | string;
+  content: string;
+  score?: number;
+  path?: string;
+  citations?: string[];
+}
+
+export interface KnowledgeHealthResult {
+  ok: boolean;
+  source: 'system-wiki' | string;
+  message: string;
+  data?: unknown;
+}
+
+export interface KnowledgeIngestResult {
+  ok: boolean;
+  source: 'system-wiki' | string;
+  id?: string;
+  path?: string;
+  message: string;
+}
+
+export interface KnowledgeLintResult {
+  ok: boolean;
+  source: 'system-wiki' | string;
+  message: string;
+  reportPath?: string;
+  data?: unknown;
+}
+
+export interface KnowledgeGraphResult {
+  ok: boolean;
+  source: 'system-wiki' | string;
+  message: string;
+  graphJsonPath?: string;
+  graphHtmlPath?: string;
+  data?: unknown;
+}
+
 export interface PluginRegistrySnapshot {
   schemaVersion?: number;
   pluginsRoot?: string;
@@ -121,6 +163,7 @@ export interface SoulChangeProposal {
   targetSection: string;
   currentText?: string;
   proposedText: string;
+  ruleId?: string;
   diff: string;
   riskLevel: 'low' | 'medium' | 'high';
   status: 'pending_approval' | 'approved' | 'rejected' | 'applied';
@@ -233,6 +276,11 @@ export interface DesktopApi {
   listAgents: () => Promise<any>;
   getStateSnapshot: () => Promise<StateSnapshot>;
   getRuntimeTasks?: () => Promise<any[]>;
+  getKnowledgeHealth?: (payload?: { scope?: 'system' }) => Promise<KnowledgeHealthResult[]>;
+  querySystemWiki?: (payload: { query: string; limit?: number }) => Promise<KnowledgeResult[]>;
+  ingestSystemWiki?: (payload: { title: string; content: string; sourceId?: string; tags?: string[] }) => Promise<KnowledgeIngestResult>;
+  lintSystemWiki?: () => Promise<KnowledgeLintResult>;
+  buildSystemWikiGraph?: () => Promise<KnowledgeGraphResult>;
   listScheduledTasks?: () => Promise<ScheduledTaskItem[]>;
   createScheduledTask?: (payload: CreateScheduledTaskInput) => Promise<ScheduledTaskItem>;
   deleteScheduledTask?: (payload: { taskId: string }) => Promise<{ ok: boolean; error?: string }>;
@@ -257,6 +305,8 @@ export interface DesktopApi {
   discoverLlmModels?: (payload: any) => Promise<any>;
   openPiCodexLogin?: () => Promise<any>;
   upsertLlmProvider?: (payload: any) => Promise<any>;
+  clearLlmProviderApiKey?: (payload: any) => Promise<any>;
+  deleteLlmProvider?: (payload: any) => Promise<any>;
   setActiveLlmProvider?: (payload: any) => Promise<any>;
   listSkills?: () => Promise<SkillCatalogItem[]>;
   getSkillCatalog?: () => Promise<SkillCatalogItem[]>;

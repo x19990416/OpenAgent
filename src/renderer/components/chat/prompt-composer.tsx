@@ -36,13 +36,23 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isBusy = runStatus === 'waiting_approval' || isSubmitting;
+  const runnableProviders = useMemo(
+    () =>
+      catalog.providers.filter((provider) => {
+        const isRunnable = provider.id === 'openai-codex'
+          ? Boolean(provider.auth?.configured)
+          : Boolean(provider.enabled || provider.auth?.configured);
+        return isRunnable && provider.models.length > 0;
+      }),
+    [catalog.providers]
+  );
   const activeProvider = useMemo(
     () =>
-      catalog.providers.find((provider) => provider.id === workspace.providerId) ??
-      catalog.providers.find((provider) => provider.id === catalog.activeProviderId) ??
-      catalog.providers[0] ??
+      runnableProviders.find((provider) => provider.id === workspace.providerId) ??
+      runnableProviders.find((provider) => provider.id === catalog.activeProviderId) ??
+      runnableProviders[0] ??
       null,
-    [catalog, workspace.providerId]
+    [catalog.activeProviderId, runnableProviders, workspace.providerId]
   );
 
   const activeModelValue =
@@ -254,33 +264,31 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
   async function handleModelChange(nextModel: string) {
     const desktopApi = window.desktopApi;
 
-    if (!desktopApi?.updateLlmProviderModels || !activeProvider || !nextModel || nextModel === activeProvider.defaultModel) {
+    if (
+      !desktopApi?.setActiveLlmProvider ||
+      !activeProvider ||
+      !nextModel ||
+      (nextModel === workspace.model && activeProvider.id === workspace.providerId)
+    ) {
       return;
     }
 
     setIsUpdatingModel(true);
 
     try {
-      const result = await desktopApi.updateLlmProviderModels({
+      const result = await desktopApi.setActiveLlmProvider({
         providerId: activeProvider.id,
-        defaultModel: nextModel,
-        models: activeProvider.models.map((model) => ({
-          id: model.id,
-          name: model.name,
-          contextWindow: model.contextWindow,
-          maxOutputTokens: model.maxOutputTokens,
-          capabilities: model.capabilities
-        }))
+        modelId: nextModel
       });
 
       if (!result.ok) {
-        throw new Error(result.error || '更新模型失败');
+        throw new Error(result.error || '切换模型失败');
       }
 
       setCatalog(result.catalog);
       onWorkspaceChange(result.workspace);
     } catch (error) {
-      console.error('updateLlmProviderModels failed', error);
+      console.error('setActiveLlmProvider model failed', error);
     } finally {
       setIsUpdatingModel(false);
     }
@@ -289,7 +297,9 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
   async function handleProviderChange(nextProviderId: string) {
     const desktopApi = window.desktopApi;
 
-    if (!desktopApi?.setActiveLlmProvider || !nextProviderId || nextProviderId === activeProvider?.id) {
+    const nextProvider = runnableProviders.find((provider) => provider.id === nextProviderId);
+
+    if (!desktopApi?.setActiveLlmProvider || !nextProvider || nextProviderId === activeProvider?.id) {
       return;
     }
 
@@ -447,16 +457,16 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
                 className="composer-model-select"
                 value={activeProvider?.id || workspace.providerId || ''}
                 onChange={(event) => void handleProviderChange(event.target.value)}
-                disabled={catalog.providers.length === 0 || isUpdatingModel}
+                disabled={runnableProviders.length === 0 || isUpdatingModel}
               >
-                {catalog.providers.length ? (
-                  catalog.providers.map((provider) => (
+                {runnableProviders.length ? (
+                  runnableProviders.map((provider) => (
                     <option key={provider.id} value={provider.id}>
                       {provider.name}
                     </option>
                   ))
                 ) : (
-                  <option value="">{workspace.providerLabel || '等待模型配置'}</option>
+                  <option value="">等待有效模型配置</option>
                 )}
               </select>
               <ChevronDown size={14} />

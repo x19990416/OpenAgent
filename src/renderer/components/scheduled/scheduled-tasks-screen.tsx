@@ -202,7 +202,7 @@ function ScheduledTaskComposer({
           <span>会话策略</span>
           <select className="scheduled-task-input" value={sessionPolicy} onChange={(event) => setSessionPolicy(event.target.value as ScheduledTaskSessionPolicy)}>
             <option value="new_each_run">每次创建新 session</option>
-            <option value="reuse_existing">使用指定 session</option>
+            <option value="reuse_existing">复用 session</option>
           </select>
         </label>
       </div>
@@ -210,11 +210,12 @@ function ScheduledTaskComposer({
         <label className="scheduled-field">
           <span>指定 session</span>
           <select className="scheduled-task-input" value={threadId} onChange={(event) => setThreadId(event.target.value)}>
-            <option value="">执行时自动创建新 session</option>
+            <option value="">首次执行自动创建，后续复用</option>
             {threads.map((thread) => (
               <option key={thread.threadId} value={thread.threadId}>{formatThreadTitle(thread)}</option>
             ))}
           </select>
+          <div className="scheduled-form-hint">任务会保存到本地，重启 OpenAgent 后继续按周期触发。</div>
         </label>
       ) : (
         <div className="scheduled-form-hint">默认每次执行创建独立 session，避免长期上下文互相污染。</div>
@@ -273,7 +274,7 @@ function formatAgentName(agentId: string, agents: AgentSummaryItem[]) {
 function formatSessionPolicy(task: ScheduledTaskItem, threads: ThreadListItem[]) {
   if (task.sessionPolicy !== 'reuse_existing') return '每次新建';
   const thread = threads.find((item) => item.threadId === task.threadId);
-  return thread ? formatThreadTitle(thread) : task.threadId || '执行时新建';
+  return thread ? formatThreadTitle(thread) : task.threadId || '首次执行后复用';
 }
 
 function formatThreadTitle(thread: ThreadListItem) {

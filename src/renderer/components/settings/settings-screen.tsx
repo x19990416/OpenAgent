@@ -32,6 +32,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   LlmAuthType,
+  KnowledgeGraphResult,
+  KnowledgeHealthResult,
+  KnowledgeLintResult,
+  KnowledgeResult,
   LlmProviderCatalog,
   LlmProviderConfig,
   LlmProviderKindDefinition,
@@ -88,6 +92,7 @@ const navItems: Array<{
   { key: 'appearance', label: '外观', icon: Palette },
   { key: 'models', label: '模型', icon: Bot },
   { key: 'plugins', label: '插件', icon: Puzzle },
+  { key: 'knowledge', label: '知识库', icon: Database },
   { key: 'config', label: '配置', icon: SlidersHorizontal },
   { key: 'personalization', label: '个性化', icon: Sparkles },
   { key: 'mcp', label: 'MCP 服务器', icon: CircleUserRound },
@@ -104,6 +109,7 @@ const pageTitles: Record<SettingsTab, string> = {
   appearance: '外观',
   models: '模型与提供方',
   plugins: '插件',
+  knowledge: '知识库',
   config: '配置',
   personalization: '个性化',
   account: '账户',
@@ -175,6 +181,7 @@ const pageRows: Record<SettingsTab, SettingRow[]> = {
   ],
   models: [],
   plugins: [],
+  knowledge: [],
   config: [
     { title: '工作区默认行为', description: '设置启动后的默认动作', kind: 'select', value: '恢复上次状态' },
     { title: '模型切换提示', description: '是否显示模型切换时的提示信息', kind: 'toggle', value: true },
@@ -301,65 +308,9 @@ const emptyProviderCatalog: LlmProviderCatalog = {
 
 const fallbackProviderDefinitions: LlmProviderKindDefinition[] = [
   {
-    kind: 'openai',
-    label: 'OpenAI',
-    description: '使用 Pi ModelRegistry 内置的 OpenAI provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'openai-codex',
-    label: 'ChatGPT / Codex 订阅',
-    description: '复用 Pi 默认 auth。先在 Pi CLI 中 /login openai-codex，再回到 OpenAgent 选择模型。',
-    supportedAuthTypes: ['none'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'anthropic',
-    label: 'Anthropic',
-    description: '使用 Pi ModelRegistry 内置的 Anthropic provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'google',
-    label: 'Google / Gemini',
-    description: '使用 Pi ModelRegistry 内置的 Google/Gemini provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'mistral',
-    label: 'Mistral',
-    description: '使用 Pi ModelRegistry 内置的 Mistral provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'deepseek',
-    label: 'DeepSeek',
-    description: '使用 Pi ModelRegistry 内置的 DeepSeek provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
-    kind: 'openrouter',
-    label: 'OpenRouter',
-    description: '使用 Pi ModelRegistry 内置的 OpenRouter provider。',
-    supportedAuthTypes: ['bearer'],
-    invocationMode: 'pi-agent-session',
-    defaultInvocationMode: 'pi-agent-session'
-  },
-  {
     kind: 'openai-compatible',
     label: '自定义兼容接口',
-    description: 'OpenAI-compatible / 公司网关 / 本地模型服务。',
+    description: '公司网关 / 本地模型服务 / OpenAI-compatible。',
     supportedAuthTypes: ['bearer', 'api_key_header', 'none'],
     invocationMode: 'chat-completions',
     defaultInvocationMode: 'chat-completions',
@@ -462,6 +413,33 @@ function deriveProviderName(baseUrl: string, index: number) {
   } catch {
     return `Custom Provider ${index}`;
   }
+}
+
+function normalizeDraftProviderId(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function createUniqueProviderId(name: string, providers: LlmProviderCatalog['providers']) {
+  const baseId = normalizeDraftProviderId(name) || `custom-provider-${providers.length + 1}`;
+  const existingIds = new Set(providers.map((provider) => provider.id));
+
+  if (!existingIds.has(baseId)) {
+    return baseId;
+  }
+
+  let index = 2;
+  let nextId = `${baseId}-${index}`;
+
+  while (existingIds.has(nextId)) {
+    index += 1;
+    nextId = `${baseId}-${index}`;
+  }
+
+  return nextId;
 }
 
 function formatTokenWindow(value?: number) {
@@ -577,6 +555,18 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
   }, [selectedProviderId]);
 
   useEffect(() => {
+    if (providerFeedback?.type !== 'success') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setProviderFeedback((current) => (current === providerFeedback ? null : current));
+    }, 3000);
+
+    return () => window.clearTimeout(timer);
+  }, [providerFeedback]);
+
+  useEffect(() => {
     if (!contextWindowDraft) {
       return;
     }
@@ -624,7 +614,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
     setDraft((prev) => ({
       ...prev,
       kind,
-      invocationMode: 'pi-agent-session',
+      invocationMode: (definition.defaultInvocationMode || definition.invocationMode || 'pi-agent-session') as ProviderDraft['invocationMode'],
       authType: definition.supportedAuthTypes.includes(prev.authType) ? prev.authType : nextAuthType,
       headerName: nextAuthType === 'api_key_header' ? prev.headerName || 'X-API-Key' : 'Authorization',
       baseUrl:
@@ -893,7 +883,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       }));
       setSaveFeedback({
         type: 'success',
-        text: mode === 'check' ? `连接成功：${result.requestUrl}` : `已从 ${result.requestUrl} 发现 ${result.models.length} 个模型`
+        text: mode === 'check' ? '连接成功' : `发现 ${result.models.length} 个模型`
       });
       desktopApi.logDiagnostic?.('info', 'draft model discovery success', {
         requestUrl: result.requestUrl,
@@ -928,7 +918,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
 
   const openCreateDialog = () => {
     const defaultDefinition =
-      providerDefinitions.find((definition) => definition.kind === 'openai') ??
+      providerDefinitions.find((definition) => definition.kind === 'openai-compatible') ??
       fallbackProviderDefinitions[0];
     const defaultAuthType = defaultDefinition.supportedAuthTypes[0] ?? 'bearer';
 
@@ -937,8 +927,8 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
     setDraft({
       ...initialProviderDraft,
       kind: defaultDefinition.kind,
-      invocationMode: 'pi-agent-session',
-      name: defaultDefinition.label,
+      invocationMode: (defaultDefinition.defaultInvocationMode || defaultDefinition.invocationMode || 'chat-completions') as ProviderDraft['invocationMode'],
+      name: defaultDefinition.kind === 'openai-compatible' ? '' : defaultDefinition.label,
       baseUrl: defaultDefinition.defaultBaseUrl ?? '',
       authType: defaultAuthType,
       headerName: defaultAuthType === 'api_key_header' ? 'X-API-Key' : 'Authorization'
@@ -953,7 +943,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
 
     const providerIndex = catalog.providers.length + 1;
     const providerName = draft.name.trim() || selectedDraftProviderDefinition.label || deriveProviderName(draft.baseUrl.trim(), providerIndex);
-    const providerId = draft.kind === 'openai-compatible' ? `${providerName}-${providerIndex}` : draft.kind;
+    const providerId = draft.kind === 'openai-compatible' ? createUniqueProviderId(providerName, catalog.providers) : draft.kind;
     const payload: UpsertLlmProviderInput = {
       name: providerName,
       kind: draft.kind,
@@ -1035,12 +1025,27 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       return;
     }
 
-    if (!desktopApi?.upsertLlmProvider) {
-      setProviderFeedback({ type: 'error', text: '当前环境未挂载 provider 保存接口，请先重启桌面应用。' });
+    if (!desktopApi?.upsertLlmProvider || !desktopApi?.refreshLlmProviderModels) {
+      setProviderFeedback({ type: 'error', text: '当前环境未挂载 provider 保存或检查接口，请先重启桌面应用。' });
       return;
     }
 
     try {
+      setProviderFeedback({ type: 'success', text: '正在检查连接…' });
+      const checkResult = await desktopApi.refreshLlmProviderModels({
+        providerId: selectedProvider.id,
+        baseUrl: selectedProvider.baseUrl,
+        auth: {
+          type: 'bearer',
+          secret: selectedProviderApiKey.trim(),
+          headerName: 'Authorization'
+        }
+      });
+
+      if (!checkResult.ok) {
+        throw new Error(checkResult.error || 'API Key 检查失败');
+      }
+
       const result = await desktopApi.upsertLlmProvider({
         providerId: selectedProvider.id,
         kind: selectedProvider.id,
@@ -1058,9 +1063,75 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       setSelectedProviderId(result.providerId || selectedProvider.id);
       onWorkspaceChange(result.workspace);
       setSelectedProviderApiKey('');
-      setProviderFeedback({ type: 'success', text: 'API Key 已保存到 Pi AuthStorage。' });
+      setProviderFeedback({ type: 'success', text: `连接检查通过，获取 ${checkResult.models?.length ?? 0} 个模型，API Key 已保存。` });
     } catch (error) {
       setProviderFeedback({ type: 'error', text: `API Key 保存失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const clearSelectedProviderApiKey = async () => {
+    const desktopApi = window.desktopApi;
+
+    if (!selectedProvider) {
+      return;
+    }
+
+    if (!desktopApi?.clearLlmProviderApiKey) {
+      setProviderFeedback({ type: 'error', text: '当前环境未挂载密钥清空接口，请先重启桌面应用。' });
+      return;
+    }
+
+    try {
+      const result = await desktopApi.clearLlmProviderApiKey({ providerId: selectedProvider.id });
+
+      if (!result.ok) {
+        throw new Error(result.error || '清空 API Key 失败');
+      }
+
+      setCatalog(result.catalog);
+      setCatalogSeed(result.catalog);
+      setSelectedProviderId(result.providerId || selectedProvider.id);
+      if (result.workspace) {
+        onWorkspaceChange(result.workspace);
+      }
+      setSelectedProviderApiKey('');
+      setIsSecretVisible(false);
+      setProviderFeedback({ type: 'success', text: 'API Key 已清空。' });
+    } catch (error) {
+      setProviderFeedback({ type: 'error', text: `API Key 清空失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const deleteSelectedProvider = async () => {
+    const desktopApi = window.desktopApi;
+
+    if (!selectedProvider || selectedProvider.kind !== 'openai-compatible') {
+      return;
+    }
+
+    if (!desktopApi?.deleteLlmProvider) {
+      setProviderFeedback({ type: 'error', text: '当前环境未挂载删除接入接口，请先重启桌面应用。' });
+      return;
+    }
+
+    try {
+      const result = await desktopApi.deleteLlmProvider({ providerId: selectedProvider.id });
+
+      if (!result.ok) {
+        throw new Error(result.error || '删除接入失败');
+      }
+
+      setCatalog(result.catalog);
+      setCatalogSeed(result.catalog);
+      setSelectedProviderId(result.catalog.activeProviderId || result.catalog.providers[0]?.id || '');
+      if (result.workspace) {
+        onWorkspaceChange(result.workspace);
+      }
+      setSelectedProviderApiKey('');
+      setIsSecretVisible(false);
+      setProviderFeedback({ type: 'success', text: '接入已删除。' });
+    } catch (error) {
+      setProviderFeedback({ type: 'error', text: `接入删除失败：${error instanceof Error ? error.message : '未知错误'}` });
     }
   };
 
@@ -1079,8 +1150,25 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       return;
     }
 
+    const checkSecret = selectedProviderApiKey.trim() || selectedProviderSavedSecret;
+
+    setProviderFeedback({
+      type: 'success',
+      text: checkSecret || selectedProvider.baseUrl ? '正在检查连接…' : '正在获取模型列表…'
+    });
+
     void desktopApi
-      .refreshLlmProviderModels({ providerId: selectedProvider.id })
+      .refreshLlmProviderModels({
+        providerId: selectedProvider.id,
+        baseUrl: selectedProvider.baseUrl,
+        auth: checkSecret
+          ? {
+              type: 'bearer',
+              secret: checkSecret,
+              headerName: 'Authorization'
+            }
+          : undefined
+      })
       .then((result) => {
         if (!result.ok) {
           setProviderFeedback({
@@ -1102,7 +1190,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
         }
         setProviderFeedback({
           type: 'success',
-          text: `已从 ${result.requestUrl} 获取 ${result.models.length} 个模型`
+          text: `获取 ${result.models.length} 个模型`
         });
         desktopApi.logDiagnostic?.('info', 'selected provider model refresh success', {
           providerId: result.providerId,
@@ -1131,7 +1219,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
     }
 
     if (!desktopApi?.openPiCodexLogin) {
-      setProviderFeedback({ type: 'error', text: '当前环境未挂载 Pi 登录入口，请先重启桌面应用。' });
+      setProviderFeedback({ type: 'error', text: '当前环境未挂载登录入口，请先重启桌面应用。' });
       return;
     }
 
@@ -1141,7 +1229,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       const result = await desktopApi.openPiCodexLogin();
 
       if (!result.ok) {
-        setProviderFeedback({ type: 'error', text: `Pi OAuth 登录失败：${result.error ?? '未知错误'}` });
+        setProviderFeedback({ type: 'error', text: `登录失败：${result.error ?? '未知错误'}` });
         return;
       }
 
@@ -1155,9 +1243,9 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
         onWorkspaceChange(result.workspace);
       }
 
-      setProviderFeedback({ type: 'success', text: 'Pi Codex OAuth 登录成功，OpenAgent 已复用 Pi 默认 auth。' });
+      setProviderFeedback({ type: 'success', text: 'ChatGPT / Codex 登录成功。' });
     } catch (error) {
-      setProviderFeedback({ type: 'error', text: `Pi OAuth 登录失败：${error instanceof Error ? error.message : '未知错误'}` });
+      setProviderFeedback({ type: 'error', text: `登录失败：${error instanceof Error ? error.message : '未知错误'}` });
     } finally {
       setIsCodexLoginInProgress(false);
     }
@@ -1230,6 +1318,18 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
     : '';
   const selectedDefaultModel = selectedProvider?.models.find((model) => model.id === selectedProvider.defaultModel);
   const selectedProviderUsesPiDefaultOAuth = selectedProvider?.id === 'openai-codex';
+  const selectedProviderSavedSecret = typeof selectedProvider?.auth?.secret === 'string' ? selectedProvider.auth.secret : '';
+  const selectedProviderSecretValue =
+    selectedProviderApiKey ||
+    (isSecretVisible && selectedProviderSavedSecret ? selectedProviderSavedSecret : '');
+  const selectedProviderSecretPlaceholder = selectedProvider?.auth?.configured
+    ? selectedProviderSavedSecret
+      ? '已保存 API Key，点击眼睛可查看明文'
+      : '已保存 API Key；输入新 Key 可覆盖'
+    : '输入 API Key 后点击保存';
+  const selectedProviderSecretHelp = selectedProvider?.baseUrl
+    ? '用于当前自定义接入的鉴权。'
+    : '输入新的 API Key 可覆盖当前配置。';
   const isSelectedProviderRunnable = Boolean(
     selectedProvider &&
       (selectedProviderUsesPiDefaultOAuth ? selectedProvider.auth?.configured : selectedProvider.enabled || selectedProvider.auth?.configured)
@@ -1304,12 +1404,22 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
           {selectedProvider ? (
             <section className="settings-provider-console">
               <div className="settings-provider-hero-card">
+                {selectedProvider.kind === 'openai-compatible' ? (
+                  <button
+                    className="settings-provider-delete-button"
+                    type="button"
+                    onClick={() => void deleteSelectedProvider()}
+                    aria-label={`删除接入 ${selectedProvider.name}`}
+                  >
+                    <X size={18} />
+                  </button>
+                ) : null}
                 <div className="settings-provider-hero-main">
                   <ProviderAvatar provider={selectedProvider} />
-                  <div>
+                  <div className="settings-provider-title-stack">
                     <div className="settings-provider-console-title">{selectedProvider.name}</div>
                     <div className="settings-provider-console-subtitle">
-                      {selectedProviderKindLabel} · {selectedProvider.invocationMode === 'pi-agent-session' ? 'Pi AgentSession' : selectedProvider.invocationMode}
+                      {selectedProviderKindLabel}
                     </div>
                   </div>
                 </div>
@@ -1319,8 +1429,8 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                   <span className={`settings-provider-chip ${selectedProvider.auth?.configured ? 'is-enabled' : 'is-disabled'}`}>
                     {selectedProviderUsesPiDefaultOAuth
                       ? selectedProvider.auth?.configured
-                        ? 'Pi 已登录'
-                        : '需要 Pi 登录'
+                        ? '已登录'
+                        : '需要登录'
                       : selectedProvider.auth?.configured
                         ? '密钥已保存'
                         : '待配置密钥'}
@@ -1342,10 +1452,12 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                   </div>
                 </div>
 
-                <div className="settings-provider-endpoint">
-                  <span>Base URL</span>
-                  <code>{selectedProvider.baseUrl || 'Pi ModelRegistry 内置地址'}</code>
-                </div>
+                {selectedProvider.baseUrl ? (
+                  <div className="settings-provider-endpoint">
+                    <span>Base URL</span>
+                    <code>{selectedProvider.baseUrl}</code>
+                  </div>
+                ) : null}
               </div>
 
               {selectedProviderUsesPiDefaultOAuth ? (
@@ -1353,12 +1465,12 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                   <div className="settings-provider-section-title-row">
                     <div>
                       <div className="settings-provider-console-label">ChatGPT / Codex 登录</div>
-                      <div className="settings-form-help">OpenAgent 复用 Pi 默认 auth；这里不输入 API Key。</div>
+                      <div className="settings-form-help">这里不输入 API Key，请通过浏览器完成授权。</div>
                     </div>
                     <div className="inline-actions">
                       <button className="toolbar-button is-accent" type="button" onClick={() => void openPiCodexLogin()} disabled={isCodexLoginInProgress}>
                         <KeyRound size={14} />
-                        {isCodexLoginInProgress ? '认证中…' : '浏览器 OAuth 认证'}
+                        {isCodexLoginInProgress ? '认证中…' : '浏览器授权'}
                       </button>
                       <button className="toolbar-button" type="button" onClick={fetchSelectedProviderModels}>
                         <RefreshCw size={14} />
@@ -1370,10 +1482,10 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                     <KeyRound size={18} />
                     <div>
                       <div className="settings-oauth-status-title">
-                        {selectedProvider.auth?.configured ? '已检测到 Pi Codex 登录' : '还没有检测到 Pi Codex 登录'}
+                        {selectedProvider.auth?.configured ? '已检测到 Codex 登录' : '还没有检测到 Codex 登录'}
                       </div>
                       <div className="settings-form-help">
-                        点击“浏览器 OAuth 认证”后会打开 Pi 的授权页；成功后凭据写入 Pi 默认 AuthStorage，OpenAgent 会自动刷新状态。
+                        点击“浏览器授权”后会打开授权页；成功后 OpenAgent 会自动刷新状态。
                       </div>
                     </div>
                   </div>
@@ -1383,7 +1495,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                   <div className="settings-provider-section-title-row">
                     <div>
                       <div className="settings-provider-console-label">API 密钥</div>
-                      <div className="settings-form-help">保存后进入 Pi 默认 AuthStorage，运行时会直接使用。</div>
+                      <div className="settings-form-help">{selectedProviderSecretHelp}</div>
                     </div>
                     <button className="toolbar-button" type="button" onClick={fetchSelectedProviderModels}>
                       <RefreshCw size={14} />
@@ -1394,10 +1506,10 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                     <div className="settings-provider-secret-input">
                       <KeyRound size={16} />
                       <input
-                        value={selectedProviderApiKey || (selectedProvider.auth?.configured ? (isSecretVisible ? selectedProvider.auth.maskedSecret ?? '已配置' : '••••••••') : '')}
+                        value={selectedProviderSecretValue}
                         onChange={(event) => setSelectedProviderApiKey(event.target.value)}
                         type={isSecretVisible ? 'text' : 'password'}
-                        placeholder="输入 API Key 后点击保存"
+                        placeholder={selectedProviderSecretPlaceholder}
                       />
                       <button
                         type="button"
@@ -1411,6 +1523,9 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                     <button className="toolbar-button" type="button" onClick={() => void saveSelectedProviderApiKey()} disabled={!selectedProviderApiKey.trim()}>
                       保存
                     </button>
+                    <button className="danger-button" type="button" onClick={() => void clearSelectedProviderApiKey()} disabled={!selectedProvider.auth?.configured && !selectedProviderApiKey.trim()}>
+                      清空
+                    </button>
                   </div>
                 </div>
               )}
@@ -1422,10 +1537,6 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                     <div className="settings-form-help">默认模型会用于新对话和当前运行配置。</div>
                   </div>
                   <div className="inline-actions">
-                    <button className="toolbar-button is-accent" type="button" onClick={openCreateDialog}>
-                      <Plus size={14} />
-                      添加接入
-                    </button>
                     <button className="toolbar-button" type="button" onClick={resetSelectedProviderModels}>
                       <RotateCcw size={14} />
                       重置
@@ -1568,7 +1679,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                         <span className="settings-add-type-icon"><Bot size={18} /></span>
                         <span className="settings-add-type-main">
                           <span className="settings-add-type-name">{definition.label}</span>
-                          <span className="settings-add-type-copy">{definition.description || 'Pi ModelRegistry provider'}</span>
+                          <span className="settings-add-type-copy">{definition.description || '模型接入'}</span>
                         </span>
                         {isSelected ? <Check size={16} /> : null}
                       </button>
@@ -2156,6 +2267,309 @@ function PluginAvatar() {
       <Puzzle size={16} />
     </span>
   );
+}
+
+type KnowledgeFeedback = { type: 'success' | 'error'; text: string } | null;
+
+function KnowledgePanel() {
+  const [health, setHealth] = useState<KnowledgeHealthResult[]>([]);
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false);
+  const [query, setQuery] = useState('OpenAgent runtime');
+  const [queryResults, setQueryResults] = useState<KnowledgeResult[]>([]);
+  const [isQuerying, setIsQuerying] = useState(false);
+  const [ingestTitle, setIngestTitle] = useState('');
+  const [ingestContent, setIngestContent] = useState('');
+  const [lintResult, setLintResult] = useState<KnowledgeLintResult | null>(null);
+  const [graphResult, setGraphResult] = useState<KnowledgeGraphResult | null>(null);
+  const [isMaintaining, setIsMaintaining] = useState(false);
+  const [feedback, setFeedback] = useState<KnowledgeFeedback>(null);
+
+  const loadHealth = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.getKnowledgeHealth) {
+      setFeedback({ type: 'error', text: '当前环境未挂载知识库状态接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setIsLoadingHealth(true);
+      const result = await desktopApi.getKnowledgeHealth({ scope: 'system' });
+      setHealth(result);
+      setFeedback(null);
+    } catch (error) {
+      setFeedback({ type: 'error', text: `知识库状态读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsLoadingHealth(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadHealth();
+  }, []);
+
+  const submitQuery = async () => {
+    const desktopApi = window.desktopApi;
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      setFeedback({ type: 'error', text: '请输入要查询的问题。' });
+      return;
+    }
+
+    if (!desktopApi?.querySystemWiki) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki 查询接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setIsQuerying(true);
+      const results = await desktopApi.querySystemWiki({ query: normalizedQuery, limit: 8 });
+      setQueryResults(results);
+      setFeedback({ type: 'success', text: results.length > 0 ? `找到 ${results.length} 条 system wiki 结果。` : '没有找到匹配结果。' });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `查询失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsQuerying(false);
+    }
+  };
+
+  const submitIngest = async () => {
+    const desktopApi = window.desktopApi;
+    const title = ingestTitle.trim();
+    const content = ingestContent.trim();
+    if (!title || !content) {
+      setFeedback({ type: 'error', text: '请输入标题和内容。' });
+      return;
+    }
+
+    if (!desktopApi?.ingestSystemWiki) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki 摄取接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      const result = await desktopApi.ingestSystemWiki({
+        title,
+        content,
+        tags: ['openagent']
+      });
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: result.message || '摄取失败。' });
+        return;
+      }
+      setFeedback({ type: 'success', text: `${result.message}${result.path ? ` 写入：${result.path}` : ''}` });
+      setIngestTitle('');
+      setIngestContent('');
+      await loadHealth();
+      setQuery(title);
+      setQueryResults((await desktopApi.querySystemWiki?.({ query: title, limit: 5 })) ?? []);
+    } catch (error) {
+      setFeedback({ type: 'error', text: `摄取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const runLint = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.lintSystemWiki) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki lint 接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setIsMaintaining(true);
+      const result = await desktopApi.lintSystemWiki();
+      setLintResult(result);
+      setFeedback({ type: result.ok ? 'success' : 'error', text: result.message });
+      await loadHealth();
+    } catch (error) {
+      setFeedback({ type: 'error', text: `Lint 失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsMaintaining(false);
+    }
+  };
+
+  const buildGraph = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.buildSystemWikiGraph) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki graph 接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setIsMaintaining(true);
+      const result = await desktopApi.buildSystemWikiGraph();
+      setGraphResult(result);
+      setFeedback({ type: result.ok ? 'success' : 'error', text: result.message });
+      await loadHealth();
+    } catch (error) {
+      setFeedback({ type: 'error', text: `Graph 构建失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsMaintaining(false);
+    }
+  };
+
+  const systemWikiHealth = health.find((item) => item.source === 'system-wiki');
+  const systemWikiData = asRecord(systemWikiHealth?.data);
+
+  return (
+    <div className="settings-knowledge-layout">
+      <section className="settings-card settings-knowledge-card">
+        <div className="settings-section-header">
+          <div>
+            <div className="settings-section-title">Knowledge Layer</div>
+            <div className="settings-section-description">当前只保留 System Wiki 公共知识库，外部 agent brain 集成已移除。</div>
+          </div>
+          <button className="toolbar-button" type="button" onClick={() => void loadHealth()} disabled={isLoadingHealth}>
+            <RefreshCw size={14} />
+            {isLoadingHealth ? '刷新中…' : '刷新状态'}
+          </button>
+        </div>
+
+        {feedback ? (
+          <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div>
+        ) : null}
+
+        <div className="settings-knowledge-status-grid single">
+          <div className="settings-provider-card-section">
+            <div className="settings-provider-section-title-row">
+              <div>
+                <div className="settings-provider-console-label">System Wiki</div>
+                <div className="settings-form-help">llm-wiki-agent 风格的系统级 Markdown 知识库。</div>
+              </div>
+              <span className={`settings-provider-chip ${systemWikiHealth?.ok ? 'is-enabled' : 'is-disabled'}`}>
+                {systemWikiHealth?.ok ? '就绪' : '未初始化'}
+              </span>
+            </div>
+            <div className="settings-info-grid">
+              <div className="settings-info-row">
+                <div className="settings-info-label">Memory Root</div>
+                <div className="settings-info-value">{String(systemWikiData.root ?? '~/.openagent/system/wiki')}</div>
+              </div>
+              <div className="settings-info-row">
+                <div className="settings-info-label">页面</div>
+                <div className="settings-info-value">{String(systemWikiData.wikiFiles ?? 0)}</div>
+              </div>
+              <div className="settings-info-row">
+                <div className="settings-info-label">Sources</div>
+                <div className="settings-info-value">{String(systemWikiData.sourceFiles ?? 0)}</div>
+              </div>
+            </div>
+            <div className="settings-form-help">{systemWikiHealth?.message ?? '点击刷新状态初始化 system wiki。'}</div>
+            <div className="inline-actions">
+              <button className="toolbar-button" type="button" onClick={() => void runLint()} disabled={isMaintaining}>
+                {isMaintaining ? '处理中…' : 'Lint'}
+              </button>
+              <button className="toolbar-button" type="button" onClick={() => void buildGraph()} disabled={isMaintaining}>
+                构建 Graph
+              </button>
+            </div>
+            {lintResult ? (
+              <div className="settings-form-help">
+                Lint 报告：<code>{lintResult.reportPath}</code>
+              </div>
+            ) : null}
+            {graphResult ? (
+              <div className="settings-form-help">
+                Graph：<code>{graphResult.graphJsonPath}</code> · <code>{graphResult.graphHtmlPath}</code>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card settings-knowledge-card">
+        <div className="settings-section-header">
+          <div>
+            <div className="settings-section-title">查询 System Wiki</div>
+            <div className="settings-section-description">用于验证 system_wiki_query / knowledge_search 的第一阶段效果。</div>
+          </div>
+        </div>
+        <div className="settings-knowledge-form">
+          <div className="settings-model-input-row">
+            <input
+              className="settings-text-input"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void submitQuery();
+                }
+              }}
+              placeholder="例如：OpenAgent runtime 如何接入知识库？"
+            />
+            <button className="primary-button" type="button" onClick={() => void submitQuery()} disabled={isQuerying}>
+              {isQuerying ? '查询中…' : '查询'}
+            </button>
+          </div>
+
+          <div className="settings-provider-model-table">
+            {queryResults.length > 0 ? (
+              queryResults.map((result) => (
+                <div key={result.id} className="settings-provider-model-row settings-knowledge-result-row">
+                  <div className="settings-provider-model-main">
+                    <div className="settings-provider-model-name">
+                      <span>{result.title}</span>
+                      <span className="settings-provider-default-badge">{result.source}</span>
+                    </div>
+                    <div className="settings-provider-model-meta-line">
+                      {result.path ? <code>{result.path}</code> : null}
+                      {typeof result.score === 'number' ? <span className="settings-provider-model-token">score {result.score}</span> : null}
+                    </div>
+                    <div className="settings-knowledge-result-content">{result.content}</div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="settings-provider-model-empty">
+                <div className="settings-provider-empty-title">还没有查询结果</div>
+                <div className="settings-provider-empty-copy">先摄取一段系统知识，或查询已存在的 wiki 页面。</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card settings-knowledge-card">
+        <div className="settings-section-header">
+          <div>
+            <div className="settings-section-title">摄取到 System Wiki</div>
+            <div className="settings-section-description">把明确提供的系统/项目知识写入 raw、sources、index、overview 和 log。</div>
+          </div>
+        </div>
+        <div className="settings-knowledge-form">
+          <label className="settings-form-field">
+            <span className="settings-form-label">标题</span>
+            <input
+              className="settings-text-input"
+              value={ingestTitle}
+              onChange={(event) => setIngestTitle(event.target.value)}
+              placeholder="例如：OpenAgent Knowledge Layer 设计"
+            />
+          </label>
+          <label className="settings-form-field">
+            <span className="settings-form-label">内容</span>
+            <textarea
+              className="settings-textarea settings-knowledge-textarea"
+              value={ingestContent}
+              onChange={(event) => setIngestContent(event.target.value)}
+              placeholder="粘贴 Markdown 或纯文本内容。"
+              rows={10}
+            />
+          </label>
+          <div className="settings-model-input-row">
+            <button className="primary-button" type="button" onClick={() => void submitIngest()}>
+              写入 System Wiki
+            </button>
+            <span className="settings-provider-muted">第一阶段只支持显式文本摄取；文件导入和 lint/graph 后续实现。</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function asRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 }
 
 function PluginPanel() {
@@ -2829,6 +3243,8 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
             ) : activeTab === 'plugins' ? (
               <PluginPanel />
+            ) : activeTab === 'knowledge' ? (
+              <KnowledgePanel />
             ) : (
               <section className="settings-card">
                 {rows.map((row, index) => (

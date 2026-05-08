@@ -31,12 +31,62 @@ export function createDefaultToolRegistry(workspaceRoot: string) {
   registry.register(createFindTool(workspaceRoot));
   registry.register(createGrepTool(workspaceRoot));
   registry.register(createCountFilesTool(workspaceRoot));
+  registry.register(createCurrentTimeTool());
 
   // Legacy OpenAgent names kept for older prompts/UI affordances.
   registry.register(createListDirectoryTool(workspaceRoot));
   registry.register(createReadFileTool(workspaceRoot));
 
   return registry;
+}
+
+
+function createCurrentTimeTool(): RuntimeTool {
+  return {
+    name: 'current_time',
+    label: 'Current System Time',
+    description: 'Return the current local system time. Use this whenever the user asks for current time, system time, today, now, or a specific current date/time format.',
+    parameters: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', description: 'Optional format. Supports yyyy-MM-dd HH:mm:ss. Defaults to ISO string.' }
+      },
+      additionalProperties: false
+    },
+    execute: async ({ input, signal }) => {
+      throwIfAborted(signal);
+      const args = asRecord(input);
+      const now = new Date();
+      const format = String(args.format ?? '').trim();
+      const formatted = format === 'yyyy-MM-dd HH:mm:ss' ? formatDateTime(now) : now.toISOString();
+      return {
+        ok: true,
+        content: formatted,
+        data: {
+          format: format || 'iso',
+          iso: now.toISOString(),
+          timezoneOffsetMinutes: now.getTimezoneOffset()
+        }
+      };
+    }
+  };
+}
+
+function formatDateTime(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    '-',
+    pad(date.getMonth() + 1),
+    '-',
+    pad(date.getDate()),
+    ' ',
+    pad(date.getHours()),
+    ':',
+    pad(date.getMinutes()),
+    ':',
+    pad(date.getSeconds())
+  ].join('');
 }
 
 function createLsTool(workspaceRoot: string): RuntimeTool {

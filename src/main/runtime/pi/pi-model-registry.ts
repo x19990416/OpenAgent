@@ -35,11 +35,12 @@ interface OpenAgentUpsertLlmProviderInput {
 export interface PiProviderCatalogItem {
   id: string;
   name: string;
-  kind: 'pi-provider';
-  invocationMode: 'pi-agent-session';
+  kind: 'pi-provider' | 'openai-compatible';
+  invocationMode: 'pi-agent-session' | 'chat-completions' | 'responses';
+  baseUrl?: string;
   defaultModel: string;
   enabled: boolean;
-  auth: { type: 'api_key'; configured: boolean; maskedSecret?: string };
+  auth: { type: 'api_key'; configured: boolean; maskedSecret?: string; secret?: string };
   models: PiModelCatalogItem[];
 }
 
@@ -62,6 +63,7 @@ interface PiModelsJson {
 }
 
 interface PiModelsJsonProvider {
+  name?: string;
   baseUrl?: string;
   api?: string;
   apiKey?: string;
@@ -125,6 +127,64 @@ export function saveOpenAgentPiProviderApiKey(input: { providerId: string; apiKe
   return { ok: true, authPath: 'pi-default-auth' };
 }
 
+export function clearOpenAgentPiProviderApiKey(input: { providerId: string }) {
+  const providerId = normalizeProviderId(input.providerId);
+
+  if (!providerId) {
+    throw new Error('Provider id is required.');
+  }
+
+  const authStorage = createOpenAgentAuthStorage();
+  authStorage.remove(providerId);
+
+  if (isCustomProviderId(providerId)) {
+    const modelsJson = readOpenAgentPiModelsJson();
+    const existingProvider = modelsJson.providers?.[providerId];
+
+    if (existingProvider) {
+      const { apiKey: _apiKey, headers: _headers, ...providerWithoutSecret } = existingProvider;
+      modelsJson.providers = {
+        ...(modelsJson.providers ?? {}),
+        [providerId]: providerWithoutSecret
+      };
+      writeOpenAgentPiModelsJson(modelsJson);
+    }
+  }
+
+  return {
+    ok: true,
+    providerId,
+    modelsPath: getOpenAgentPiModelsPath()
+  };
+}
+
+export function deleteOpenAgentPiProvider(input: { providerId: string }) {
+  const providerId = normalizeProviderId(input.providerId);
+
+  if (!providerId) {
+    throw new Error('Provider id is required.');
+  }
+
+  if (!isCustomProviderId(providerId)) {
+    throw new Error('Only custom providers can be deleted.');
+  }
+
+  const authStorage = createOpenAgentAuthStorage();
+  authStorage.remove(providerId);
+
+  const modelsJson = readOpenAgentPiModelsJson();
+  if (modelsJson.providers?.[providerId]) {
+    const { [providerId]: _deletedProvider, ...nextProviders } = modelsJson.providers;
+    writeOpenAgentPiModelsJson({ providers: nextProviders });
+  }
+
+  return {
+    ok: true,
+    providerId,
+    modelsPath: getOpenAgentPiModelsPath()
+  };
+}
+
 export async function loginOpenAgentPiOAuthProvider(input: {
   providerId: string;
   onAuth: (info: { url: string; instructions?: string }) => void | Promise<void>;
@@ -161,7 +221,7 @@ export function upsertOpenAgentPiProvider(input: OpenAgentUpsertLlmProviderInput
     saveOpenAgentPiProviderApiKey({ providerId, apiKey });
   }
 
-  if (input.baseUrl || models.length > 0 || input.kind === 'openai-compatible' || input.kind === 'custom') {
+  if (isCustomProviderId(providerId)) {
     writeOpenAgentPiModelsJsonProvider(providerId, input, models, apiKey);
   }
 
@@ -195,7 +255,7 @@ export function updateOpenAgentPiProviderModels(input: {
   const modelsJson = readOpenAgentPiModelsJson();
   const existingProvider = modelsJson.providers?.[providerId];
 
-  if (existingProvider || isCustomProviderId(providerId)) {
+  if (isCustomProviderId(providerId)) {
     modelsJson.providers = {
       ...(modelsJson.providers ?? {}),
       [providerId]: {
@@ -231,17 +291,18 @@ export async function discoverOpenAgentPiModels(input: {
 }) {
   const baseUrl = String(input.baseUrl || '').trim();
   const secret = String(input.auth?.secret || '').trim();
+  const providerId = normalizeProviderId(String(input.providerId || input.kind || ''));
+  const providerCheckBaseUrl = resolveProviderCheckBaseUrl(providerId);
 
-  if (baseUrl) {
+  if (baseUrl || (secret && providerCheckBaseUrl)) {
     return discoverOpenAiCompatibleModels({
-      baseUrl,
+      baseUrl: baseUrl || providerCheckBaseUrl,
       apiKey: secret,
       authType: String(input.auth?.type || 'bearer'),
       headerName: String(input.auth?.headerName || 'Authorization')
     });
   }
 
-  const providerId = normalizeProviderId(String(input.providerId || input.kind || ''));
   const catalog = await buildPiProviderCatalog({ activeProviderId: providerId });
   const provider = catalog.providers.find((item) => item.id === providerId);
   return {
@@ -278,6 +339,7 @@ export async function buildPiProviderCatalog(input?: { activeProviderId?: string
   const authStorage = createOpenAgentAuthStorage();
   applyRuntimeApiKeys(authStorage, activeProviderId);
   const modelRegistry = createOpenAgentModelRegistry(authStorage);
+  const modelsJson = readOpenAgentPiModelsJson();
   const allModels = modelRegistry.getAll();
   const byProvider = new Map<string, any[]>();
 
@@ -291,6 +353,8 @@ export async function buildPiProviderCatalog(input?: { activeProviderId?: string
     .filter(([providerId]) => isOpenAgentVisibleProviderId(providerId))
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([providerId, models]) => {
+      const isBuiltInProvider = OPENAGENT_BUILT_IN_PROVIDER_IDS.has(providerId);
+      const providerConfig = isBuiltInProvider ? undefined : modelsJson.providers?.[providerId];
       const sortedModels = models.sort((a, b) => String(a.name ?? a.id).localeCompare(String(b.name ?? b.id)));
       const defaultModel =
         providerId === activeProviderId && sortedModels.some((model) => model.id === activeModelId)
@@ -298,19 +362,22 @@ export async function buildPiProviderCatalog(input?: { activeProviderId?: string
           : String(sortedModels[0]?.id ?? '');
       const configured = providerId === 'openai-codex'
         ? authStorage.get(providerId)?.type === 'oauth'
-        : authStorage.hasAuth(providerId);
+        : authStorage.hasAuth(providerId) || Boolean(providerConfig?.apiKey);
+      const authSecret = isBuiltInProvider ? extractAuthSecret(authStorage.get(providerId)) : providerConfig?.apiKey;
 
       return {
         id: providerId,
-        name: formatProviderName(providerId),
-        kind: 'pi-provider',
-        invocationMode: 'pi-agent-session',
+        name: providerConfig?.name || formatProviderName(providerId),
+        kind: isBuiltInProvider ? 'pi-provider' : 'openai-compatible',
+        invocationMode: isBuiltInProvider ? 'pi-agent-session' : resolveCatalogInvocationMode(providerConfig?.api),
+        baseUrl: providerConfig?.baseUrl,
         defaultModel,
         enabled: configured || providerId === activeProviderId,
         auth: {
           type: 'api_key',
           configured,
-          maskedSecret: configured ? '••••••••' : undefined
+          maskedSecret: configured ? '••••••••' : undefined,
+          secret: authSecret
         },
         models: sortedModels.map((model) => ({
           id: String(model.id),
@@ -428,12 +495,13 @@ function writeOpenAgentPiModelsJsonProvider(
     ...(modelsJson.providers ?? {}),
     [providerId]: {
       ...existingProvider,
+      name: String(input.name || existingProvider?.name || formatProviderName(providerId)).trim(),
       baseUrl: String(input.baseUrl || existingProvider?.baseUrl || '').trim() || 'https://api.openai.com/v1',
       api: resolvePiApi(String(input.invocationMode || 'pi-agent-session'), String(input.kind || 'openai-compatible')),
       apiKey: apiKeyFallback,
       authHeader: authType !== 'none' && (authType !== 'api_key_header' || headerName === 'Authorization'),
       ...(headers ? { headers } : {}),
-      models: models.map(toPiModelDefinition)
+      models: models.length > 0 ? models.map(toPiModelDefinition) : existingProvider?.models ?? []
     }
   };
 
@@ -484,6 +552,23 @@ function resolvePiApi(invocationMode: string, kind: string) {
   return 'openai-completions';
 }
 
+function resolveCatalogInvocationMode(api?: string): PiProviderCatalogItem['invocationMode'] {
+  if (api === 'openai-responses') return 'responses';
+  return 'chat-completions';
+}
+
+function resolveProviderCheckBaseUrl(providerId: string) {
+  if (providerId === 'openai') return 'https://api.openai.com/v1';
+  return '';
+}
+
+function extractAuthSecret(auth: unknown) {
+  if (!auth || typeof auth !== 'object') return undefined;
+  const candidate = auth as { key?: unknown; apiKey?: unknown; secret?: unknown };
+  const secret = candidate.key ?? candidate.apiKey ?? candidate.secret;
+  return typeof secret === 'string' && secret ? secret : undefined;
+}
+
 function normalizeProviderId(value: string) {
   return value
     .trim()
@@ -520,11 +605,14 @@ async function discoverOpenAiCompatibleModels(input: { baseUrl: string; apiKey: 
   const response = await fetch(requestUrl, { headers });
 
   if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    const providerMessage = parseModelDiscoveryErrorMessage(errorText);
+
     return {
       ok: false,
       models: [],
       requestUrl,
-      error: `${response.status} ${response.statusText}`
+      error: providerMessage ? `${response.status} ${providerMessage}` : `${response.status} ${response.statusText}`
     };
   }
 
@@ -542,6 +630,18 @@ async function discoverOpenAiCompatibleModels(input: { baseUrl: string; apiKey: 
     models,
     requestUrl
   };
+}
+
+function parseModelDiscoveryErrorMessage(body: string) {
+  if (!body) return '';
+
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: unknown }; message?: unknown };
+    const message = parsed.error?.message ?? parsed.message;
+    return typeof message === 'string' ? message : '';
+  } catch {
+    return body.slice(0, 200);
+  }
 }
 
 function formatProviderName(providerId: string) {

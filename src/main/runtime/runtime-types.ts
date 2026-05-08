@@ -1,3 +1,5 @@
+import type { ApprovalDecision, RuntimeApprovalRequest } from './approval-service.js';
+
 export type RuntimeRunStatus = 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled';
 
 export interface RuntimeMessage {
@@ -99,6 +101,7 @@ export interface AgentRuntimeRunInput {
   abortSignal: AbortSignal;
   onLog?: (entry: RuntimeLogEntry) => void;
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
+  requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
 }
 
 export interface RuntimeLogEntry {
@@ -155,4 +158,5 @@ export interface PromptSubmissionInput {
   prompt: string;
   attachments?: RuntimeAttachment[];
   skillId?: string | null;
+  awaitCompletion?: boolean;
 }

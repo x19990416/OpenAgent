@@ -1,5 +1,6 @@
 import { ToolExecutionError } from './errors.js';
 import { ToolPolicy } from './tool-policy.js';
+import type { ApprovalDecision, RuntimeApprovalRequest } from './approval-service.js';
 import type { RuntimeLogEntry, RuntimeTool, RuntimeToolExecutionResult, RuntimeUiEvent } from './runtime-types.js';
 
 export interface ToolExecutorOptions {
@@ -8,6 +9,8 @@ export interface ToolExecutorOptions {
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
   onLog?: (entry: RuntimeLogEntry) => void;
   policy?: ToolPolicy;
+  workspaceRoot?: string;
+  requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
 }
 
 export class ToolExecutor {
@@ -17,7 +20,7 @@ export class ToolExecutor {
     private readonly tools: RuntimeTool[],
     private readonly options: ToolExecutorOptions = {}
   ) {
-    this.policy = options.policy ?? new ToolPolicy();
+    this.policy = options.policy ?? new ToolPolicy(options.workspaceRoot ?? process.cwd());
   }
 
   async execute(input: { toolName: string; toolCallId: string; args: unknown; signal: AbortSignal }): Promise<RuntimeToolExecutionResult> {
@@ -46,11 +49,36 @@ export class ToolExecutor {
     });
 
     const decision = this.policy.decide(tool, input.args);
-    if (!decision.allowed) {
-      const reason = decision.reason ?? `Tool blocked by OpenAgent policy: ${input.toolName}`;
+    if (decision.kind === 'deny') {
+      const reason = decision.reason || `Tool blocked by OpenAgent policy: ${input.toolName}`;
       this.options.onLog?.({ scope: 'runtime', message: 'tool blocked by policy', data: { ...basePayload, reason } });
       this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', reason, { reason, durationMs: 0 }));
       throw new ToolExecutionError(reason, basePayload);
+    }
+
+    if (decision.kind === 'requires_approval') {
+      if (!this.options.requestApproval) {
+        const reason = `Tool requires approval but no approval handler is configured: ${input.toolName}`;
+        this.options.onLog?.({ scope: 'runtime', message: 'tool approval handler missing', data: { ...basePayload, reason, approval: decision.approval } });
+        this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', reason, { reason, durationMs: 0 }));
+        throw new ToolExecutionError(reason, basePayload);
+      }
+
+      const approvalRequest: RuntimeApprovalRequest = {
+        id: `${input.toolCallId}-approval`,
+        runId: this.options.runId,
+        threadId: this.options.threadId,
+        ...decision.approval
+      };
+      this.options.onLog?.({ scope: 'runtime', message: 'tool waiting for approval', data: { ...basePayload, approval: approvalRequest } });
+      const approvalDecision = await this.options.requestApproval(approvalRequest);
+      if (approvalDecision !== 'approved') {
+        const reason = `User rejected approval for ${input.toolName}: ${approvalRequest.targetPath ?? approvalRequest.description}`;
+        this.options.onLog?.({ scope: 'runtime', message: 'tool approval rejected', data: { ...basePayload, reason, approval: approvalRequest } });
+        this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', reason, { reason, durationMs: Date.now() - startedAt }));
+        throw new ToolExecutionError(reason, basePayload);
+      }
+      this.options.onLog?.({ scope: 'runtime', message: 'tool approval granted', data: { ...basePayload, approval: approvalRequest } });
     }
 
     this.options.onLog?.({ scope: 'runtime', message: 'tool execution started', data: basePayload });

@@ -236,17 +236,8 @@ export function LeftSidebar({
           role="menu"
           aria-label="设置菜单"
         >
-          <div className="settings-popover-account">
-            <div className="settings-popover-avatar">
-              <CircleUserRound size={24} />
-            </div>
-            <div className="settings-popover-account-copy">
-              <div className="settings-popover-email">{workspace.providerLabel || '未配置模型'}</div>
-            </div>
-          </div>
-
           <button
-            className="settings-popover-item settings-popover-item-muted"
+            className="settings-popover-account"
             type="button"
             role="menuitem"
             onClick={() => {
@@ -254,10 +245,12 @@ export function LeftSidebar({
               onOpenSettings('account');
             }}
           >
-            <span className="row row-gap-10">
-              <CircleUserRound size={18} />
-              个人帐户
-            </span>
+            <div className="settings-popover-avatar">
+              <CircleUserRound size={24} />
+            </div>
+            <div className="settings-popover-account-copy">
+              <div className="settings-popover-email">OpenAgent</div>
+            </div>
           </button>
 
           <div className="settings-popover-divider" />
@@ -297,18 +290,10 @@ function formatThreadTitle(thread: ThreadListItem) {
 
 function sortThreadsForDisplay(threads: ThreadListItem[]) {
   return [...threads].sort((a, b) => {
-    const aIsNew = isNewBlankThread(a);
-    const bIsNew = isNewBlankThread(b);
-    if (aIsNew !== bIsNew) return aIsNew ? -1 : 1;
-
-    const aTime = Date.parse(aIsNew ? a.createdAt : a.updatedAt);
-    const bTime = Date.parse(bIsNew ? b.createdAt : b.updatedAt);
+    const aTime = Date.parse(a.updatedAt || a.createdAt);
+    const bTime = Date.parse(b.updatedAt || b.createdAt);
     return normalizeTime(bTime) - normalizeTime(aTime);
   });
-}
-
-function isNewBlankThread(thread: ThreadListItem) {
-  return thread.runCount === 0 && thread.title === '新的会话';
 }
 
 function normalizeTime(value: number) {

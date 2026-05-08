@@ -1,5 +1,6 @@
 import { buildSystemPrompt } from './prompt-builder.js';
 import type { AgentRuntimeRunInput, RuntimeLogEntry, RuntimeMessage, RuntimeTool } from './runtime-types.js';
+import type { ApprovalDecision, RuntimeApprovalRequest } from './approval-service.js';
 
 export interface RunContextInput {
   runId: string;
@@ -15,6 +16,7 @@ export interface RunContextInput {
   abortSignal: AbortSignal;
   onLog?: (entry: RuntimeLogEntry) => void;
   emitUiEvent?: (type: import('./runtime-types.js').RuntimeUiEvent['type'], payload?: unknown) => void;
+  requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
 }
 
 export function buildRunInput(input: RunContextInput): AgentRuntimeRunInput {

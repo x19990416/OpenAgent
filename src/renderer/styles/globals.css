@@ -497,6 +497,54 @@ button {
   align-items: start;
 }
 
+.settings-knowledge-layout {
+  width: min(100%, 980px);
+  display: grid;
+  gap: 18px;
+}
+
+.settings-knowledge-card {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 18px;
+}
+
+.settings-knowledge-card .settings-inline-feedback {
+  margin: 0 20px;
+}
+
+.settings-knowledge-status-grid {
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-knowledge-status-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-knowledge-form {
+  padding: 0 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.settings-knowledge-result-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-knowledge-result-content {
+  color: var(--text-soft);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.settings-knowledge-textarea {
+  min-height: 180px;
+}
+
 .settings-provider-detail {
   display: grid;
   gap: 20px;
@@ -562,7 +610,7 @@ button {
 
 .settings-provider-secret-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
   align-items: center;
 }
@@ -971,8 +1019,30 @@ button {
 }
 
 .settings-provider-hero-card {
+  position: relative;
   display: grid;
   gap: 16px;
+}
+
+.settings-provider-delete-button {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  background: rgba(254, 242, 242, 0.72);
+  color: #ef4444;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: 160ms ease;
+}
+
+.settings-provider-delete-button:hover {
+  background: rgba(254, 226, 226, 0.95);
+  border-color: rgba(239, 68, 68, 0.32);
 }
 
 .settings-provider-hero-main,
@@ -987,6 +1057,10 @@ button {
 .settings-provider-hero-main {
   justify-content: flex-start;
   align-items: center;
+}
+
+.settings-provider-title-stack {
+  min-width: 0;
 }
 
 .settings-provider-summary-grid {
@@ -1976,10 +2050,20 @@ button {
 }
 
 .settings-popover-account {
+  --settings-popover-account-color: var(--text-muted);
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 14px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 4px 6px;
+  padding: 4px 4px 8px;
+  text-align: left;
+}
+
+.settings-popover-account:hover {
+  background: rgba(15, 23, 42, 0.04);
 }
 
 .settings-popover-avatar {
@@ -1988,8 +2072,8 @@ button {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  color: var(--text-muted);
-  background: rgba(15, 23, 42, 0.04);
+  color: var(--settings-popover-account-color);
+  background: transparent;
 }
 
 .settings-popover-account-copy {
@@ -1998,10 +2082,10 @@ button {
 }
 
 .settings-popover-email {
-  color: var(--text-soft);
+  color: var(--settings-popover-account-color);
   font-size: 13px;
   line-height: 1.2;
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-normal);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

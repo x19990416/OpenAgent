@@ -133,8 +133,8 @@ export class ScheduledTaskService {
 
   private load() {
     try {
-      if (!fs.existsSync(this.storageFile)) return;
-      const parsed = JSON.parse(fs.readFileSync(this.storageFile, 'utf8')) as { tasks?: ScheduledTaskRecord[] };
+      const parsed = this.readPersistedTasks(this.storageFile) ?? this.readPersistedTasks(`${this.storageFile}.bak`);
+      if (!parsed) return;
       for (const task of parsed.tasks ?? []) {
         if (!task.id || !task.prompt) continue;
         if (!task.agentId) task.agentId = 'main';
@@ -150,8 +150,21 @@ export class ScheduledTaskService {
 
   private persistAndNotify() {
     fs.mkdirSync(path.dirname(this.storageFile), { recursive: true });
-    fs.writeFileSync(this.storageFile, JSON.stringify({ schemaVersion: 1, tasks: this.list() }, null, 2));
+    const serialized = JSON.stringify({ schemaVersion: 1, tasks: this.list() }, null, 2);
+    const tempFile = `${this.storageFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tempFile, serialized);
+    fs.renameSync(tempFile, this.storageFile);
+    try {
+      fs.copyFileSync(this.storageFile, `${this.storageFile}.bak`);
+    } catch (error) {
+      console.warn('[scheduled-task-service] failed to write scheduled tasks backup', error);
+    }
     this.options.onChange?.(this.list());
+  }
+
+  private readPersistedTasks(file: string) {
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as { tasks?: ScheduledTaskRecord[] };
   }
 
   private rescheduleAll() {
@@ -190,6 +203,9 @@ export class ScheduledTaskService {
       task.lastRunStatus = result.ok ? 'succeeded' : 'failed';
       task.lastRunSummary = result.summary || result.error || (result.ok ? '定时任务已提交。' : '定时任务执行失败。');
       task.lastRunThreadId = result.threadId || task.threadId || null;
+      if (task.sessionPolicy === 'reuse_existing' && result.threadId && task.threadId !== result.threadId) {
+        task.threadId = result.threadId;
+      }
     } catch (error) {
       task.lastRunStatus = 'failed';
       task.lastRunSummary = error instanceof Error ? error.message : String(error);

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type { SubagentRunInput, SubagentRunResult } from './subagent-types.js';
+import type { ShellAgentTask, SubagentRunInput, SubagentRunResult } from './subagent-types.js';
 
 const MAX_FIND_RESULTS = 1000;
 
@@ -14,31 +14,34 @@ export class ShellAgent {
       data: { subagentId: this.id, callerAgentId: input.callerAgentId, runId: input.runId, task: input.task }
     });
 
-    const countTask = this.resolveCountTask(input.task, input.workspaceRoot);
-    if (countTask) {
-      return this.runCountTask(input, countTask);
+    const task = this.normalizeTask(input.task, input.workspaceRoot);
+    if (!task) {
+      return {
+        ok: false,
+        agentId: this.id,
+        summary: 'ShellAgent 当前只支持结构化的只读文件计数、文件查找、文件名加内容查找任务。',
+        error: 'unsupported_shell_task'
+      };
     }
 
-    const findTask = this.resolveFindTask(input.task, input.workspaceRoot);
-    if (findTask) {
-      return this.runFindTask(input, findTask);
+    if (task.operation === 'count_files') {
+      return this.runCountTask(input, task);
     }
 
-    return {
-      ok: false,
-      agentId: this.id,
-      summary: 'ShellAgent 当前只支持只读的文件计数和文件查找类命令任务。',
-      error: 'unsupported_shell_task'
-    };
+    if (task.operation === 'find_files_containing') {
+      return this.runFindContainingTask(input, task);
+    }
+
+    return this.runFindTask(input, task);
   }
 
-  private async runCountTask(input: SubagentRunInput, task: { root: string; extension: string; label: string }) {
+  private async runCountTask(input: SubagentRunInput, task: { operation: 'count_files'; root: string; extension: string }) {
     const command = `find ${shellQuote(task.root)} -type f -name ${shellQuote(`*.${task.extension}`)} | wc -l`;
     const startedAt = Date.now();
     const shellResult = await this.runReadOnlyCommand(input, command);
     const count = Number.parseInt(shellResult.stdout.trim(), 10) || 0;
     const durationMs = Date.now() - startedAt;
-    const summary = `统计完成：\`${task.root}\` 下共有 **${count}** 个 ${task.label}。`;
+    const summary = `统计完成：\`${task.root}\` 下共有 **${count}** 个 .${task.extension} 文件。`;
     return {
       ok: shellResult.ok,
       agentId: this.id,
@@ -49,7 +52,7 @@ export class ShellAgent {
     };
   }
 
-  private async runFindTask(input: SubagentRunInput, task: { root: string; extension: string | null }) {
+  private async runFindTask(input: SubagentRunInput, task: { operation: 'find_files'; root: string; extension: string | null }) {
     const namePredicate = task.extension ? ` -name ${shellQuote(`*.${task.extension}`)}` : '';
     const command = `find ${shellQuote(task.root)} -type f${namePredicate} | head -n ${MAX_FIND_RESULTS}`;
     const shellResult = await this.runReadOnlyCommand(input, command);
@@ -58,8 +61,39 @@ export class ShellAgent {
     return {
       ok: shellResult.ok,
       agentId: this.id,
-      summary: shellResult.ok ? `查找完成：\`${task.root}\` 下匹配条件的文件结果已返回。` : shellResult.stderr || shellResult.stdout,
+      summary: shellResult.ok ? [`查找完成：\`${task.root}\` 下匹配条件的文件结果如下。`, '', content].join('\n') : shellResult.stderr || shellResult.stdout,
       result: { root: task.root, extension: task.extension, command, count: files.length, content, stderr: shellResult.stderr },
+      evidence: [`command: ${command}`],
+      error: shellResult.ok ? undefined : shellResult.stderr || shellResult.stdout
+    };
+  }
+
+  private async runFindContainingTask(
+    input: SubagentRunInput,
+    task: { operation: 'find_files_containing'; root: string; namePattern: string; contentPattern: string; ignoreCase: boolean; literal: boolean }
+  ) {
+    const grepFlags = ['-I', '-l'];
+    if (task.ignoreCase) grepFlags.push('-i');
+    if (task.literal) grepFlags.push('-F');
+    const command = `find ${shellQuote(task.root)} -type f -iname ${shellQuote(task.namePattern)} -exec grep ${grepFlags.join(' ')} -- ${shellQuote(task.contentPattern)} {} + | head -n ${MAX_FIND_RESULTS}`;
+    const shellResult = await this.runReadOnlyCommand(input, command);
+    const files = shellResult.stdout.split('\n').map((item) => item.trim()).filter(Boolean);
+    const content = files.length > 0 ? files.join('\n') : 'No files found';
+    return {
+      ok: shellResult.ok,
+      agentId: this.id,
+      summary: shellResult.ok ? [`查找完成：\`${task.root}\` 下文件名匹配 \`${task.namePattern}\` 且内容匹配指定文本的文件如下。`, '', content].join('\n') : shellResult.stderr || shellResult.stdout,
+      result: {
+        root: task.root,
+        namePattern: task.namePattern,
+        contentPattern: task.contentPattern,
+        ignoreCase: task.ignoreCase,
+        literal: task.literal,
+        command,
+        count: files.length,
+        content,
+        stderr: shellResult.stderr
+      },
       evidence: [`command: ${command}`],
       error: shellResult.ok ? undefined : shellResult.stderr || shellResult.stdout
     };
@@ -80,41 +114,33 @@ export class ShellAgent {
     return { ...result, ok: result.exitCode === 0 };
   }
 
-  private resolveCountTask(task: string, workspaceRoot: string) {
-    if (!/(统计|多少|数量|count)/i.test(task)) return null;
-    const extension = this.resolveExtension(task);
-    if (!extension) return null;
-    const root = this.resolveTargetRoot(task, workspaceRoot);
-    return {
-      root,
-      extension,
-      label: `.${extension} 文件`
-    };
-  }
+  private normalizeTask(task: ShellAgentTask, workspaceRoot: string) {
+    const root = task.root ? path.resolve(task.root) : workspaceRoot;
 
-  private resolveFindTask(task: string, workspaceRoot: string) {
-    if (!/(查找|搜索|找出|find|列出)/i.test(task)) return null;
-    const root = this.resolveTargetRoot(task, workspaceRoot);
-    return {
-      root,
-      extension: this.resolveExtension(task)
-    };
-  }
+    if (task.operation === 'count_files') {
+      const extension = normalizeExtension(task.extension);
+      if (!extension) return null;
+      return { operation: 'count_files' as const, root, extension };
+    }
 
-  private resolveExtension(task: string) {
-    const dotted = task.match(/\.([A-Za-z0-9_-]+)\b/);
-    if (dotted?.[1]) return dotted[1].toLowerCase();
-    const md = task.match(/\b(md|markdown)\s*文件?/i);
-    if (md) return md[1].toLowerCase() === 'markdown' ? 'md' : md[1].toLowerCase();
+    if (task.operation === 'find_files') {
+      return { operation: 'find_files' as const, root, extension: normalizeExtension(task.extension) };
+    }
+
+    if (task.operation === 'find_files_containing') {
+      const contentPattern = typeof task.contentPattern === 'string' ? task.contentPattern : '';
+      if (!contentPattern) return null;
+      return {
+        operation: 'find_files_containing' as const,
+        root,
+        namePattern: normalizeNamePattern(task.namePattern),
+        contentPattern,
+        ignoreCase: task.ignoreCase === true,
+        literal: task.literal !== false
+      };
+    }
+
     return null;
-  }
-
-  private resolveTargetRoot(task: string, workspaceRoot: string) {
-    const usersPathMatch = task.match(/(\/Users(?:\/[^\s，。；;]*)?)/);
-    if (usersPathMatch?.[1]) return path.resolve(usersPathMatch[1]);
-    const absolutePathMatch = task.match(/(\/[^\s，。；;]+)/);
-    if (absolutePathMatch?.[1]) return path.resolve(absolutePathMatch[1]);
-    return workspaceRoot;
   }
 }
 
@@ -147,6 +173,17 @@ function runBash(command: string, cwd: string, signal: AbortSignal): Promise<{ e
       resolve({ exitCode, stdout, stderr });
     });
   });
+}
+
+function normalizeExtension(extension: unknown) {
+  if (typeof extension !== 'string') return null;
+  const normalized = extension.trim().replace(/^\.+/, '').toLowerCase();
+  return /^[a-z0-9_-]+$/.test(normalized) ? normalized : null;
+}
+
+function normalizeNamePattern(namePattern: unknown) {
+  if (typeof namePattern !== 'string') return '*';
+  return namePattern.trim() || '*';
 }
 
 function shellQuote(value: string) {

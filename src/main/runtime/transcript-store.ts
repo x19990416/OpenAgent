@@ -7,6 +7,17 @@ interface TranscriptRecord {
   message: RuntimeMessage;
 }
 
+function isOpenAgentTranscriptRecord(record: Partial<TranscriptRecord>): record is TranscriptRecord {
+  const message = record.message;
+  return (
+    record.type === 'message' &&
+    Boolean(message) &&
+    typeof message?.id === 'string' &&
+    typeof message?.createdAt === 'string' &&
+    typeof message?.content === 'string'
+  );
+}
+
 export class TranscriptStore {
   constructor(private readonly filePath: string) {}
 
@@ -29,7 +40,7 @@ export class TranscriptStore {
       .flatMap((line) => {
         try {
           const record = JSON.parse(line) as TranscriptRecord;
-          return record.type === 'message' ? [record.message] : [];
+          return isOpenAgentTranscriptRecord(record) ? [record.message] : [];
         } catch {
           return [];
         }

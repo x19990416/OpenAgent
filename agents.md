@@ -18,6 +18,7 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | --- | --- |
 | `README.md` | 了解项目启动方式、目录和当前 UI 原型状态。 |
 | `docs/pi.md` | 设计或实现 Pi runtime、agent loop、tool adapter、session/memory/compaction 时必须阅读。 |
+| `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
 | `agents.md` | 每次开始开发前阅读，用作路由和约束入口。 |
 
 ## 3. 当前目录职责
@@ -29,7 +30,8 @@ src/
 └── shared/types/         # preload / renderer / main 共享类型契约
 
 docs/
-└── pi.md                 # Pi Agent 集成开发指导
+├── pi.md                 # Pi Agent 集成开发指导
+└── knowledge.md          # system wiki 知识层设计
 ```
 
 ### `src/main`
@@ -73,6 +75,7 @@ docs/
 5. **事件必须可观测**：run、message、tool、approval、patch、terminal、memory 都要能映射到 UI event。
 6. **session 可恢复**：thread/session transcript 应落地到 JSONL，并由 UI 元数据建立索引。
 7. **prompt 不无脑膨胀**：skills、plugins、memory、docs 只注入必要摘要，长内容走按需检索。
+8. **知识库收敛**：当前只保留 llm-wiki-agent 风格 system wiki 作为系统公共知识库；runtime 只能通过 OpenAgent KnowledgeProvider/Tool 访问。
 
 ## 5. 建议新增 runtime 结构
 
@@ -84,6 +87,7 @@ src/main/runtime/
 ├── run-state.ts                # active run、取消、状态机
 ├── event-bus.ts                # UI event 分发
 ├── session-store.ts            # thread/session 文件定位与元数据
+├── knowledge/                  # agent brain / system wiki provider 与工具
 └── pi/
     ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 主适配层
     ├── pi-session.ts           # createAgentSession / SessionManager
@@ -120,6 +124,7 @@ src/main/runtime/
 - shell、git、外部路径、破坏性操作必须走 policy / approval。
 - MCP plugin tool 先转成 OpenAgent tool，再统一转 Pi tool。
 - skill 注入应区分：已发现、已启用、已加载、当前任务相关；不要把所有 skill 全局塞进每一轮 prompt。
+- knowledge tool 必须走 OpenAgent `ToolRegistry`、policy、run log 和 UI event，不允许绕过 OpenAgent 直接执行。
 
 ## 8. 本地数据布局建议
 
@@ -134,6 +139,11 @@ OpenAgent 业务数据应落在：
 │       ├── MEMORY.md
 │       ├── USER.md
 │       └── skills/
+├── system/
+│   └── wiki/
+│       ├── raw/
+│       ├── wiki/
+│       └── graph/
 ├── settings/
 ├── state/
 └── logs/
@@ -181,6 +191,7 @@ pnpm build
 6. 接 OpenAgent tool policy / approval / patch。
 7. 接 skills / plugins / MCP。
 8. 接 session 恢复、memory、compaction。
+9. 接 knowledge layer：system wiki、知识检索和沉淀审批。
 
 ## 12. 不要做的事
 
@@ -201,3 +212,4 @@ pnpm build
 | tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节 |
 | model/provider 配置 | 后续 model config store，避免写死在 Pi adapter |
 | plugin/skill 注入 | 先设计 enabled/loaded/relevant 过滤，再进入 prompt |
+| agent brain / system wiki / 知识库 | `docs/knowledge.md`，然后 `src/main/runtime/knowledge` |

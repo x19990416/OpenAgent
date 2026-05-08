@@ -46,6 +46,12 @@ export interface ApprovalRequest {
   title: string;
   risk: 'low' | 'medium' | 'high';
   description: string;
+  actionType?: 'external-path-read' | 'external-path-write' | 'shell' | 'git' | string;
+  targetPath?: string;
+  access?: 'read' | 'write' | 'execute';
+  recursive?: boolean;
+  scope?: 'once' | 'session' | 'always';
+  payloadPreview?: string;
 }
 
 export interface ApprovalResolution {

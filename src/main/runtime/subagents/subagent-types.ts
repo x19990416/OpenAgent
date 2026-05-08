@@ -2,8 +2,20 @@ import type { RuntimeLogEntry, RuntimeUiEvent } from '../runtime-types.js';
 
 export type SystemSubagentId = 'shell';
 
+export type ShellAgentTask =
+  | { operation: 'count_files'; root?: string; extension: string }
+  | { operation: 'find_files'; root?: string; extension?: string | null }
+  | {
+      operation: 'find_files_containing';
+      root?: string;
+      namePattern?: string | null;
+      contentPattern: string;
+      ignoreCase?: boolean;
+      literal?: boolean;
+    };
+
 export interface SubagentRunInput {
-  task: string;
+  task: ShellAgentTask;
   callerAgentId: string;
   runId?: string;
   threadId?: string;

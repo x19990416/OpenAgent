@@ -1,10 +1,14 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { mkdirSync } from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { RuntimeService } from './runtime/runtime-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
 import {
   buildPiProviderCatalog,
+  clearOpenAgentPiProviderApiKey,
+  deleteOpenAgentPiProvider,
   discoverOpenAgentPiModels,
   getOpenAgentPiModelConfig,
   loginOpenAgentPiOAuthProvider,
@@ -24,10 +28,12 @@ let mainWindow: BrowserWindow | null = null;
 const createdAt = new Date().toISOString();
 
 const activePiModelConfig = getOpenAgentPiModelConfig();
+const activeAgentId = 'main';
+const defaultWorkspaceRoot = resolveDefaultAgentWorkspaceRoot(activeAgentId);
 
 const workspace = {
   name: 'OpenAgent',
-  rootPath: process.cwd(),
+  rootPath: process.env.OPENAGENT_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
   branch: 'main',
   providerId: process.env.OPENAGENT_PROVIDER_ID ?? activePiModelConfig.activeProviderId,
   providerLabel: process.env.OPENAGENT_PROVIDER_LABEL ?? formatProviderName(process.env.OPENAGENT_PROVIDER_ID ?? activePiModelConfig.activeProviderId),
@@ -36,7 +42,7 @@ const workspace = {
 };
 
 const runtimeService = new RuntimeService({
-  agentId: 'main',
+  agentId: activeAgentId,
   workspaceName: workspace.name,
   workspaceRoot: workspace.rootPath,
   branch: workspace.branch,
@@ -51,6 +57,8 @@ const runtimeService = new RuntimeService({
   }
 });
 
+const SCHEDULED_THREAD_TITLE_PREFIX = '⏰ ';
+
 const scheduledTaskService = new ScheduledTaskService({
   onDue: async (task) => {
     let threadId = task.sessionPolicy === 'reuse_existing' ? task.threadId || null : null;
@@ -61,12 +69,15 @@ const scheduledTaskService = new ScheduledTaskService({
       }
     }
     if (!threadId) {
-      const created = runtimeService.createThread({ agentId: task.agentId, title: task.title });
+      const created = runtimeService.createThread({ agentId: task.agentId, title: formatScheduledThreadTitle(task.title) });
       threadId = created.threadId;
+    } else {
+      runtimeService.markThreadTitlePrefix(threadId, SCHEDULED_THREAD_TITLE_PREFIX);
     }
 
     const result = await runtimeService.submitPrompt({
-      prompt: [`[定时任务] ${task.title}`, '', task.prompt].join('\n')
+      prompt: [`[定时任务] ${task.title}`, '', task.prompt].join('\n'),
+      awaitCompletion: true
     });
     const error = 'error' in result ? String(result.error || '') : '';
     return {
@@ -77,6 +88,7 @@ const scheduledTaskService = new ScheduledTaskService({
     };
   },
   onChange: (tasks) => {
+    markScheduledTaskThreads(tasks);
     mainWindow?.webContents.send('ui:event', {
       id: `event-schedules-${Date.now()}`,
       type: 'scheduled-task.updated',
@@ -85,6 +97,31 @@ const scheduledTaskService = new ScheduledTaskService({
     });
   }
 });
+
+markScheduledTaskThreads(scheduledTaskService.list());
+
+
+function formatScheduledThreadTitle(title: string) {
+  const normalized = title.trim() || '未命名定时任务';
+  return normalized.startsWith(SCHEDULED_THREAD_TITLE_PREFIX) ? normalized : `${SCHEDULED_THREAD_TITLE_PREFIX}${normalized}`;
+}
+
+function markScheduledTaskThreads(tasks: Array<{ threadId?: string | null; lastRunThreadId?: string | null }>) {
+  for (const task of tasks) {
+    const threadId = task.threadId || task.lastRunThreadId;
+    if (threadId) {
+      runtimeService.markThreadTitlePrefix(threadId, SCHEDULED_THREAD_TITLE_PREFIX);
+    }
+  }
+}
+
+function resolveDefaultAgentWorkspaceRoot(agentId: string) {
+  // OpenAgent 的默认 workspace 属于具体 agent，而不是开发时启动 app 的 repo cwd。
+  // 保留环境变量 OPENAGENT_WORKSPACE_ROOT 作为调试/测试覆盖入口；正式默认落在 ~/.openagent/agents/<agentId>/workspace。
+  const workspaceRoot = path.join(os.homedir(), '.openagent', 'agents', agentId, 'workspace');
+  mkdirSync(workspaceRoot, { recursive: true });
+  return workspaceRoot;
+}
 
 function activateWindowForApproval() {
   if (!mainWindow) return;
@@ -188,6 +225,11 @@ function registerIpc() {
   }));
   ipcMain.handle('state:get-snapshot', () => buildSnapshot());
   ipcMain.handle('runtime:get-tasks', () => runtimeService.listRuntimeTasks());
+  ipcMain.handle('knowledge:health', () => runtimeService.getKnowledgeHealth('system'));
+  ipcMain.handle('knowledge:query-system-wiki', (_event, payload) => runtimeService.querySystemWiki(payload ?? {}));
+  ipcMain.handle('knowledge:ingest-system-wiki', (_event, payload) => runtimeService.ingestSystemWiki(payload ?? {}));
+  ipcMain.handle('knowledge:lint-system-wiki', () => runtimeService.lintSystemWiki());
+  ipcMain.handle('knowledge:build-system-wiki-graph', () => runtimeService.buildSystemWikiGraph());
   ipcMain.handle('scheduled-tasks:list', () => scheduledTaskService.list());
   ipcMain.handle('scheduled-tasks:create', (_event, payload) => scheduledTaskService.create(payload ?? {}));
   ipcMain.handle('scheduled-tasks:delete', (_event, payload) => scheduledTaskService.delete(String(payload?.taskId || '')));
@@ -217,14 +259,7 @@ function registerIpc() {
     })
   );
   ipcMain.handle('llm:list-kinds', () => [
-    { kind: 'openai', label: 'OpenAI', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'openai-codex', label: 'ChatGPT / Codex 订阅', description: 'Reuse Pi default auth. Run /login openai-codex in Pi CLI first.', supportedAuthTypes: ['none'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'anthropic', label: 'Anthropic', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'google', label: 'Google / Gemini', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'mistral', label: 'Mistral', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'deepseek', label: 'DeepSeek', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'openrouter', label: 'OpenRouter', description: 'Pi ModelRegistry provider', supportedAuthTypes: ['bearer'], defaultInvocationMode: 'pi-agent-session', invocationMode: 'pi-agent-session' },
-    { kind: 'openai-compatible', label: '自定义兼容接口', description: 'OpenAI-compatible / 公司网关 / 本地模型服务', supportedAuthTypes: ['bearer', 'api_key_header', 'none'], defaultInvocationMode: 'chat-completions', invocationMode: 'chat-completions', defaultBaseUrl: 'https://your-gateway.example.com/v1' }
+    { kind: 'openai-compatible', label: '自定义兼容接口', description: '公司网关 / 本地模型服务 / OpenAI-compatible', supportedAuthTypes: ['bearer', 'api_key_header', 'none'], defaultInvocationMode: 'chat-completions', invocationMode: 'chat-completions', defaultBaseUrl: 'https://your-gateway.example.com/v1' }
   ]);
   ipcMain.handle('llm:update-models', async (_event, payload) => {
     const updateResult = updateOpenAgentPiProviderModels({
@@ -243,9 +278,30 @@ function registerIpc() {
   });
   ipcMain.handle('llm:refresh-models', async (_event, payload) => {
     const providerId = String(payload?.providerId || workspace.providerId);
+    const baseUrl = typeof payload?.baseUrl === 'string' ? payload.baseUrl.trim() : '';
+    const apiKey = typeof payload?.auth?.secret === 'string' ? payload.auth.secret.trim() : '';
+    if (apiKey || baseUrl) {
+      const discovered = await discoverOpenAgentPiModels({
+        providerId,
+        baseUrl,
+        auth: {
+          type: String(payload?.auth?.type || 'bearer'),
+          secret: apiKey,
+          headerName: String(payload?.auth?.headerName || 'Authorization')
+        }
+      });
+
+      if (!discovered.ok) {
+        return { ok: false, providerId, workspace, models: [], requestUrl: discovered.requestUrl, error: discovered.error };
+      }
+
+      const catalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
+      return { ok: true, providerId, workspace, catalog, models: discovered.models, requestUrl: discovered.requestUrl };
+    }
+
     const catalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
     const activeProvider = catalog.providers.find((provider) => provider.id === providerId);
-    return { ok: true, providerId, workspace, catalog, models: activeProvider?.models ?? [], requestUrl: `pi://model-registry/${providerId}` };
+    return { ok: true, providerId, workspace, catalog, models: activeProvider?.models ?? [] };
   });
   ipcMain.handle('llm:open-pi-codex-login', async () => {
     const providerId = 'openai-codex';
@@ -303,13 +359,46 @@ function registerIpc() {
     const catalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
     return { ok: true, providerId: workspace.providerId, workspace, catalog, configPath: saveResult.configPath };
   });
+  ipcMain.handle('llm:clear-provider-api-key', async (_event, payload) => {
+    const providerId = String(payload?.providerId || workspace.providerId);
+    const clearResult = clearOpenAgentPiProviderApiKey({ providerId });
+    const catalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
+    return { ok: true, providerId, workspace, catalog, modelsPath: clearResult.modelsPath };
+  });
+  ipcMain.handle('llm:delete-provider', async (_event, payload) => {
+    const providerId = String(payload?.providerId || '');
+    const deleteResult = deleteOpenAgentPiProvider({ providerId });
+    const catalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
+    const nextProvider =
+      catalog.providers.find((provider) => provider.id !== providerId && (provider.enabled || provider.auth?.configured) && provider.models.length > 0) ??
+      catalog.providers.find((provider) => provider.id !== providerId) ??
+      catalog.providers[0];
+
+    if (workspace.providerId === providerId && nextProvider) {
+      updateActiveModel(nextProvider.id, nextProvider.defaultModel || nextProvider.models[0]?.id || workspace.model);
+    }
+
+    const nextCatalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
+    return { ok: true, providerId: deleteResult.providerId, workspace, catalog: nextCatalog, modelsPath: deleteResult.modelsPath };
+  });
   ipcMain.handle('llm:set-active', async (_event, payload) => {
     const providerId = String(payload?.providerId || workspace.providerId);
-    const catalog = await buildPiProviderCatalog({ activeProviderId: providerId, activeModelId: workspace.model });
+    const requestedModelId = typeof payload?.modelId === 'string' ? payload.modelId : '';
+    const catalog = await buildPiProviderCatalog({ activeProviderId: providerId, activeModelId: requestedModelId || workspace.model });
     const provider = catalog.providers.find((item) => item.id === providerId) ?? catalog.providers[0];
-    const modelId = provider?.defaultModel || provider?.models[0]?.id || workspace.model;
-    updateActiveModel(providerId, modelId);
-    return { ok: true, providerId: workspace.providerId, workspace, catalog: await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model }) };
+    const modelId =
+      provider?.models.find((model) => model.id === requestedModelId)?.id ||
+      provider?.defaultModel ||
+      provider?.models[0]?.id ||
+      workspace.model;
+    updateActiveModel(provider?.id || providerId, modelId);
+    return {
+      ok: true,
+      providerId: workspace.providerId,
+      modelId: workspace.model,
+      workspace,
+      catalog: await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model })
+    };
   });
   ipcMain.handle('skills:list', () => []);
   ipcMain.handle('plugins:get-registry', () => ({ plugins: [] }));

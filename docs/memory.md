@@ -493,3 +493,77 @@ type SoulChangeRequest = {
 ```
 
 人工维护区域可以继续保留在 `Identity`、`Working Style`、`Safety Boundaries`、`Tool Policy` 等章节。
+
+## 11. `USER.md` / `MEMORY.md` 自动更新策略
+
+`USER.md` 和 `MEMORY.md` 的更新风险低于 `SOUL.md`，可以采用 **LLM 自动判断 + 后端校验 + 直接写入 + UI 告知**：
+
+```text
+一次运行结束
+  -> LLM 在 hidden metadata 中输出 userUpdates / memoryUpdates
+  -> 后端校验 schema、confidence、必填字段
+  -> 去重并备份旧文件到 history/
+  -> 直接写入 USER.md 或 MEMORY.md
+  -> 发送 memory.updated 事件，在运行日志告知用户
+```
+
+### 11.1 `USER.md`
+
+只自动沉淀稳定、长期有效的用户偏好和协作习惯；一次性任务要求不写入。
+
+```ts
+type UserMemoryUpdateRequest = {
+  shouldUpdateUser: boolean
+  category:
+    | 'communication'
+    | 'git'
+    | 'development'
+    | 'documentation'
+    | 'project_management'
+    | 'tooling'
+    | 'other'
+  statement: string
+  reason: string
+  confidence: 'medium' | 'high'
+  evidence?: string
+}
+```
+
+写入位置：
+
+```md
+## Learned preferences (managed)
+
+<!-- managed:start -->
+
+- [git] 创建、切换、发布分支前必须先确认。
+
+<!-- managed:end -->
+```
+
+### 11.2 `MEMORY.md`
+
+只自动沉淀未来可复用的项目/任务经验、验证结论、问题根因、路径和命令；原始聊天和临时细节不写入。
+
+```ts
+type ProjectMemoryUpdateRequest = {
+  shouldUpdateMemory: boolean
+  scope: string
+  topic: string
+  summary: string
+  reuse: string
+  confidence: 'medium' | 'high'
+  evidence?: string
+}
+```
+
+写入格式：
+
+```md
+## 2026-05-08 OpenAgent memory auto update
+
+scope: /Users/guolimin/Desktop/project-git/gitlab/openagent
+
+- runtime 结束时可由 LLM 语义判断是否生成 memoryUpdates。
+- Reuse: 下次调整长期上下文写入策略时，优先检查 runtime-service 和 soul-manager。
+```
