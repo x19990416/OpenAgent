@@ -70,7 +70,7 @@ body,
   margin: 0;
   height: 100%;
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-muted);
   font-family: var(--font-ui);
 }
 
@@ -224,7 +224,7 @@ button {
   gap: 10px;
   padding: 0 2px;
   font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-regular);
 }
 
 .settings-back:hover {
@@ -4089,4 +4089,243 @@ html.is-electron .topbar-brand {
   .settings-knowledge-browser-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.plan-step-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: var(--text-muted);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.plan-step-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: max-content;
+}
+
+.plan-step-badge.risk-low {
+  color: #64748b;
+}
+
+.plan-step-badge.risk-medium {
+  color: #a16207;
+  background: rgba(250, 204, 21, 0.12);
+  border-color: rgba(250, 204, 21, 0.25);
+}
+
+.plan-step-badge.risk-high,
+.plan-step-badge.approval {
+  color: #b91c1c;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.25);
+}
+
+.plan-step-detail {
+  margin: 4px 0 8px 42px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plan-step-approval {
+  margin: 8px 0 10px 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 14px;
+  background: rgba(248, 113, 113, 0.06);
+}
+
+.plan-step-approval-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+}
+
+.plan-step-approval-detail.run-status-detail.compact.minimal {
+  margin-left: 0;
+  margin-top: 6px;
+}
+
+.plan-step-approval-actions.run-status-actions.minimal {
+  margin-left: 0;
+  margin-top: 8px;
+}
+
+.plan-step-description {
+  color: var(--text-secondary);
+}
+
+.plan-step-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.plan-step-tool {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  font-size: 11px;
+}
+
+.plan-step-result {
+  color: #166534;
+}
+
+.plan-step-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b91c1c;
+}
+
+.plan-approval-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.plan-inline-approval {
+  border-left: 3px solid rgba(245, 158, 11, 0.8);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.plan-inline-approval.risk-high {
+  border-left-color: rgba(239, 68, 68, 0.9);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.plan-inline-approval.risk-low {
+  border-left-color: rgba(59, 130, 246, 0.65);
+}
+
+.plan-inline-approval-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-status-card {
+  border-left: 4px solid rgba(148, 163, 184, 0.5);
+}
+
+.run-status-card.status-running {
+  border-left-color: #3b82f6;
+}
+
+.run-status-card.status-waiting_approval {
+  border-left-color: #f59e0b;
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08), rgba(255, 255, 255, 0.8));
+}
+
+.run-status-card.status-failed {
+  border-left-color: #ef4444;
+}
+
+.run-status-card.status-succeeded {
+  border-left-color: #22c55e;
+}
+
+.run-status-detail {
+  margin-top: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.run-status-progress-card .task-progress-list {
+  margin-top: 2px;
+}
+
+.run-status-inline-detail {
+  margin-bottom: 0;
+}
+
+.run-status-detail.compact {
+  margin-top: 8px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.run-status-actions {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0 2px 42px;
+}
+
+.ghost-button.compact,
+.success-button.compact,
+.danger-button.compact {
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.run-status-minimal {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.run-status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+.run-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.run-status-description {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-left: 30px;
+}
+
+.run-status-detail.compact.minimal {
+  margin: 2px 0 0 30px;
+  max-height: 140px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.run-status-actions.minimal {
+  margin-left: 30px;
+  margin-top: 4px;
 }

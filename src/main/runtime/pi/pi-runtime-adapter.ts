@@ -92,7 +92,8 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             onLog: input.onLog,
             emitUiEvent: input.emitUiEvent,
             workspaceRoot: input.workspaceRoot,
-            requestApproval: input.requestApproval
+            requestApproval: input.requestApproval,
+            getPlanContext: input.getPlanContext
           })
         ),
         thinkingLevel: 'off'

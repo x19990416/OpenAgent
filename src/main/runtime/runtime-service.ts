@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeAttachment, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
+import type { AgentRuntimeAdapter, PlanExecutionContext, PromptSubmissionInput, RuntimeAttachment, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
 import { RuntimeEventBus } from './event-bus.js';
 import { RunStateStore } from './run-state.js';
 import { SessionStore } from './session-store.js';
@@ -22,6 +22,7 @@ import { KnowledgeService } from './knowledge/knowledge-service.js';
 import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
 import { getOpenAgentHome } from './knowledge/knowledge-paths.js';
 import { PlanService } from './planning/plan-service.js';
+import { PlanExecutor } from './planning/plan-executor.js';
 import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
 
 export class RuntimeService {
@@ -132,9 +133,10 @@ export class RuntimeService {
     return result;
   }
 
-  resolveApproval(input: { approvalId?: string; decision?: 'approved' | 'rejected' }) {
+  resolveApproval(input: { approvalId?: string; decision?: 'approved' | 'rejected'; scope?: 'once' | 'session' | 'always' }) {
     const approvalId = input.approvalId || '';
     const decision = input.decision;
+    const scope = input.scope;
     if (!approvalId) {
       return { ok: false, error: 'approvalId is required' };
     }
@@ -151,7 +153,7 @@ export class RuntimeService {
       return result;
     }
 
-    const result = this.approvalService.resolveApproval({ approvalId, decision });
+    const result = this.approvalService.resolveApproval({ approvalId, decision, scope });
     if (result.ok) {
       const isPlanApproval = result.request.actionType === 'agent-plan.execute';
       if (result.request.runId) {
@@ -167,12 +169,15 @@ export class RuntimeService {
       this.eventBus.emit('approval.resolved', {
         approvalId,
         decision: result.decision,
+        scope: result.scope,
         summary: isPlanApproval
           ? result.decision === 'approved'
             ? 'Agent Plan 已批准，agent 将开始执行。'
             : 'Agent Plan 已拒绝。'
           : result.decision === 'approved'
-            ? '外部路径访问已批准，agent 将继续执行。'
+            ? result.scope === 'always'
+              ? '已设为始终允许，后续审批将自动通过。'
+              : '外部路径访问已批准，agent 将继续执行。'
             : '外部路径访问已拒绝。'
       });
     }
@@ -180,6 +185,9 @@ export class RuntimeService {
   }
 
   private async requestToolApproval(request: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
+    if (this.approvalService.isAutoApproved()) {
+      return 'approved' as const;
+    }
     const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
     this.eventBus.emit('approval.required', approvalRequest);
     return decision;
@@ -321,7 +329,7 @@ export class RuntimeService {
     transcript.appendMessage(userMessage);
 
     const draftPlan = this.planService.shouldPlan(prompt)
-      ? this.planService.createDraftPlan({
+      ? await this.planService.createDraftPlan({
           runId,
           threadId: thread.threadId,
           agentId: this.options.agentId,
@@ -415,6 +423,7 @@ export class RuntimeService {
   }) {
     const { prompt, runId, thread, transcript, sessionFile, abortSignal, attachments } = input;
     let activePlan = input.plan ?? null;
+    let planExecutor: PlanExecutor | null = null;
     const loopSteps: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }> = [
       { id: `${runId}-context`, title: '构建运行上下文', status: 'completed' },
       { id: `${runId}-loop-start`, title: '启动 agent loop', status: 'in_progress' },
@@ -446,7 +455,7 @@ export class RuntimeService {
           actionType: 'agent-plan.execute',
           access: 'execute',
           scope: 'once',
-          payloadPreview: activePlan.steps.map((step, index) => `${index + 1}. ${step.title}`).join('\n'),
+          payloadPreview: formatPlanApprovalDescription(activePlan),
           runId,
           threadId: thread.threadId
         });
@@ -458,6 +467,10 @@ export class RuntimeService {
           return { ok: false, runId, status: 'cancelled', error: '用户取消了 Agent Plan。' };
         }
         activePlan = this.planService.approve(activePlan);
+        planExecutor = new PlanExecutor(activePlan, this.planService, (nextPlan, reason, changedStepId) => {
+          activePlan = nextPlan;
+          this.emitPlan('plan.updated', nextPlan, reason, changedStepId);
+        });
         this.runState.update(runId, { status: 'running', summary: 'Agent Plan 已确认，开始执行。' });
         this.eventBus.emit('plan.approval.resolved', this.toPlanPayload(activePlan, '用户已确认 Agent Plan。'));
         this.emitPlan('plan.updated', activePlan, '用户已确认计划，开始执行。');
@@ -501,10 +514,17 @@ export class RuntimeService {
         requestApproval: (request) => {
           this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户审批外部路径访问。' });
           return this.requestToolApproval(request);
-        }
+        },
+        getPlanContext: () => (activePlan ? toPlanExecutionContext(activePlan) : null)
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
       const knowledgeContext = await this.buildKnowledgeContext(prompt);
+      planExecutor?.completeAndStart(
+        'plan-step-inspect',
+        '已完成运行上下文、长期记忆和知识库上下文检查。',
+        'plan-step-design',
+        '正在固化本轮执行约束与计划步骤。'
+      );
       const memoryContext = selectRelevantMemoryContext(bootstrap.memory, prompt);
       runInput.systemPrompt = [
         runInput.systemPrompt,
@@ -521,6 +541,18 @@ export class RuntimeService {
         'Relevant Knowledge Base context:',
         knowledgeContext || '(no relevant knowledge context found)',
         '',
+        ...(activePlan
+          ? [
+              'Active OpenAgent Plan Mode:',
+              formatPlanForPrompt(activePlan),
+              '',
+              'Plan execution rule:',
+              '- Follow the active plan goal and steps unless new evidence makes it unsafe or incorrect.',
+              '- Use OpenAgent tools normally when needed; OpenAgent runtime owns approvals, logs, and plan status.',
+              '- If the plan is insufficient, explain the needed revision in the final answer rather than silently ignoring it.',
+              ''
+            ]
+          : []),
         'Identity rule:',
         '- The `- Name:` field under `## 1. Identity` in SOUL.md is the source of truth for who you are.',
         '- When asked “你是谁”, “你叫啥”, or “who are you”, answer with the Name and Role from SOUL.md if present.',
@@ -563,6 +595,12 @@ export class RuntimeService {
         data: buildRunContextLogSnapshot(runInput)
       });
 
+      planExecutor?.completeAndStartFirstKind(
+        'plan-step-design',
+        '已将 active plan 注入本轮系统提示词并确认执行约束。',
+        'execute',
+        '正在进入 agent loop 执行计划主体。'
+      );
       appendProgressStep('调用模型并等待 agent loop 返回');
       const result = await this.adapter.run(runInput);
       let summary = summarizeRunResult(result);
@@ -600,9 +638,12 @@ export class RuntimeService {
         transcript.appendMessage(assistantMessage);
         this.eventBus.emit('message.completed', assistantMessage);
         if (activePlan) {
-          activePlan = this.planService.markCompleted(activePlan, summary);
-          this.emitPlan('plan.completed', activePlan, 'Agent Plan 执行完成。');
-          this.emitPlan('plan.updated', activePlan, 'Agent Plan 执行完成。');
+          planExecutor?.completeKindAndStartFirstKind(
+            'execute',
+            'agent loop 已返回最终助手消息。',
+            'finalize',
+            '正在保存 transcript、处理结构化元数据并收尾。'
+          );
         } else {
           for (const step of loopSteps) step.status = 'completed';
           emitRuntimeProgress();
@@ -726,13 +767,19 @@ export class RuntimeService {
             summary: memorySummary
           });
         }
+        if (activePlan) {
+          planExecutor?.completeKind('finalize', 'transcript、长期上下文候选和最终状态处理完成。');
+          activePlan = this.planService.markCompleted(planExecutor?.currentPlan ?? activePlan, summary);
+          this.emitPlan('plan.completed', activePlan, 'Agent Plan 执行完成。');
+          this.emitPlan('plan.updated', activePlan, 'Agent Plan 执行完成。');
+        }
         this.eventBus.emit('run.completed', { runId, summary });
         return { ok: true, runId, status: 'completed' };
       }
 
       if (result.status === 'cancelled') {
         if (activePlan) {
-          activePlan = this.planService.markFailed(activePlan, summary);
+          activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
           this.emitPlan('plan.failed', activePlan, summary);
         }
         this.runState.finish(runId, { status: 'cancelled', summary });
@@ -741,7 +788,7 @@ export class RuntimeService {
       }
 
       if (activePlan) {
-        activePlan = this.planService.markFailed(activePlan, summary);
+        activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
         this.emitPlan('plan.failed', activePlan, summary);
       }
       this.runState.finish(runId, { status: 'failed', summary });
@@ -750,7 +797,7 @@ export class RuntimeService {
     } catch (error) {
       const message = errorToMessage(error);
       if (activePlan) {
-        activePlan = this.planService.markFailed(activePlan, message);
+        activePlan = planExecutor?.failCurrent(message) ?? this.planService.markFailed(activePlan, message);
         this.emitPlan('plan.failed', activePlan, message);
       }
       this.runState.finish(runId, { status: 'failed', summary: message });
@@ -759,18 +806,27 @@ export class RuntimeService {
     }
   }
 
-  private emitPlan(type: 'plan.created' | 'plan.updated' | 'plan.completed' | 'plan.failed', plan: AgentPlan, reason?: string) {
-    this.eventBus.emit(type, this.toPlanPayload(plan, reason));
+  private emitPlan(type: 'plan.created' | 'plan.updated' | 'plan.completed' | 'plan.failed', plan: AgentPlan, reason?: string, changedStepId?: string) {
+    this.eventBus.emit(type, this.toPlanPayload(plan, reason, changedStepId));
   }
 
-  private toPlanPayload(plan: AgentPlan, reason?: string): PlanUpdatedPayload {
+  private toPlanPayload(plan: AgentPlan, reason?: string, changedStepId?: string): PlanUpdatedPayload {
     return {
       plan,
+      changedStepId,
       reason,
       steps: plan.steps.map((step) => ({
         id: step.id,
         title: step.title,
-        status: step.status
+        status: step.status,
+        description: step.description,
+        allowedTools: step.allowedTools,
+        requiresApproval: step.requiresApproval,
+        approvalReason: step.approvalReason,
+        riskLevel: step.riskLevel,
+        resultSummary: step.resultSummary,
+        error: step.error,
+        kind: step.kind
       }))
     };
   }
@@ -969,15 +1025,45 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
   return null;
 }
 
+function toPlanExecutionContext(plan: AgentPlan): PlanExecutionContext | null {
+  const currentStep = plan.steps.find((step) => step.status === 'in_progress') ?? plan.steps.find((step) => step.status === 'pending');
+  if (!currentStep) return null;
+  return {
+    planId: plan.id,
+    stepId: currentStep.id,
+    mode: plan.mode,
+    allowedTools: currentStep.allowedTools,
+    riskLevel: currentStep.riskLevel
+  };
+}
+
+function formatPlanForPrompt(plan: AgentPlan) {
+  return [
+    `planId: ${plan.id}`,
+    `goal: ${plan.goal}`,
+    `status: ${plan.status}`,
+    `riskLevel: ${plan.riskLevel}`,
+    'steps:',
+    ...plan.steps.map((step, index) => {
+      const flags = [step.status, step.kind, step.requiresApproval ? 'requiresApproval' : ''].filter(Boolean).join(', ');
+      return `${index + 1}. [${flags}] ${step.title}${step.description ? ` - ${step.description}` : ''}`;
+    })
+  ].join('\n');
+}
+
 function formatPlanApprovalDescription(plan: AgentPlan) {
-  const steps = plan.steps.map((step, index) => `${index + 1}. ${step.title}${step.requiresApproval ? '（需要审批）' : ''}`).join('\n');
+  const hasWriteOrExecuteStep = plan.steps.some((step) => {
+    const tools = step.allowedTools ?? [];
+    return step.requiresApproval || step.kind === 'execute' || tools.some((tool) => !['read', 'grep', 'list', 'read-only'].includes(tool));
+  });
+  const defaultReason = hasWriteOrExecuteStep
+    ? '该计划后续可能修改文件、执行工具或影响当前工作区，需要你确认后继续。'
+    : '该计划将从只读规划进入执行阶段，需要你确认后继续。';
+
   return [
     `目标：${plan.goal}`,
     `风险等级：${plan.riskLevel}`,
-    plan.approvalReason || '请确认是否执行该 Agent Plan。',
-    '',
-    '计划步骤：',
-    steps
+    `审批原因：${plan.approvalReason || defaultReason}`
   ].join('\n');
 }
 

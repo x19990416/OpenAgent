@@ -1,4 +1,4 @@
-import type { RuntimeTool } from './runtime-types.js';
+import type { PlanExecutionContext, RuntimeTool } from './runtime-types.js';
 import { classifyToolPathAccess } from './path-policy.js';
 
 export type ToolPolicyDecision =
@@ -42,7 +42,10 @@ const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_fil
 export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
 
-  decide(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+  decide(tool: RuntimeTool, args: unknown, planContext?: PlanExecutionContext | null): ToolPolicyDecision {
+    const planDecision = this.decidePlanContext(tool, planContext);
+    if (planDecision) return planDecision;
+
     if (tool.name === 'knowledge_agent') {
       return decideKnowledgeAgent(args);
     }
@@ -94,6 +97,28 @@ export class ToolPolicy {
     };
   }
 
+
+  private decidePlanContext(tool: RuntimeTool, planContext?: PlanExecutionContext | null): ToolPolicyDecision | null {
+    if (!planContext) return null;
+
+    if (planContext.mode === 'planning' && !READ_ONLY_TOOLS.has(tool.name)) {
+      return {
+        kind: 'deny',
+        reason: `Tool ${tool.name} is blocked while Agent Plan is in planning mode.`
+      };
+    }
+
+    const allowedTools = planContext.allowedTools ?? [];
+    if (allowedTools.length > 0 && !matchesAllowedTool(tool.name, allowedTools)) {
+      return {
+        kind: 'deny',
+        reason: `Tool ${tool.name} is not allowed in current plan step ${planContext.stepId}. Allowed: ${allowedTools.join(', ')}`
+      };
+    }
+
+    return null;
+  }
+
   summarizeArgs(args: unknown) {
     try {
       const text = JSON.stringify(args);
@@ -112,4 +137,13 @@ function decideKnowledgeAgent(args: unknown): ToolPolicyDecision {
   }
 
   return { kind: 'deny', reason: `Unsupported KnowledgeAgent operation: ${operation || '(missing)'}` };
+}
+
+function matchesAllowedTool(toolName: string, allowedTools: string[]) {
+  if (allowedTools.includes('*') || allowedTools.includes(toolName)) return true;
+  if (allowedTools.includes('read-only') && READ_ONLY_TOOLS.has(toolName)) return true;
+  if (allowedTools.includes('knowledge-write') && KNOWLEDGE_WRITE_TOOLS.has(toolName)) return true;
+  if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
+  if (allowedTools.includes('tool-executor')) return true;
+  return false;
 }

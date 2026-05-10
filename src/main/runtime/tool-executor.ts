@@ -1,7 +1,7 @@
 import { ToolExecutionError } from './errors.js';
 import { ToolPolicy } from './tool-policy.js';
 import type { ApprovalDecision, RuntimeApprovalRequest } from './approval-service.js';
-import type { RuntimeLogEntry, RuntimeTool, RuntimeToolExecutionResult, RuntimeUiEvent } from './runtime-types.js';
+import type { PlanExecutionContext, RuntimeLogEntry, RuntimeTool, RuntimeToolExecutionResult, RuntimeUiEvent } from './runtime-types.js';
 
 export interface ToolExecutorOptions {
   runId?: string;
@@ -11,6 +11,7 @@ export interface ToolExecutorOptions {
   policy?: ToolPolicy;
   workspaceRoot?: string;
   requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
+  getPlanContext?: () => PlanExecutionContext | null;
 }
 
 export class ToolExecutor {
@@ -31,13 +32,15 @@ export class ToolExecutor {
 
     const startedAt = Date.now();
     const argsPreview = this.policy.summarizeArgs(input.args);
+    const planContext = this.options.getPlanContext?.() ?? null;
     const basePayload = {
       runId: this.options.runId,
       threadId: this.options.threadId,
       toolCallId: input.toolCallId,
       toolName: input.toolName,
       args: input.args,
-      argsPreview
+      argsPreview,
+      planContext: planContext ?? undefined
     };
     const makeUiPayload = (status: 'running' | 'completed' | 'failed', summary: string, meta: Record<string, unknown> = {}) => ({
       id: input.toolCallId,
@@ -48,7 +51,7 @@ export class ToolExecutor {
       meta: { ...basePayload, ...meta }
     });
 
-    const decision = this.policy.decide(tool, input.args);
+    const decision = this.policy.decide(tool, input.args, planContext);
     if (decision.kind === 'deny') {
       const reason = decision.reason || `Tool blocked by OpenAgent policy: ${input.toolName}`;
       this.options.onLog?.({ scope: 'runtime', message: 'tool blocked by policy', data: { ...basePayload, reason } });
@@ -68,7 +71,10 @@ export class ToolExecutor {
         id: `${input.toolCallId}-approval`,
         runId: this.options.runId,
         threadId: this.options.threadId,
-        ...decision.approval
+        ...decision.approval,
+        description: planContext
+          ? `${decision.approval.description}\n\nPlan context: ${planContext.planId} / ${planContext.stepId}`
+          : decision.approval.description
       };
       this.options.onLog?.({ scope: 'runtime', message: 'tool waiting for approval', data: { ...basePayload, approval: approvalRequest } });
       const approvalDecision = await this.options.requestApproval(approvalRequest);

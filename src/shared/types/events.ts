@@ -26,6 +26,14 @@ export interface PlanStepItem {
   id: string;
   title: string;
   status: PlanStepStatus;
+  description?: string;
+  allowedTools?: string[];
+  requiresApproval?: boolean;
+  approvalReason?: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+  resultSummary?: string;
+  error?: string;
+  kind?: 'inspect' | 'design' | 'execute' | 'verify' | 'finalize';
 }
 
 export interface AgentPlanItem {
@@ -81,6 +89,7 @@ export interface ApprovalResolution {
   approvalId: string;
   decision: 'approved' | 'rejected';
   summary: string;
+  scope?: 'once' | 'session' | 'always';
 }
 
 export interface RunFailurePayload {

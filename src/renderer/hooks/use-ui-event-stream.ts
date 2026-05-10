@@ -372,7 +372,7 @@ export function useUiEventStream() {
         console.error('selectThread failed', error);
       }
     },
-    resolveApproval: async (approvalId: string, decision: 'approved' | 'rejected') => {
+    resolveApproval: async (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => {
       if (!window.desktopApi) {
         const createdAt = new Date().toISOString();
         setViewModel((prev) => ({
@@ -392,7 +392,7 @@ export function useUiEventStream() {
       }
 
       try {
-        const result = await window.desktopApi.resolveApproval({ approvalId, decision });
+        const result = await window.desktopApi.resolveApproval({ approvalId, decision, scope });
 
         if (!result.ok) {
           throw new Error(result.error || 'Failed to resolve approval');
@@ -448,13 +448,19 @@ function applyStateSnapshot(
     browserSessions: prev.browserSessions,
     approvals: snapshot.pendingApproval
       ? [
-          {
-            id: snapshot.pendingApproval.approvalId,
-            title: snapshot.pendingApproval.title,
-            risk: snapshot.pendingApproval.actionType === 'update-soul' ? 'high' : 'medium',
-            description: snapshot.pendingApproval.payloadPreview
-          }
-        ]
+        {
+          id: snapshot.pendingApproval.approvalId,
+          title: snapshot.pendingApproval.title,
+          risk: snapshot.pendingApproval.risk ?? (snapshot.pendingApproval.actionType === 'update-soul' ? 'high' : 'medium'),
+          description: snapshot.pendingApproval.description ?? snapshot.pendingApproval.payloadPreview,
+          actionType: snapshot.pendingApproval.actionType,
+          targetPath: snapshot.pendingApproval.targetPath,
+          access: snapshot.pendingApproval.access,
+          recursive: snapshot.pendingApproval.recursive,
+          scope: snapshot.pendingApproval.scope,
+          payloadPreview: snapshot.pendingApproval.payloadPreview
+        }
+      ]
       : [],
     threads: snapshot.threads,
     recentRuns: snapshot.recentRuns,
@@ -476,13 +482,7 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
         ...prev,
         runStatus: 'running',
         workspace: { ...prev.workspace, runStatus: 'running' },
-        plan: [
-          {
-            id: PLACEHOLDER_PLAN_STEP_ID,
-            title: '正在执行任务…',
-            status: 'in_progress'
-          }
-        ],
+        plan: prev.plan.some((step) => step.id !== PLACEHOLDER_PLAN_STEP_ID) ? prev.plan : [],
         runErrorSummary: null,
         runErrorDetail: null,
         runLog: [...prev.runLog, makeLog(event, 'info', 'Run started')]
@@ -497,10 +497,11 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
     }
     case 'plan.updated': {
       const payload = event.payload as PlanUpdatedPayload;
+      const hasAgentPlan = Boolean(payload.plan);
       return {
         ...prev,
-        plan: mergePlanStepsForDisplay(prev.plan, payload.steps ?? prev.plan, prev.runStatus),
-        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || 'Plan updated')]
+        plan: hasAgentPlan ? mergePlanStepsForDisplay(prev.plan, payload.steps ?? prev.plan, prev.runStatus) : prev.plan,
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || (hasAgentPlan ? 'Plan updated' : 'Runtime progress updated'))]
       };
     }
     case 'plan.approval.required': {

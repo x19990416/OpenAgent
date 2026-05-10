@@ -27,6 +27,7 @@ export interface AgentPlanStep {
   completedAt?: string;
   resultSummary?: string;
   error?: string;
+  kind?: 'inspect' | 'design' | 'execute' | 'verify' | 'finalize';
   evidence?: Array<{
     kind: 'file' | 'log' | 'tool' | 'message';
     ref: string;

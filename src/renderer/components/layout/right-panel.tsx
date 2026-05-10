@@ -1,5 +1,4 @@
 import { AgentMemoryPanel } from '@/components/panels/agent-memory-panel';
-import { ApprovalPanel } from '@/components/panels/approval-panel';
 import { BrowserSessionPanel } from '@/components/panels/browser-session-panel';
 import { ContextPanel } from '@/components/panels/context-panel';
 import { PatchPanel } from '@/components/panels/patch-panel';
@@ -13,13 +12,12 @@ interface RightPanelProps {
   onTabChange: (tab: RightInspectorTab) => void;
   viewModel: WorkbenchViewModel;
   onStopRun: (runId?: string) => Promise<{ ok: boolean; error?: string }>;
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
 }
 
 const tabs: Array<{ key: RightInspectorTab; label: string }> = [
   { key: 'plan', label: '摘要' },
   { key: 'tasks', label: '任务' },
-  { key: 'approval', label: '审批' },
   { key: 'browser', label: '浏览器' },
   { key: 'patch', label: 'Git' },
   { key: 'context', label: '上下文' },
@@ -51,19 +49,20 @@ export function RightPanel({
         </div>
       </div>
       <div className="inspector-body scroll-y">
-        {activeTab === 'plan' && (
+        {(activeTab === 'plan' || activeTab === 'approval') && (
           <PlanPanel
             plan={viewModel.plan}
             logs={viewModel.runLog}
             runStatus={viewModel.runStatus}
             latestSessionSummary={viewModel.latestSessionSummary}
+            approvals={viewModel.approvals}
+            onResolveApproval={onResolveApproval}
             onStopRun={onStopRun}
+            runErrorSummary={viewModel.runErrorSummary}
+            runErrorDetail={viewModel.runErrorDetail}
           />
         )}
         {activeTab === 'tasks' && <TasksPanel tasks={viewModel.runtimeTasks} onStopRun={onStopRun} />}
-        {activeTab === 'approval' && (
-          <ApprovalPanel approvals={viewModel.approvals} browserSessions={viewModel.browserSessions} onResolveApproval={onResolveApproval} />
-        )}
         {activeTab === 'browser' && <BrowserSessionPanel browserSessions={viewModel.browserSessions} />}
         {activeTab === 'patch' && <PatchPanel patch={viewModel.patch} />}
         {activeTab === 'context' && <ContextPanel workspace={viewModel.workspace} tools={viewModel.tools} />}

@@ -27,6 +27,7 @@ interface PendingApproval {
 
 export class ApprovalService {
   private readonly pending = new Map<string, PendingApproval>();
+  private approveAllFutureRequests = false;
 
   requiresApproval(actionType: string) {
     return ['shell', 'git.push', 'git.reset', 'external-path-read', 'external-path-write', 'destructive'].includes(actionType);
@@ -46,7 +47,11 @@ export class ApprovalService {
     return { request, decision };
   }
 
-  resolveApproval(input: { approvalId?: string; decision?: ApprovalDecision }) {
+  isAutoApproved() {
+    return this.approveAllFutureRequests;
+  }
+
+  resolveApproval(input: { approvalId?: string; decision?: ApprovalDecision; scope?: ApprovalScope }) {
     const approvalId = input.approvalId || '';
     const decision = input.decision;
     if (!approvalId) {
@@ -62,8 +67,11 @@ export class ApprovalService {
     }
 
     this.pending.delete(approvalId);
+    if (decision === 'approved' && input.scope === 'always') {
+      this.approveAllFutureRequests = true;
+    }
     pending.resolve(decision);
-    return { ok: true, request: pending.request, decision };
+    return { ok: true, request: pending.request, decision, scope: input.scope || pending.request.scope || 'once' };
   }
 
   getPendingApproval() {
@@ -72,7 +80,13 @@ export class ApprovalService {
     return {
       approvalId: pending.request.id,
       title: pending.request.title,
+      risk: pending.request.risk,
       actionType: pending.request.actionType || 'unknown',
+      description: pending.request.description,
+      targetPath: pending.request.targetPath,
+      access: pending.request.access,
+      recursive: pending.request.recursive,
+      scope: pending.request.scope,
       payloadPreview: pending.request.payloadPreview || pending.request.description
     };
   }

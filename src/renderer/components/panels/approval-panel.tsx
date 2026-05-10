@@ -9,7 +9,7 @@ export function ApprovalPanel({
 }: {
   approvals: ApprovalRequest[];
   browserSessions: BrowserSessionItem[];
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
 }) {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
@@ -19,11 +19,11 @@ export function ApprovalPanel({
     return '低风险提示';
   }
 
-  async function handleResolve(approvalId: string, decision: 'approved' | 'rejected') {
+  async function handleResolve(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') {
     setResolvingId(approvalId);
 
     try {
-      await onResolveApproval(approvalId, decision);
+      await onResolveApproval(approvalId, decision, scope);
     } finally {
       setResolvingId((current) => (current === approvalId ? null : current));
     }
@@ -62,6 +62,14 @@ export function ApprovalPanel({
                 onClick={() => void handleResolve(approval.id, 'approved')}
               >
                 批准
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={resolvingId === approval.id}
+                onClick={() => void handleResolve(approval.id, 'approved', 'always')}
+              >
+                始终允许
               </button>
               <button
                 className="danger-button"

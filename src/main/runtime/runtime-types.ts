@@ -57,7 +57,13 @@ export interface RuntimeSnapshot {
   pendingApproval: null | {
     approvalId: string;
     title: string;
+    risk?: 'low' | 'medium' | 'high';
     actionType: string;
+    description?: string;
+    targetPath?: string;
+    access?: 'read' | 'write' | 'execute';
+    recursive?: boolean;
+    scope?: 'once' | 'session' | 'always';
     payloadPreview: string;
   };
   threads: RuntimeThread[];
@@ -87,6 +93,15 @@ export interface RuntimeToolExecutionResult {
   data?: unknown;
 }
 
+
+export interface PlanExecutionContext {
+  planId: string;
+  stepId: string;
+  mode: 'planning' | 'executing';
+  allowedTools?: string[];
+  riskLevel?: 'low' | 'medium' | 'high';
+}
+
 export interface AgentRuntimeRunInput {
   runId: string;
   threadId: string;
@@ -104,6 +119,7 @@ export interface AgentRuntimeRunInput {
   onLog?: (entry: RuntimeLogEntry) => void;
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
   requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
+  getPlanContext?: () => PlanExecutionContext | null;
 }
 
 export interface RuntimeLogEntry {

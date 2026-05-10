@@ -9,7 +9,10 @@
     "dev:electron": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron .\"",
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
     "typecheck": "tsc -b --pretty false",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "build:mac": "bash scripts/build-macos.sh",
+    "build:win": "bash scripts/build-windows.sh",
+    "build:all": "bash scripts/build-all.sh"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.64.0",
@@ -32,6 +35,7 @@
     "concurrently": "latest",
     "typescript": "latest",
     "vite": "latest",
-    "wait-on": "latest"
+    "wait-on": "latest",
+    "electron-builder": "latest"
   }
 }

@@ -305,7 +305,13 @@ export interface StateSnapshot {
   pendingApproval?: {
     approvalId: string;
     title: string;
+    risk?: 'low' | 'medium' | 'high';
     actionType: string;
+    description?: string;
+    targetPath?: string;
+    access?: 'read' | 'write' | 'execute';
+    recursive?: boolean;
+    scope?: 'once' | 'session' | 'always';
     payloadPreview: string;
   } | null;
   threads: Array<{

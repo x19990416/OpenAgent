@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentPlan, AgentPlanStep, PlanRiskLevel } from './plan-types.js';
 import { PlanStore } from './plan-store.js';
+import { PlanLlmGenerator, type LlmPlanDraft } from './plan-llm.js';
 
 export interface CreateDraftPlanInput {
   runId: string;
@@ -12,6 +13,7 @@ export interface CreateDraftPlanInput {
 
 export class PlanService {
   private readonly store: PlanStore;
+  private readonly llm = new PlanLlmGenerator();
 
   constructor(private readonly agentId: string) {
     this.store = new PlanStore(agentId);
@@ -25,9 +27,10 @@ export class PlanService {
     );
   }
 
-  createDraftPlan(input: CreateDraftPlanInput) {
+  async createDraftPlan(input: CreateDraftPlanInput) {
     const now = input.now || new Date().toISOString();
     const riskLevel = inferRiskLevel(input.prompt);
+    const llmDraft = await this.llm.generate({ prompt: input.prompt, riskLevel }).catch(() => null);
     const plan: AgentPlan = {
       id: `plan-${randomUUID()}`,
       runId: input.runId,
@@ -39,12 +42,12 @@ export class PlanService {
       createdAt: now,
       updatedAt: now,
       approvalRequired: true,
-      approvalReason: 'Plan Mode 已为该任务生成执行计划；需要用户确认后再进入执行阶段。',
-      steps: buildDraftSteps(input.prompt, riskLevel),
+      approvalReason: llmDraft?.approvalReason || 'Plan Mode 已为该任务生成执行计划；需要用户确认后再进入执行阶段。',
+      steps: buildDraftSteps(input.prompt, riskLevel, llmDraft),
       revision: 0,
-      source: 'runtime',
+      source: llmDraft ? 'llm' : 'runtime',
       riskLevel,
-      summary: '等待用户确认执行计划。'
+      summary: llmDraft?.summary || '等待用户确认执行计划。'
     };
     return this.store.save(plan);
   }
@@ -61,6 +64,36 @@ export class PlanService {
         status: index === 0 ? 'in_progress' : 'pending',
         startedAt: index === 0 ? new Date().toISOString() : step.startedAt
       }))
+    });
+  }
+
+  startStep(plan: AgentPlan, stepId: string) {
+    const now = new Date().toISOString();
+    return this.store.save({
+      ...plan,
+      mode: 'executing',
+      status: 'executing',
+      steps: plan.steps.map((step) => {
+        if (step.id === stepId) {
+          return { ...step, status: 'in_progress', startedAt: step.startedAt || now };
+        }
+        if (step.status === 'in_progress') {
+          return { ...step, status: 'completed', completedAt: step.completedAt || now };
+        }
+        return step;
+      })
+    });
+  }
+
+  completeStep(plan: AgentPlan, stepId: string, summary: string) {
+    const now = new Date().toISOString();
+    return this.store.save({
+      ...plan,
+      steps: plan.steps.map((step) =>
+        step.id === stepId
+          ? { ...step, status: 'completed', completedAt: step.completedAt || now, resultSummary: summary }
+          : step
+      )
     });
   }
 
@@ -109,7 +142,7 @@ function inferRiskLevel(prompt: string): PlanRiskLevel {
   return 'low';
 }
 
-function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel): AgentPlanStep[] {
+function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | null): AgentPlanStep[] {
   const isCodeChange = /实现|开发|修改|改一下|重构|写入|新增|接入|落实|代码/i.test(prompt);
   const steps: AgentPlanStep[] = [
     {
@@ -118,7 +151,8 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel): AgentPlanSte
       description: '确认任务边界、现有事件流、持久化和审批入口。',
       status: 'pending',
       allowedTools: ['read', 'grep', 'list'],
-      riskLevel: 'low'
+      riskLevel: 'low',
+      kind: 'inspect'
     },
     {
       id: 'plan-step-design',
@@ -126,40 +160,49 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel): AgentPlanSte
       description: '把计划约束到最小可交付范围，避免无关重构。',
       status: 'pending',
       allowedTools: ['read'],
-      riskLevel: 'low'
+      riskLevel: 'low',
+      kind: 'design'
     }
   ];
 
-  if (isCodeChange) {
-    steps.push(
-      {
-        id: 'plan-step-implement',
-        title: '按计划修改 runtime / shared types / UI 事件消费代码',
-        description: '所有改动继续走 OpenAgent runtime 边界，不让 renderer 直接拥有业务状态。',
+  const executeSteps = llmDraft?.steps?.length
+    ? llmDraft.steps.map((step, index): AgentPlanStep => ({
+        id: `plan-step-execute-${index + 1}`,
+        title: step.title,
+        description: step.description,
         status: 'pending',
-        allowedTools: ['edit', 'write'],
-        requiresApproval: riskLevel !== 'low',
-        approvalReason: '该步骤可能修改项目文件。',
-        riskLevel
-      },
-      {
-        id: 'plan-step-verify',
-        title: '运行类型检查或构建验证改动',
-        description: '优先运行 pnpm typecheck，必要时补充 pnpm build。',
+        allowedTools: step.allowedTools?.length ? step.allowedTools : isCodeChange ? ['tool-executor'] : ['message'],
+        requiresApproval: Boolean(step.requiresApproval),
+        approvalReason: step.requiresApproval ? 'LLM 计划标记该步骤需要审批。' : undefined,
+        riskLevel: step.riskLevel || riskLevel,
+        kind: 'execute'
+      }))
+    : [{
+        id: 'plan-step-execute-1',
+        title: isCodeChange ? '按计划进入 agent loop，并通过 OpenAgent tools 执行任务' : '按计划进入 agent loop，生成最终回复',
+        description: isCodeChange
+          ? 'Pi 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。'
+          : 'Pi 负责推理循环；OpenAgent runtime 持续跟踪 plan 状态。',
         status: 'pending',
-        allowedTools: ['shell'],
-        riskLevel: 'low'
-      }
-    );
-  } else {
-    steps.push({
-      id: 'plan-step-answer',
-      title: '输出计划结论并等待用户下一步',
+        allowedTools: isCodeChange ? ['tool-executor'] : ['message'],
+        requiresApproval: isCodeChange && riskLevel !== 'low',
+        approvalReason: isCodeChange ? '该步骤可能修改项目文件或调用工具。' : undefined,
+        riskLevel,
+        kind: 'execute'
+      } satisfies AgentPlanStep];
+
+  steps.push(
+    ...executeSteps,
+    {
+      id: 'plan-step-verify',
+      title: '汇总执行结果、保存 transcript，并标记计划完成',
+      description: '把模型输出、工具日志和最终状态写回会话与 plan store。',
       status: 'pending',
-      allowedTools: ['message'],
-      riskLevel: 'low'
-    });
-  }
+      allowedTools: ['runtime'],
+      riskLevel: 'low',
+      kind: 'finalize'
+    }
+  );
 
   return steps;
 }

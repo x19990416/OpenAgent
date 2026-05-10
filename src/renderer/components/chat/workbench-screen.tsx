@@ -30,7 +30,7 @@ export function WorkbenchScreen() {
 
   useEffect(() => {
     if (viewModel.runStatus === 'waiting_approval') {
-      setRightTab('approval');
+      setRightTab('plan');
     }
   }, [viewModel.runStatus]);
 

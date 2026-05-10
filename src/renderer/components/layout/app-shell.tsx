@@ -30,7 +30,7 @@ interface AppShellProps {
   onSelectThread: (threadId: string) => void;
   onCreateThread: () => Promise<void>;
   onDeleteThread: (threadId: string) => Promise<void>;
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
   onCreateScheduledTask: (payload: CreateScheduledTaskInput) => Promise<{ ok: boolean; error?: string }>;
   onDeleteScheduledTask: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
   onSetScheduledTaskEnabled: (taskId: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
