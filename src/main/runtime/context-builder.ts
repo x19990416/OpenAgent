@@ -12,6 +12,7 @@ export interface RunContextInput {
   providerId: string;
   model: string;
   messages: RuntimeMessage[];
+  attachments?: import('./runtime-types.js').RuntimeAttachment[];
   tools: RuntimeTool[];
   abortSignal: AbortSignal;
   onLog?: (entry: RuntimeLogEntry) => void;

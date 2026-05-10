@@ -18,9 +18,11 @@ export interface RuntimeAttachment {
   kind: 'image' | 'text' | 'file' | 'binary';
   size: number;
   mimeType?: string;
+  originalMimeType?: string;
   textContent?: string;
   imageDataUrl?: string;
   dataUrl?: string;
+  originalDataUrl?: string;
   [key: string]: unknown;
 }
 
@@ -137,7 +139,12 @@ export interface RuntimeUiEvent {
   id: string;
   type:
     | 'run.started'
+    | 'plan.created'
     | 'plan.updated'
+    | 'plan.approval.required'
+    | 'plan.approval.resolved'
+    | 'plan.completed'
+    | 'plan.failed'
     | 'tool.started'
     | 'tool.completed'
     | 'tool.failed'

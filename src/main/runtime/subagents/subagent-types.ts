@@ -1,6 +1,6 @@
 import type { RuntimeLogEntry, RuntimeUiEvent } from '../runtime-types.js';
 
-export type SystemSubagentId = 'shell';
+export type SystemSubagentId = 'shell' | 'knowledge';
 
 export type ShellAgentTask =
   | { operation: 'count_files'; root?: string; extension: string }
@@ -14,8 +14,20 @@ export type ShellAgentTask =
       literal?: boolean;
     };
 
-export interface SubagentRunInput {
-  task: ShellAgentTask;
+export type KnowledgeAgentTask =
+  | { operation: 'search' | 'query'; query: string; limit?: number }
+  | { operation: 'ingest'; title: string; content: string; sourceId?: string; tags?: string[] }
+  | { operation: 'ingest_file'; filePath: string; title?: string; sourceId?: string; tags?: string[] }
+  | { operation: 'compile'; sourceIds?: string[]; limit?: number; tier?: 0 | 1 | 2 | 3 }
+  | { operation: 'compile_topic'; topic: string; limit?: number; tier?: 0 | 1 | 2 | 3 }
+  | { operation: 'capture'; text: string }
+  | { operation: 'provenance'; targetId: string }
+  | { operation: 'health' | 'lint' | 'graph' };
+
+export type SystemSubagentTask = ShellAgentTask | KnowledgeAgentTask;
+
+export interface SubagentRunInput<TTask extends SystemSubagentTask = SystemSubagentTask> {
+  task: TTask;
   callerAgentId: string;
   runId?: string;
   threadId?: string;

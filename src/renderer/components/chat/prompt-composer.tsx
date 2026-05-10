@@ -212,18 +212,21 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
               : 'binary';
 
           const dataUrl = await readFileAsDataURL(file);
+          const modelImage = kind === 'image' ? await normalizeImageDataUrlForModel(dataUrl, file.type) : null;
           const descriptor: PromptAttachmentDescriptor = {
             id: `attachment-${crypto.randomUUID()}`,
             path: file.name,
             name: file.name,
             size: file.size,
-            mimeType: file.type || (kind === 'image' ? 'image/*' : kind === 'text' ? 'text/plain' : 'application/octet-stream'),
+            mimeType: modelImage?.mimeType || file.type || (kind === 'image' ? 'image/*' : kind === 'text' ? 'text/plain' : 'application/octet-stream'),
             kind,
-            dataUrl
+            dataUrl: modelImage?.dataUrl || dataUrl,
+            originalDataUrl: dataUrl,
+            originalMimeType: file.type || undefined
           };
 
           if (kind === 'image') {
-            return { ...descriptor, imageDataUrl: dataUrl };
+            return { ...descriptor, imageDataUrl: modelImage?.dataUrl || dataUrl };
           }
 
           if (kind === 'text') {
@@ -525,5 +528,41 @@ function readFileAsDataURL(file: File) {
     reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
     reader.onerror = () => reject(reader.error ?? new Error('读取图片附件失败'));
     reader.readAsDataURL(file);
+  });
+}
+
+const modelSupportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+async function normalizeImageDataUrlForModel(dataUrl: string, mimeType: string) {
+  if (modelSupportedImageMimeTypes.has(mimeType)) {
+    return { dataUrl, mimeType };
+  }
+
+  const converted = await convertImageDataUrlToPng(dataUrl);
+  return converted ? { dataUrl: converted, mimeType: 'image/png' } : { dataUrl, mimeType: mimeType || 'image/*' };
+}
+
+function convertImageDataUrlToPng(dataUrl: string) {
+  return new Promise<string | null>((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        const context = canvas.getContext('2d');
+        if (!context || canvas.width === 0 || canvas.height === 0) {
+          resolve(null);
+          return;
+        }
+        context.drawImage(image, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (error) {
+        console.warn('convert image attachment to png failed', error);
+        resolve(null);
+      }
+    };
+    image.onerror = () => resolve(null);
+    image.src = dataUrl;
   });
 }

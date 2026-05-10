@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeAttachment, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
 import { RuntimeEventBus } from './event-bus.js';
 import { RunStateStore } from './run-state.js';
 import { SessionStore } from './session-store.js';
@@ -14,9 +16,13 @@ import { appendLlmResponseLog, appendRuntimeInfoLog, formatRuntimeInfoLogSummary
 import { SoulManager, extractOpenAgentMetadata } from './memory/soul-manager.js';
 import { SubagentService } from './subagents/subagent-service.js';
 import { createShellAgentTool } from './subagents/shell-agent-tool.js';
+import { createKnowledgeAgentTool } from './subagents/knowledge-agent-tool.js';
 import { ApprovalService, type RuntimeApprovalRequest } from './approval-service.js';
 import { KnowledgeService } from './knowledge/knowledge-service.js';
 import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
+import { getOpenAgentHome } from './knowledge/knowledge-paths.js';
+import { PlanService } from './planning/plan-service.js';
+import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
 
 export class RuntimeService {
   private activeThreadId = 'thread-welcome';
@@ -27,6 +33,7 @@ export class RuntimeService {
   private readonly sessionStore: SessionStore;
   private readonly soulManager: SoulManager;
   private readonly knowledgeService: KnowledgeService;
+  private readonly planService: PlanService;
   private readonly toolRegistry: ReturnType<typeof createDefaultToolRegistry>;
   private readonly subagents: SubagentService;
   private readonly messages: RuntimeMessage[] = [];
@@ -39,6 +46,7 @@ export class RuntimeService {
     this.eventBus = new RuntimeEventBus(options.emitUiEvent);
     this.sessionStore = new SessionStore(options.agentId);
     this.knowledgeService = new KnowledgeService(options.agentId);
+    this.planService = new PlanService(options.agentId);
     this.soulManager = new SoulManager({
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
@@ -47,11 +55,12 @@ export class RuntimeService {
       createdAt: this.createdAt
     });
     this.toolRegistry = createDefaultToolRegistry(options.workspaceRoot);
-    this.subagents = new SubagentService();
+    this.subagents = new SubagentService(this.knowledgeService);
     for (const tool of createKnowledgeTools(this.knowledgeService)) {
       this.toolRegistry.register(tool);
     }
     this.toolRegistry.register(createShellAgentTool(this.subagents, options.workspaceRoot));
+    this.toolRegistry.register(createKnowledgeAgentTool(this.subagents, options.workspaceRoot));
 
     const restoredThreads = this.sessionStore.listThreads({
       workspaceRoot: options.workspaceRoot,
@@ -144,22 +153,33 @@ export class RuntimeService {
 
     const result = this.approvalService.resolveApproval({ approvalId, decision });
     if (result.ok) {
+      const isPlanApproval = result.request.actionType === 'agent-plan.execute';
       if (result.request.runId) {
         this.runState.update(result.request.runId, {
           status: result.decision === 'approved' ? 'running' : 'failed',
-          summary: result.decision === 'approved' ? '审批已通过，继续执行。' : '用户拒绝了外部路径访问。'
+          summary: result.decision === 'approved'
+            ? '审批已通过，继续执行。'
+            : isPlanApproval
+              ? '用户拒绝了 Agent Plan。'
+              : '用户拒绝了外部路径访问。'
         });
       }
       this.eventBus.emit('approval.resolved', {
         approvalId,
         decision: result.decision,
-        summary: result.decision === 'approved' ? '外部路径访问已批准，agent 将继续执行。' : '外部路径访问已拒绝。'
+        summary: isPlanApproval
+          ? result.decision === 'approved'
+            ? 'Agent Plan 已批准，agent 将开始执行。'
+            : 'Agent Plan 已拒绝。'
+          : result.decision === 'approved'
+            ? '外部路径访问已批准，agent 将继续执行。'
+            : '外部路径访问已拒绝。'
       });
     }
     return result;
   }
 
-  private async requestToolApproval(request: RuntimeApprovalRequest) {
+  private async requestToolApproval(request: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
     const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
     this.eventBus.emit('approval.required', approvalRequest);
     return decision;
@@ -192,7 +212,7 @@ export class RuntimeService {
     return this.knowledgeService.health(scope);
   }
 
-  querySystemWiki(input: { query?: string; limit?: number }) {
+  queryKnowledge(input: { query?: string; limit?: number }) {
     return this.knowledgeService.search({
       scope: 'system',
       query: String(input.query || ''),
@@ -200,7 +220,7 @@ export class RuntimeService {
     });
   }
 
-  ingestSystemWiki(input: { title?: string; content?: string; sourceId?: string; tags?: string[] }) {
+  ingestKnowledge(input: { title?: string; content?: string; sourceId?: string; tags?: string[] }) {
     return this.knowledgeService.ingest({
       scope: 'system',
       title: String(input.title || ''),
@@ -210,12 +230,45 @@ export class RuntimeService {
     });
   }
 
-  lintSystemWiki() {
-    return this.knowledgeService.lintSystemWiki();
+  ingestKnowledgeFiles(files: Array<{ filePath?: string; title?: string; sourceId?: string; tags?: string[] }>) {
+    return Promise.all(
+      files
+        .filter((file) => file.filePath)
+        .map((file) =>
+          this.knowledgeService.ingestFile({
+            scope: 'system',
+            filePath: String(file.filePath),
+            title: file.title,
+            sourceId: file.sourceId,
+            tags: Array.isArray(file.tags) ? file.tags : undefined
+          })
+        )
+    );
   }
 
-  buildSystemWikiGraph() {
-    return this.knowledgeService.buildSystemWikiGraph();
+  lintKnowledge() {
+    return this.knowledgeService.lint('system');
+  }
+
+  buildKnowledgeGraph() {
+    return this.knowledgeService.graph({ scope: 'system', action: 'build' });
+  }
+
+  browseKnowledge() {
+    return this.knowledgeService.browse('system');
+  }
+
+  readKnowledgeArticle(input: { articleId?: string }) {
+    return this.knowledgeService.readArticle(String(input.articleId || ''), 'system');
+  }
+
+  compileKnowledge(input: { sourceIds?: string[]; limit?: number; tier?: 0 | 1 | 2 | 3 }) {
+    return this.knowledgeService.compile({
+      scope: 'system',
+      sourceIds: Array.isArray(input.sourceIds) ? input.sourceIds : undefined,
+      limit: input.limit,
+      tier: input.tier
+    });
   }
 
   listRuntimeTasks() {
@@ -232,13 +285,14 @@ export class RuntimeService {
   }
 
   async submitPrompt(payload: PromptSubmissionInput) {
-    const prompt = payload.prompt?.trim();
+    const prompt = payload.prompt?.trim() || (payload.attachments?.length ? '请分析我发送的附件。' : '');
     if (!prompt) {
       throw new PromptValidationError('Prompt cannot be empty');
     }
 
     const runId = `run-${randomUUID()}`;
     const now = new Date().toISOString();
+    const attachments = this.materializePromptAttachments(payload.attachments ?? [], runId);
     const thread = this.getActiveThread();
     const controller = this.runState.start({
       runId,
@@ -257,7 +311,7 @@ export class RuntimeService {
       role: 'user',
       content: prompt,
       createdAt: now,
-      attachments: payload.attachments ?? []
+      attachments
     };
     this.messages.push(userMessage);
     this.touchThreadForPrompt(thread, prompt, now);
@@ -266,14 +320,29 @@ export class RuntimeService {
     const transcript = new TranscriptStore(sessionFile);
     transcript.appendMessage(userMessage);
 
+    const draftPlan = this.planService.shouldPlan(prompt)
+      ? this.planService.createDraftPlan({
+          runId,
+          threadId: thread.threadId,
+          agentId: this.options.agentId,
+          prompt,
+          now
+        })
+      : null;
+
     this.eventBus.emit('run.started', { runId, threadId: thread.threadId });
-    this.eventBus.emit('plan.updated', {
-      steps: [
-        { id: `${runId}-context`, title: '构建运行上下文', status: 'completed' },
-        { id: `${runId}-loop`, title: '执行 agent loop', status: 'in_progress' },
-        { id: `${runId}-persist`, title: '保存 transcript', status: 'pending' }
-      ]
-    });
+    if (draftPlan) {
+      this.emitPlan('plan.created', draftPlan, 'Agent Plan Mode 已生成待确认计划。');
+      this.emitPlan('plan.updated', draftPlan, '等待用户确认计划。');
+    } else {
+      this.eventBus.emit('plan.updated', {
+        steps: [
+          { id: `${runId}-context`, title: '构建运行上下文', status: 'completed' },
+          { id: `${runId}-loop`, title: '执行 agent loop', status: 'in_progress' },
+          { id: `${runId}-persist`, title: '保存 transcript', status: 'pending' }
+        ]
+      });
+    }
 
     const runPromise = this.executePromptRun({
       prompt,
@@ -281,7 +350,9 @@ export class RuntimeService {
       thread,
       transcript,
       sessionFile,
-      abortSignal: controller.signal
+      abortSignal: controller.signal,
+      attachments,
+      plan: draftPlan
     });
 
     if (payload.awaitCompletion) {
@@ -292,6 +363,46 @@ export class RuntimeService {
     return { ok: true, runId, status: 'running' };
   }
 
+  private materializePromptAttachments(attachments: RuntimeAttachment[], runId: string): RuntimeAttachment[] {
+    if (attachments.length === 0) return [];
+    const attachmentDir = path.join(getOpenAgentHome(), 'agents', this.options.agentId, 'attachments', runId);
+    mkdirSync(attachmentDir, { recursive: true });
+
+    return attachments.map((attachment) => {
+      const existingPath = typeof attachment.path === 'string' ? attachment.path : '';
+      if (path.isAbsolute(existingPath) && existsSync(existingPath)) {
+        return attachment;
+      }
+
+      const fileName = sanitizeAttachmentName(attachment.name || attachment.path || attachment.id || 'attachment');
+      const targetPath = uniquePath(path.join(attachmentDir, fileName));
+      const originalDataUrl = typeof attachment.originalDataUrl === 'string' ? attachment.originalDataUrl : undefined;
+      const dataUrl = originalDataUrl || (typeof attachment.dataUrl === 'string' ? attachment.dataUrl : undefined) || (typeof attachment.imageDataUrl === 'string' ? attachment.imageDataUrl : undefined);
+
+      try {
+        if (dataUrl) {
+          writeFileSync(targetPath, decodeDataUrl(dataUrl));
+        } else if (typeof attachment.textContent === 'string') {
+          writeFileSync(targetPath, attachment.textContent, 'utf8');
+        } else {
+          return attachment;
+        }
+        return {
+          ...attachment,
+          path: targetPath,
+          archivedAttachmentPath: targetPath
+        };
+      } catch (error) {
+        appendRuntimeInfoLog({
+          scope: 'runtime',
+          message: 'Failed to materialize prompt attachment',
+          data: { runId, threadId: this.activeThreadId, attachmentName: attachment.name, attachmentPath: attachment.path, error: errorToMessage(error) }
+        });
+        return attachment;
+      }
+    });
+  }
+
   private async executePromptRun(input: {
     prompt: string;
     runId: string;
@@ -299,15 +410,21 @@ export class RuntimeService {
     transcript: TranscriptStore;
     sessionFile: string;
     abortSignal: AbortSignal;
+    attachments: RuntimeAttachment[];
+    plan?: AgentPlan | null;
   }) {
-    const { prompt, runId, thread, transcript, sessionFile, abortSignal } = input;
+    const { prompt, runId, thread, transcript, sessionFile, abortSignal, attachments } = input;
+    let activePlan = input.plan ?? null;
     const loopSteps: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }> = [
       { id: `${runId}-context`, title: '构建运行上下文', status: 'completed' },
       { id: `${runId}-loop-start`, title: '启动 agent loop', status: 'in_progress' },
       { id: `${runId}-persist`, title: '保存 transcript', status: 'pending' }
     ];
-    const emitPlan = () => this.eventBus.emit('plan.updated', { steps: loopSteps });
+    const emitRuntimeProgress = () => this.eventBus.emit('plan.updated', { steps: loopSteps });
     const appendProgressStep = (title: string, status: 'in_progress' | 'completed' = 'in_progress') => {
+      if (activePlan) {
+        return;
+      }
       for (const step of loopSteps) {
         if (step.status === 'in_progress') step.status = 'completed';
       }
@@ -315,10 +432,37 @@ export class RuntimeService {
       if (persistStep?.id === `${runId}-persist`) loopSteps.pop();
       loopSteps.push({ id: `${runId}-step-${loopSteps.length}`, title, status });
       loopSteps.push({ id: `${runId}-persist`, title: '保存 transcript', status: 'pending' });
-      emitPlan();
+      emitRuntimeProgress();
     };
 
     try {
+      if (activePlan) {
+        this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户确认 Agent Plan。' });
+        this.eventBus.emit('plan.approval.required', this.toPlanPayload(activePlan, '请确认是否按该计划执行。'));
+        const decision = await this.requestToolApproval({
+          title: '执行 Agent Plan',
+          risk: activePlan.riskLevel,
+          description: formatPlanApprovalDescription(activePlan),
+          actionType: 'agent-plan.execute',
+          access: 'execute',
+          scope: 'once',
+          payloadPreview: activePlan.steps.map((step, index) => `${index + 1}. ${step.title}`).join('\n'),
+          runId,
+          threadId: thread.threadId
+        });
+        if (decision !== 'approved') {
+          activePlan = this.planService.reject(activePlan);
+          this.emitPlan('plan.failed', activePlan, '用户取消了 Agent Plan。');
+          this.runState.finish(runId, { status: 'cancelled', summary: '用户取消了 Agent Plan。' });
+          this.eventBus.emit('run.cancelled', { runId, summary: '用户取消了 Agent Plan。' });
+          return { ok: false, runId, status: 'cancelled', error: '用户取消了 Agent Plan。' };
+        }
+        activePlan = this.planService.approve(activePlan);
+        this.runState.update(runId, { status: 'running', summary: 'Agent Plan 已确认，开始执行。' });
+        this.eventBus.emit('plan.approval.resolved', this.toPlanPayload(activePlan, '用户已确认 Agent Plan。'));
+        this.emitPlan('plan.updated', activePlan, '用户已确认计划，开始执行。');
+      }
+
       const runInput = buildRunInput({
         runId,
         threadId: thread.threadId,
@@ -329,6 +473,7 @@ export class RuntimeService {
         providerId: this.options.providerId,
         model: this.options.model,
         messages: transcript.readMessages(),
+        attachments,
         tools: this.toolRegistry.list(),
         abortSignal,
         onLog: (entry) => {
@@ -359,6 +504,8 @@ export class RuntimeService {
         }
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
+      const knowledgeContext = await this.buildKnowledgeContext(prompt);
+      const memoryContext = selectRelevantMemoryContext(bootstrap.memory, prompt);
       runInput.systemPrompt = [
         runInput.systemPrompt,
         '',
@@ -368,8 +515,11 @@ export class RuntimeService {
         'User long-term preferences from USER.md:',
         bootstrap.user,
         '',
-        'Relevant long-term memory from MEMORY.md:',
-        bootstrap.memory,
+        'Relevant long-term memory from MEMORY.md (task-filtered, not full file):',
+        memoryContext || '(no relevant long-term memory found)',
+        '',
+        'Relevant Knowledge Base context:',
+        knowledgeContext || '(no relevant knowledge context found)',
         '',
         'Identity rule:',
         '- The `- Name:` field under `## 1. Identity` in SOUL.md is the source of truth for who you are.',
@@ -381,7 +531,7 @@ export class RuntimeService {
         '- The block must be valid JSON and must not be explained to the user.',
         '- Format:',
         '<!-- openagent:metadata',
-        '{"soulChangeRequests":[],"userUpdates":[],"memoryUpdates":[]}',
+        '{"soulChangeRequests":[],"userUpdates":[],"memoryUpdates":[],"knowledgeUpdates":[]}',
         '-->',
         '- If the user asks for a durable Agent identity, role, behavior, safety, tool, memory, or project-specific rule change, add one object to soulChangeRequests.',
         '- Do not add soulChangeRequests for one-off or session-only instructions.',
@@ -399,7 +549,12 @@ export class RuntimeService {
         '- Add userUpdates only for stable user preferences or collaboration habits that are likely to apply across future sessions; do not add one-off task instructions.',
         '- userUpdates object schema: shouldUpdateUser, category, statement, reason, confidence, evidence. category must be one of communication, git, development, documentation, project_management, tooling, other. confidence must be medium or high.',
         '- Add memoryUpdates only for reusable project/task knowledge, verified root causes, paths, commands, or design decisions that will help a future similar task; do not store raw chat logs or temporary details.',
-        '- memoryUpdates object schema: shouldUpdateMemory, scope, topic, summary, reuse, confidence, evidence. confidence must be medium or high.'
+        '- memoryUpdates object schema: shouldUpdateMemory, scope, topic, summary, reuse, confidence, evidence. confidence must be medium or high.',
+        '- Add knowledgeUpdates only for reusable OpenAgent/system/project knowledge that belongs in the shared Knowledge Base; do not store private user preferences or one-off chat details. OpenAgent will ask the user for approval before applying these updates.',
+        '- If the user explicitly asks to save/write/ingest content to wiki or knowledge base, put the full Markdown content in knowledgeUpdates unless you have already called knowledge_ingest successfully.',
+        '- For explicit wiki-save requests, do not use memoryUpdates as a substitute for knowledgeUpdates; memoryUpdates are only short reusable reminders, not the knowledge base source of truth.',
+        '- Never say “已保存到 wiki/知识库/工作区” unless a write tool succeeded or a knowledgeUpdates request was accepted and applied.',
+        '- knowledgeUpdates object schema: shouldUpdateKnowledge, title, content, reason, confidence, tags, evidence. confidence must be medium or high.'
       ].join('\n');
 
       runInput.onLog?.({
@@ -444,8 +599,14 @@ export class RuntimeService {
         this.messages.push(assistantMessage);
         transcript.appendMessage(assistantMessage);
         this.eventBus.emit('message.completed', assistantMessage);
-        for (const step of loopSteps) step.status = 'completed';
-        emitPlan();
+        if (activePlan) {
+          activePlan = this.planService.markCompleted(activePlan, summary);
+          this.emitPlan('plan.completed', activePlan, 'Agent Plan 执行完成。');
+          this.emitPlan('plan.updated', activePlan, 'Agent Plan 执行完成。');
+        } else {
+          for (const step of loopSteps) step.status = 'completed';
+          emitRuntimeProgress();
+        }
         this.finishThread(thread, prompt);
         this.runState.finish(runId, { status: 'completed', summary });
         const appliedSoulUpdates = metadata.soulChangeRequests
@@ -478,12 +639,55 @@ export class RuntimeService {
             })
           )
           .filter((update): update is NonNullable<typeof update> => Boolean(update));
+        const appliedKnowledgeUpdates = [];
+        for (const request of metadata.knowledgeUpdates) {
+          this.runState.update(runId, {
+            status: 'waiting_approval',
+            summary: `等待用户审批 Knowledge Base 候选：${request.title}`
+          });
+          const decision = await this.requestToolApproval({
+            title: `写入 Knowledge Base：${request.title}`,
+            risk: request.confidence === 'high' ? 'medium' : 'low',
+            description: [
+              request.reason,
+              '',
+              '候选内容：',
+              request.content.slice(0, 1200)
+            ].join('\n'),
+            actionType: 'knowledge.ingest',
+            access: 'write',
+            scope: 'once',
+            payloadPreview: request.content.slice(0, 500),
+            runId,
+            threadId: thread.threadId
+          });
+          if (decision !== 'approved') {
+            runInput.onLog?.({
+              scope: 'runtime',
+              message: 'Knowledge Base update rejected by user',
+              data: {
+                title: request.title,
+                reason: request.reason
+              }
+            });
+            continue;
+          }
+          this.runState.update(runId, { status: 'running', summary: `正在写入 Knowledge Base：${request.title}` });
+          const applied = await this.knowledgeService.ingest({
+            scope: 'system',
+            title: request.title,
+            content: request.content,
+            tags: ['runtime-detection', ...(request.tags ?? [])]
+          });
+          if (applied.ok) appliedKnowledgeUpdates.push(applied);
+        }
         const appliedAutoMemoryUpdates = [...appliedUserUpdates, ...appliedMemoryUpdates];
-        if (appliedSoulUpdates.length > 0 || appliedAutoMemoryUpdates.length > 0) {
+        if (appliedSoulUpdates.length > 0 || appliedAutoMemoryUpdates.length > 0 || appliedKnowledgeUpdates.length > 0) {
           const memorySummaryParts = [
             appliedSoulUpdates.length > 0 ? `SOUL.md ${appliedSoulUpdates.length} 条` : '',
             appliedUserUpdates.length > 0 ? `USER.md ${appliedUserUpdates.length} 条` : '',
-            appliedMemoryUpdates.length > 0 ? `MEMORY.md ${appliedMemoryUpdates.length} 条` : ''
+            appliedMemoryUpdates.length > 0 ? `MEMORY.md ${appliedMemoryUpdates.length} 条` : '',
+            appliedKnowledgeUpdates.length > 0 ? `Knowledge Base ${appliedKnowledgeUpdates.length} 条` : ''
           ].filter(Boolean);
           const memorySummary = `已自动更新长期上下文：${memorySummaryParts.join('，')}。`;
           runInput.onLog?.({
@@ -505,6 +709,11 @@ export class RuntimeService {
                 updateId: update.id,
                 title: update.title,
                 proposedText: update.proposedText
+              })),
+              knowledgeUpdates: appliedKnowledgeUpdates.map((update) => ({
+                id: update.id,
+                path: update.path,
+                message: update.message
               }))
             }
           });
@@ -513,6 +722,7 @@ export class RuntimeService {
             soulUpdates: appliedSoulUpdates,
             userUpdates: appliedUserUpdates,
             memoryUpdates: appliedMemoryUpdates,
+            knowledgeUpdates: appliedKnowledgeUpdates,
             summary: memorySummary
           });
         }
@@ -521,19 +731,67 @@ export class RuntimeService {
       }
 
       if (result.status === 'cancelled') {
+        if (activePlan) {
+          activePlan = this.planService.markFailed(activePlan, summary);
+          this.emitPlan('plan.failed', activePlan, summary);
+        }
         this.runState.finish(runId, { status: 'cancelled', summary });
         this.eventBus.emit('run.cancelled', { runId, summary });
         return { ok: false, runId, status: 'cancelled', error: summary };
       }
 
+      if (activePlan) {
+        activePlan = this.planService.markFailed(activePlan, summary);
+        this.emitPlan('plan.failed', activePlan, summary);
+      }
       this.runState.finish(runId, { status: 'failed', summary });
       this.eventBus.emit('run.failed', { summary, details: result.error });
       return { ok: false, runId, status: 'failed', error: summary };
     } catch (error) {
       const message = errorToMessage(error);
+      if (activePlan) {
+        activePlan = this.planService.markFailed(activePlan, message);
+        this.emitPlan('plan.failed', activePlan, message);
+      }
       this.runState.finish(runId, { status: 'failed', summary: message });
       this.eventBus.emit('run.failed', { summary: message, details: message });
       return { ok: false, runId, status: 'failed', error: message };
+    }
+  }
+
+  private emitPlan(type: 'plan.created' | 'plan.updated' | 'plan.completed' | 'plan.failed', plan: AgentPlan, reason?: string) {
+    this.eventBus.emit(type, this.toPlanPayload(plan, reason));
+  }
+
+  private toPlanPayload(plan: AgentPlan, reason?: string): PlanUpdatedPayload {
+    return {
+      plan,
+      reason,
+      steps: plan.steps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        status: step.status
+      }))
+    };
+  }
+
+  private async buildKnowledgeContext(prompt: string) {
+    try {
+      const results = await this.knowledgeService.search({ scope: 'system', query: prompt, limit: 3 });
+      if (results.length === 0) return '';
+      return results
+        .map((result, index) => {
+          const citation = result.citations?.[0] || result.path || result.id;
+          return [`[${index + 1}] ${result.title}`, `source: ${citation}`, result.content].join('\n');
+        })
+        .join('\n\n---\n\n');
+    } catch (error) {
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledge context lookup failed',
+        data: { error: errorToMessage(error) }
+      });
+      return '';
     }
   }
 
@@ -636,6 +894,54 @@ export class RuntimeService {
 
 }
 
+function selectRelevantMemoryContext(memory: string, prompt: string) {
+  const queryTerms = tokenizeMemoryQuery(prompt);
+  if (queryTerms.length === 0) return '';
+  const sections = splitMemorySections(memory);
+  return sections
+    .map((section) => ({ section, score: scoreMemorySection(section, queryTerms) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((item) => item.section.trim())
+    .join('\n\n---\n\n')
+    .slice(0, 6000);
+}
+
+function splitMemorySections(memory: string) {
+  const normalized = memory.trim();
+  if (!normalized) return [];
+  const parts = normalized.split(/\n(?=##\s+)/g).map((part) => part.trim()).filter(Boolean);
+  return parts.length ? parts : [normalized];
+}
+
+function scoreMemorySection(section: string, queryTerms: string[]) {
+  const haystack = section.toLowerCase();
+  return queryTerms.reduce((score, term) => score + (haystack.includes(term) ? term.length : 0), 0);
+}
+
+function tokenizeMemoryQuery(prompt: string) {
+  const stopwords = new Set([
+    'wiki',
+    '知识库',
+    '保存',
+    '存到',
+    '分析',
+    '图片',
+    '文件',
+    '这个',
+    '一下',
+    '帮我',
+    '当前',
+    '执行',
+    'tool',
+    'agent'
+  ]);
+  const asciiTerms = prompt.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? [];
+  const chineseTerms = prompt.match(/[\u4e00-\u9fa5]{2,}/g) ?? [];
+  return [...new Set([...asciiTerms, ...chineseTerms].map((term) => term.trim()).filter((term) => term && !stopwords.has(term)))];
+}
+
 function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
   if (entry.scope === 'context') return '完成运行上下文构建';
 
@@ -663,6 +969,18 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
   return null;
 }
 
+function formatPlanApprovalDescription(plan: AgentPlan) {
+  const steps = plan.steps.map((step, index) => `${index + 1}. ${step.title}${step.requiresApproval ? '（需要审批）' : ''}`).join('\n');
+  return [
+    `目标：${plan.goal}`,
+    `风险等级：${plan.riskLevel}`,
+    plan.approvalReason || '请确认是否执行该 Agent Plan。',
+    '',
+    '计划步骤：',
+    steps
+  ].join('\n');
+}
+
 function createDefaultAdapter() {
   if (process.env.OPENAGENT_RUNTIME_ENGINE === 'local-demo') {
     return new LocalDemoAgentLoop();
@@ -683,4 +1001,29 @@ function sortThreadsForDisplay(threads: RuntimeThread[]) {
 
 function normalizeTime(value: number) {
   return Number.isFinite(value) ? value : 0;
+}
+
+function sanitizeAttachmentName(name: string) {
+  const cleaned = name.replace(/[/:\\]/g, '-').replace(/\0/g, '').trim();
+  return cleaned || `attachment-${Date.now()}`;
+}
+
+function uniquePath(preferredPath: string) {
+  if (!existsSync(preferredPath)) return preferredPath;
+  const dir = path.dirname(preferredPath);
+  const extension = path.extname(preferredPath);
+  const base = path.basename(preferredPath, extension);
+  for (let index = 2; index < 10_000; index += 1) {
+    const candidate = path.join(dir, `${base}-${index}${extension}`);
+    if (!existsSync(candidate)) return candidate;
+  }
+  return path.join(dir, `${base}-${Date.now()}${extension}`);
+}
+
+function decodeDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (!match) return Buffer.from(dataUrl, 'utf8');
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? '';
+  return isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
 }

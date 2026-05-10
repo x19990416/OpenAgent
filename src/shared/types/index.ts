@@ -58,9 +58,11 @@ export interface PromptAttachmentDescriptor {
   kind: 'image' | 'text' | 'file' | 'binary';
   size: number;
   mimeType?: string;
+  originalMimeType?: string;
   textContent?: string;
   imageDataUrl?: string;
   dataUrl?: string;
+  originalDataUrl?: string;
   [key: string]: unknown;
 }
 
@@ -88,7 +90,7 @@ export interface PromptSubmissionResult {
 export interface KnowledgeResult {
   id: string;
   title: string;
-  source: 'system-wiki' | string;
+  source: 'openagent-system-compiler' | string;
   content: string;
   score?: number;
   path?: string;
@@ -97,14 +99,14 @@ export interface KnowledgeResult {
 
 export interface KnowledgeHealthResult {
   ok: boolean;
-  source: 'system-wiki' | string;
+  source: 'openagent-system-compiler' | string;
   message: string;
   data?: unknown;
 }
 
 export interface KnowledgeIngestResult {
   ok: boolean;
-  source: 'system-wiki' | string;
+  source: 'openagent-system-compiler' | string;
   id?: string;
   path?: string;
   message: string;
@@ -112,7 +114,7 @@ export interface KnowledgeIngestResult {
 
 export interface KnowledgeLintResult {
   ok: boolean;
-  source: 'system-wiki' | string;
+  source: 'openagent-system-compiler' | string;
   message: string;
   reportPath?: string;
   data?: unknown;
@@ -120,11 +122,78 @@ export interface KnowledgeLintResult {
 
 export interface KnowledgeGraphResult {
   ok: boolean;
-  source: 'system-wiki' | string;
+  source: 'openagent-system-compiler' | string;
   message: string;
   graphJsonPath?: string;
   graphHtmlPath?: string;
+  data?: {
+    built?: string;
+    nodes?: Array<{ id: string; label: string; path: string }>;
+    edges?: Array<{ from: string; to: string; type: string }>;
+    [key: string]: unknown;
+  };
+}
+
+export interface KnowledgeCompileResult {
+  ok: boolean;
+  source: 'openagent-system-compiler' | string;
+  message: string;
+  compiled: number;
+  skipped: number;
+  failed: number;
+  articlePaths?: string[];
   data?: unknown;
+}
+
+export interface KnowledgeQualityReport {
+  sourceId: string;
+  title: string;
+  score: number;
+  grade: string;
+  issues: string[];
+  metrics: Record<string, number>;
+  generatedAt: string;
+}
+
+export interface KnowledgeSourceListItem {
+  id: string;
+  title: string;
+  kind: string;
+  status?: string;
+  tier?: number;
+  rawTextPath?: string;
+  createdAt: string;
+  updatedAt: string;
+  articleIds?: string[];
+  quality?: KnowledgeQualityReport;
+}
+
+export interface KnowledgeArticleListItem {
+  id: string;
+  conceptId: string;
+  title: string;
+  path: string;
+  sourceIds: string[];
+  updatedAt: string;
+}
+
+export interface KnowledgeBrowseSnapshot {
+  provider: { id: string; displayName: string; rootPath?: string; [key: string]: unknown };
+  root: string;
+  sources: KnowledgeSourceListItem[];
+  articles: KnowledgeArticleListItem[];
+  pending: KnowledgeSourceListItem[];
+  quality: KnowledgeQualityReport[];
+}
+
+export interface KnowledgeArticleReadResult {
+  ok: boolean;
+  source: 'openagent-system-compiler' | string;
+  articleId: string;
+  title?: string;
+  path?: string;
+  content?: string;
+  message?: string;
 }
 
 export interface PluginRegistrySnapshot {
@@ -277,10 +346,14 @@ export interface DesktopApi {
   getStateSnapshot: () => Promise<StateSnapshot>;
   getRuntimeTasks?: () => Promise<any[]>;
   getKnowledgeHealth?: (payload?: { scope?: 'system' }) => Promise<KnowledgeHealthResult[]>;
-  querySystemWiki?: (payload: { query: string; limit?: number }) => Promise<KnowledgeResult[]>;
-  ingestSystemWiki?: (payload: { title: string; content: string; sourceId?: string; tags?: string[] }) => Promise<KnowledgeIngestResult>;
-  lintSystemWiki?: () => Promise<KnowledgeLintResult>;
-  buildSystemWikiGraph?: () => Promise<KnowledgeGraphResult>;
+  queryKnowledge?: (payload: { query: string; limit?: number }) => Promise<KnowledgeResult[]>;
+  ingestKnowledge?: (payload: { title: string; content: string; sourceId?: string; tags?: string[] }) => Promise<KnowledgeIngestResult>;
+  chooseAndIngestKnowledgeFiles?: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string; results: KnowledgeIngestResult[] }>;
+  lintKnowledge?: () => Promise<KnowledgeLintResult>;
+  buildKnowledgeGraph?: () => Promise<KnowledgeGraphResult>;
+  browseKnowledge?: () => Promise<KnowledgeBrowseSnapshot>;
+  readKnowledgeArticle?: (payload: { articleId: string }) => Promise<KnowledgeArticleReadResult>;
+  compileKnowledge?: (payload?: { sourceIds?: string[]; limit?: number; tier?: 0 | 1 | 2 | 3 }) => Promise<KnowledgeCompileResult>;
   listScheduledTasks?: () => Promise<ScheduledTaskItem[]>;
   createScheduledTask?: (payload: CreateScheduledTaskInput) => Promise<ScheduledTaskItem>;
   deleteScheduledTask?: (payload: { taskId: string }) => Promise<{ ok: boolean; error?: string }>;

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -226,10 +226,29 @@ function registerIpc() {
   ipcMain.handle('state:get-snapshot', () => buildSnapshot());
   ipcMain.handle('runtime:get-tasks', () => runtimeService.listRuntimeTasks());
   ipcMain.handle('knowledge:health', () => runtimeService.getKnowledgeHealth('system'));
-  ipcMain.handle('knowledge:query-system-wiki', (_event, payload) => runtimeService.querySystemWiki(payload ?? {}));
-  ipcMain.handle('knowledge:ingest-system-wiki', (_event, payload) => runtimeService.ingestSystemWiki(payload ?? {}));
-  ipcMain.handle('knowledge:lint-system-wiki', () => runtimeService.lintSystemWiki());
-  ipcMain.handle('knowledge:build-system-wiki-graph', () => runtimeService.buildSystemWikiGraph());
+  ipcMain.handle('knowledge:query', (_event, payload) => runtimeService.queryKnowledge(payload ?? {}));
+  ipcMain.handle('knowledge:ingest', (_event, payload) => runtimeService.ingestKnowledge(payload ?? {}));
+  ipcMain.handle('knowledge:choose-and-ingest-files', async () => {
+    if (!mainWindow) return { ok: false, error: 'Main window is not ready', results: [] };
+    const selected = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要导入 Knowledge Base 的文件',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Knowledge Supported Files', extensions: ['md', 'markdown', 'txt', 'json', 'jsonl', 'yml', 'yaml', 'csv', 'tsv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg', 'mp4', 'mov', 'mp3', 'wav', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    if (selected.canceled || selected.filePaths.length === 0) {
+      return { ok: false, cancelled: true, results: [] };
+    }
+    const results = await runtimeService.ingestKnowledgeFiles(selected.filePaths.map((filePath) => ({ filePath, tags: ['file-import'] })));
+    return { ok: results.every((result) => result.ok), results };
+  });
+  ipcMain.handle('knowledge:lint', () => runtimeService.lintKnowledge());
+  ipcMain.handle('knowledge:graph', () => runtimeService.buildKnowledgeGraph());
+  ipcMain.handle('knowledge:browse', () => runtimeService.browseKnowledge());
+  ipcMain.handle('knowledge:read-article', (_event, payload) => runtimeService.readKnowledgeArticle(payload ?? {}));
+  ipcMain.handle('knowledge:compile', (_event, payload) => runtimeService.compileKnowledge(payload ?? {}));
   ipcMain.handle('scheduled-tasks:list', () => scheduledTaskService.list());
   ipcMain.handle('scheduled-tasks:create', (_event, payload) => scheduledTaskService.create(payload ?? {}));
   ipcMain.handle('scheduled-tasks:delete', (_event, payload) => scheduledTaskService.delete(String(payload?.taskId || '')));

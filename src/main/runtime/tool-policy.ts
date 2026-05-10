@@ -19,12 +19,34 @@ export type ToolPolicyDecision =
       };
     };
 
-const READ_ONLY_TOOLS = new Set(['ls', 'read', 'find', 'grep', 'count_files', 'shell_agent', 'list_directory', 'read_file', 'current_time']);
+const READ_ONLY_TOOLS = new Set([
+  'ls',
+  'read',
+  'find',
+  'grep',
+  'count_files',
+  'shell_agent',
+  'list_directory',
+  'read_file',
+  'current_time',
+  'knowledge_search',
+  'knowledge_query',
+  'knowledge_health',
+  'knowledge_lint',
+  'knowledge_graph',
+  'knowledge_provenance'
+]);
+
+const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_file', 'knowledge_compile', 'knowledge_compile_topic', 'knowledge_capture']);
 
 export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
 
   decide(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+    if (tool.name === 'knowledge_agent') {
+      return decideKnowledgeAgent(args);
+    }
+
     if (READ_ONLY_TOOLS.has(tool.name)) {
       const pathAccess = classifyToolPathAccess({ toolName: tool.name, args, workspaceRoot: this.workspaceRoot });
       if (pathAccess?.isExternal) {
@@ -50,6 +72,22 @@ export class ToolPolicy {
       return { kind: 'allow' };
     }
 
+
+    if (KNOWLEDGE_WRITE_TOOLS.has(tool.name)) {
+      return {
+        kind: 'requires_approval',
+        approval: {
+          title: '请求写入 Knowledge Base',
+          risk: 'medium',
+          description: 'OpenAgent 需要将本次内容写入内置知识库或触发知识编译。批准后仅用于本次 tool 调用。',
+          actionType: 'knowledge.ingest',
+          access: 'write',
+          scope: 'once',
+          payloadPreview: this.summarizeArgs(args)
+        }
+      };
+    }
+
     return {
       kind: 'deny',
       reason: `Tool requires an explicit OpenAgent policy before execution: ${tool.name}`
@@ -64,4 +102,14 @@ export class ToolPolicy {
       return String(args);
     }
   }
+}
+
+function decideKnowledgeAgent(args: unknown): ToolPolicyDecision {
+  const payload = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const operation = String(payload.operation ?? '');
+  if (['search', 'query', 'ingest', 'ingest_file', 'compile', 'compile_topic', 'capture', 'provenance', 'health', 'lint', 'graph'].includes(operation)) {
+    return { kind: 'allow' };
+  }
+
+  return { kind: 'deny', reason: `Unsupported KnowledgeAgent operation: ${operation || '(missing)'}` };
 }

@@ -5,6 +5,6 @@ export function getOpenAgentHome() {
   return path.join(os.homedir(), '.openagent');
 }
 
-export function getSystemWikiRoot() {
+export function getSystemKnowledgeRoot() {
   return path.join(getOpenAgentHome(), 'system', 'wiki');
 }

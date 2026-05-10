@@ -18,6 +18,7 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | --- | --- |
 | `README.md` | 了解项目启动方式、目录和当前 UI 原型状态。 |
 | `docs/pi.md` | 设计或实现 Pi runtime、agent loop、tool adapter、session/memory/compaction 时必须阅读。 |
+| `docs/plan-mode.md` | 设计或实现 Agent Plan Mode、计划审批、分步执行、plan 持久化时必须阅读。 |
 | `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
 | `agents.md` | 每次开始开发前阅读，用作路由和约束入口。 |
 
@@ -31,6 +32,7 @@ src/
 
 docs/
 ├── pi.md                 # Pi Agent 集成开发指导
+├── plan-mode.md          # Agent Plan Mode 设计与实现计划
 └── knowledge.md          # system wiki 知识层设计
 ```
 
@@ -87,6 +89,7 @@ src/main/runtime/
 ├── run-state.ts                # active run、取消、状态机
 ├── event-bus.ts                # UI event 分发
 ├── session-store.ts            # thread/session 文件定位与元数据
+├── planning/                   # Agent Plan Mode、计划审批、分步执行
 ├── knowledge/                  # agent brain / system wiki provider 与工具
 └── pi/
     ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 主适配层
@@ -208,6 +211,7 @@ pnpm build
 | UI 样式、布局、交互 | `src/renderer` |
 | IPC、新 desktopApi 能力 | `src/main/preload.ts`、`src/shared/types`、`src/main/main.ts` |
 | agent loop / Pi 集成 | `docs/pi.md`，然后新增 `src/main/runtime` |
+| Agent Plan Mode / 计划审批 / 分步执行 | `docs/plan-mode.md`，然后新增 `src/main/runtime/planning` |
 | session/thread 持久化 | `src/main/runtime/session-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
 | tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节 |
 | model/provider 配置 | 后续 model config store，避免写死在 Pi adapter |

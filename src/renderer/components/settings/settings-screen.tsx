@@ -32,6 +32,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   LlmAuthType,
+  KnowledgeArticleReadResult,
+  KnowledgeBrowseSnapshot,
   KnowledgeGraphResult,
   KnowledgeHealthResult,
   KnowledgeLintResult,
@@ -2273,7 +2275,12 @@ type KnowledgeFeedback = { type: 'success' | 'error'; text: string } | null;
 
 function KnowledgePanel() {
   const [health, setHealth] = useState<KnowledgeHealthResult[]>([]);
+  const [browseSnapshot, setBrowseSnapshot] = useState<KnowledgeBrowseSnapshot | null>(null);
+  const [selectedSourceId, setSelectedSourceId] = useState('');
+  const [selectedArticleId, setSelectedArticleId] = useState('');
+  const [articlePreview, setArticlePreview] = useState<KnowledgeArticleReadResult | null>(null);
   const [isLoadingHealth, setIsLoadingHealth] = useState(false);
+  const [isLoadingBrowse, setIsLoadingBrowse] = useState(false);
   const [query, setQuery] = useState('OpenAgent runtime');
   const [queryResults, setQueryResults] = useState<KnowledgeResult[]>([]);
   const [isQuerying, setIsQuerying] = useState(false);
@@ -2282,7 +2289,25 @@ function KnowledgePanel() {
   const [lintResult, setLintResult] = useState<KnowledgeLintResult | null>(null);
   const [graphResult, setGraphResult] = useState<KnowledgeGraphResult | null>(null);
   const [isMaintaining, setIsMaintaining] = useState(false);
+  const [isCompiling, setIsCompiling] = useState(false);
   const [feedback, setFeedback] = useState<KnowledgeFeedback>(null);
+
+  const loadBrowse = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.browseKnowledge) return;
+
+    try {
+      setIsLoadingBrowse(true);
+      const result = await desktopApi.browseKnowledge();
+      setBrowseSnapshot(result);
+      setSelectedSourceId((current) => current || result.sources[0]?.id || '');
+      setSelectedArticleId((current) => current || result.articles[0]?.id || '');
+    } catch (error) {
+      setFeedback({ type: 'error', text: `知识库索引读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsLoadingBrowse(false);
+    }
+  };
 
   const loadHealth = async () => {
     const desktopApi = window.desktopApi;
@@ -2296,6 +2321,7 @@ function KnowledgePanel() {
       const result = await desktopApi.getKnowledgeHealth({ scope: 'system' });
       setHealth(result);
       setFeedback(null);
+      await loadBrowse();
     } catch (error) {
       setFeedback({ type: 'error', text: `知识库状态读取失败：${error instanceof Error ? error.message : '未知错误'}` });
     } finally {
@@ -2315,16 +2341,16 @@ function KnowledgePanel() {
       return;
     }
 
-    if (!desktopApi?.querySystemWiki) {
-      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki 查询接口，请重启桌面应用。' });
+    if (!desktopApi?.queryKnowledge) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 knowledge base 查询接口，请重启桌面应用。' });
       return;
     }
 
     try {
       setIsQuerying(true);
-      const results = await desktopApi.querySystemWiki({ query: normalizedQuery, limit: 8 });
+      const results = await desktopApi.queryKnowledge({ query: normalizedQuery, limit: 8 });
       setQueryResults(results);
-      setFeedback({ type: 'success', text: results.length > 0 ? `找到 ${results.length} 条 system wiki 结果。` : '没有找到匹配结果。' });
+      setFeedback({ type: 'success', text: results.length > 0 ? `找到 ${results.length} 条 knowledge base 结果。` : '没有找到匹配结果。' });
     } catch (error) {
       setFeedback({ type: 'error', text: `查询失败：${error instanceof Error ? error.message : '未知错误'}` });
     } finally {
@@ -2341,13 +2367,13 @@ function KnowledgePanel() {
       return;
     }
 
-    if (!desktopApi?.ingestSystemWiki) {
-      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki 摄取接口，请重启桌面应用。' });
+    if (!desktopApi?.ingestKnowledge) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 knowledge base 摄取接口，请重启桌面应用。' });
       return;
     }
 
     try {
-      const result = await desktopApi.ingestSystemWiki({
+      const result = await desktopApi.ingestKnowledge({
         title,
         content,
         tags: ['openagent']
@@ -2361,22 +2387,67 @@ function KnowledgePanel() {
       setIngestContent('');
       await loadHealth();
       setQuery(title);
-      setQueryResults((await desktopApi.querySystemWiki?.({ query: title, limit: 5 })) ?? []);
+      setQueryResults((await desktopApi.queryKnowledge?.({ query: title, limit: 5 })) ?? []);
     } catch (error) {
       setFeedback({ type: 'error', text: `摄取失败：${error instanceof Error ? error.message : '未知错误'}` });
     }
   };
 
+  const importFiles = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.chooseAndIngestKnowledgeFiles) {
+      setFeedback({ type: 'error', text: '当前环境未挂载文件导入接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      const result = await desktopApi.chooseAndIngestKnowledgeFiles();
+      if (result.cancelled) return;
+      const okCount = result.results.filter((item) => item.ok).length;
+      const failCount = result.results.length - okCount;
+      setFeedback({
+        type: result.ok ? 'success' : 'error',
+        text: `文件导入完成：成功 ${okCount} 个，失败 ${failCount} 个。`
+      });
+      await loadHealth();
+      if (result.results[0]?.id) {
+        setQuery(result.results[0].id);
+        setQueryResults((await desktopApi.queryKnowledge?.({ query: result.results[0].id, limit: 5 })) ?? []);
+      }
+    } catch (error) {
+      setFeedback({ type: 'error', text: `文件导入失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const runCompile = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.compileKnowledge) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 knowledge base compile 接口，请重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setIsCompiling(true);
+      const result = await desktopApi.compileKnowledge({ limit: 20, tier: 3 });
+      setFeedback({ type: result.ok ? 'success' : 'error', text: result.message });
+      await loadHealth();
+    } catch (error) {
+      setFeedback({ type: 'error', text: `编译失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsCompiling(false);
+    }
+  };
+
   const runLint = async () => {
     const desktopApi = window.desktopApi;
-    if (!desktopApi?.lintSystemWiki) {
-      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki lint 接口，请重启桌面应用。' });
+    if (!desktopApi?.lintKnowledge) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 knowledge base lint 接口，请重启桌面应用。' });
       return;
     }
 
     try {
       setIsMaintaining(true);
-      const result = await desktopApi.lintSystemWiki();
+      const result = await desktopApi.lintKnowledge();
       setLintResult(result);
       setFeedback({ type: result.ok ? 'success' : 'error', text: result.message });
       await loadHealth();
@@ -2389,14 +2460,14 @@ function KnowledgePanel() {
 
   const buildGraph = async () => {
     const desktopApi = window.desktopApi;
-    if (!desktopApi?.buildSystemWikiGraph) {
-      setFeedback({ type: 'error', text: '当前环境未挂载 system wiki graph 接口，请重启桌面应用。' });
+    if (!desktopApi?.buildKnowledgeGraph) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 knowledge base graph 接口，请重启桌面应用。' });
       return;
     }
 
     try {
       setIsMaintaining(true);
-      const result = await desktopApi.buildSystemWikiGraph();
+      const result = await desktopApi.buildKnowledgeGraph();
       setGraphResult(result);
       setFeedback({ type: result.ok ? 'success' : 'error', text: result.message });
       await loadHealth();
@@ -2407,8 +2478,29 @@ function KnowledgePanel() {
     }
   };
 
-  const systemWikiHealth = health.find((item) => item.source === 'system-wiki');
-  const systemWikiData = asRecord(systemWikiHealth?.data);
+  const openArticle = async (articleId: string) => {
+    const desktopApi = window.desktopApi;
+    setSelectedArticleId(articleId);
+    if (!desktopApi?.readKnowledgeArticle) return;
+
+    try {
+      const result = await desktopApi.readKnowledgeArticle({ articleId });
+      setArticlePreview(result);
+      if (!result.ok) setFeedback({ type: 'error', text: result.message || '文章读取失败。' });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `文章读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const knowledgeHealth = health.find((item) => item.source === 'openagent-system-compiler');
+  const knowledgeData = asRecord(knowledgeHealth?.data);
+  const selectedSource = browseSnapshot?.sources.find((item) => item.id === selectedSourceId) ?? browseSnapshot?.sources[0] ?? null;
+  const selectedQuality = selectedSource?.quality ?? browseSnapshot?.quality.find((item) => item.sourceId === selectedSource?.id) ?? null;
+  const visibleArticles = selectedSource
+    ? browseSnapshot?.articles.filter((article) => article.sourceIds.includes(selectedSource.id)) ?? []
+    : browseSnapshot?.articles ?? [];
+  const graphNodes = Array.isArray(graphResult?.data?.nodes) ? graphResult.data.nodes : [];
+  const graphEdges = Array.isArray(graphResult?.data?.edges) ? graphResult.data.edges : [];
 
   return (
     <div className="settings-knowledge-layout">
@@ -2416,45 +2508,50 @@ function KnowledgePanel() {
         <div className="settings-section-header">
           <div>
             <div className="settings-section-title">Knowledge Layer</div>
-            <div className="settings-section-description">当前只保留 System Wiki 公共知识库，外部 agent brain 集成已移除。</div>
+            <div className="settings-section-description">内置 Knowledge Compiler：初始化、摄取、批量编译、质量评估和 provenance 浏览。</div>
           </div>
-          <button className="toolbar-button" type="button" onClick={() => void loadHealth()} disabled={isLoadingHealth}>
+          <button className="toolbar-button" type="button" onClick={() => void loadHealth()} disabled={isLoadingHealth || isLoadingBrowse}>
             <RefreshCw size={14} />
-            {isLoadingHealth ? '刷新中…' : '刷新状态'}
+            {isLoadingHealth || isLoadingBrowse ? '刷新中…' : '刷新状态'}
           </button>
         </div>
 
-        {feedback ? (
-          <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div>
-        ) : null}
+        {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
 
         <div className="settings-knowledge-status-grid single">
           <div className="settings-provider-card-section">
             <div className="settings-provider-section-title-row">
               <div>
-                <div className="settings-provider-console-label">System Wiki</div>
-                <div className="settings-form-help">llm-wiki-agent 风格的系统级 Markdown 知识库。</div>
+                <div className="settings-provider-console-label">Knowledge Base</div>
+                <div className="settings-form-help">sage-wiki 风格的内置 Knowledge Compiler。</div>
               </div>
-              <span className={`settings-provider-chip ${systemWikiHealth?.ok ? 'is-enabled' : 'is-disabled'}`}>
-                {systemWikiHealth?.ok ? '就绪' : '未初始化'}
+              <span className={`settings-provider-chip ${knowledgeHealth?.ok ? 'is-enabled' : 'is-disabled'}`}>
+                {knowledgeHealth?.ok ? '就绪' : '未初始化'}
               </span>
             </div>
             <div className="settings-info-grid">
               <div className="settings-info-row">
                 <div className="settings-info-label">Memory Root</div>
-                <div className="settings-info-value">{String(systemWikiData.root ?? '~/.openagent/system/wiki')}</div>
-              </div>
-              <div className="settings-info-row">
-                <div className="settings-info-label">页面</div>
-                <div className="settings-info-value">{String(systemWikiData.wikiFiles ?? 0)}</div>
+                <div className="settings-info-value">{browseSnapshot?.root || String(knowledgeData.root ?? '~/.openagent/system/wiki')}</div>
               </div>
               <div className="settings-info-row">
                 <div className="settings-info-label">Sources</div>
-                <div className="settings-info-value">{String(systemWikiData.sourceFiles ?? 0)}</div>
+                <div className="settings-info-value">{String(browseSnapshot?.sources.length ?? knowledgeData.sources ?? 0)}</div>
+              </div>
+              <div className="settings-info-row">
+                <div className="settings-info-label">Articles</div>
+                <div className="settings-info-value">{String(browseSnapshot?.articles.length ?? knowledgeData.articles ?? 0)}</div>
+              </div>
+              <div className="settings-info-row">
+                <div className="settings-info-label">Pending</div>
+                <div className="settings-info-value">{String(browseSnapshot?.pending.length ?? knowledgeData.pending ?? 0)}</div>
               </div>
             </div>
-            <div className="settings-form-help">{systemWikiHealth?.message ?? '点击刷新状态初始化 system wiki。'}</div>
+            <div className="settings-form-help">{knowledgeHealth?.message ?? '点击刷新状态初始化 knowledge base。'}</div>
             <div className="inline-actions">
+              <button className="toolbar-button" type="button" onClick={() => void runCompile()} disabled={isCompiling}>
+                {isCompiling ? '编译中…' : '编译 Pending'}
+              </button>
               <button className="toolbar-button" type="button" onClick={() => void runLint()} disabled={isMaintaining}>
                 {isMaintaining ? '处理中…' : 'Lint'}
               </button>
@@ -2462,14 +2559,23 @@ function KnowledgePanel() {
                 构建 Graph
               </button>
             </div>
-            {lintResult ? (
-              <div className="settings-form-help">
-                Lint 报告：<code>{lintResult.reportPath}</code>
-              </div>
-            ) : null}
-            {graphResult ? (
-              <div className="settings-form-help">
-                Graph：<code>{graphResult.graphJsonPath}</code> · <code>{graphResult.graphHtmlPath}</code>
+            {lintResult ? <div className="settings-form-help">Lint 报告：<code>{lintResult.reportPath}</code></div> : null}
+            {graphResult ? <div className="settings-form-help">Graph：<code>{graphResult.graphJsonPath}</code> · <code>{graphResult.graphHtmlPath}</code></div> : null}
+            {graphNodes.length > 0 ? (
+              <div className="settings-knowledge-graph-preview">
+                <div className="settings-provider-console-label">Graph Preview</div>
+                <div className="settings-model-chip-list">
+                  {graphNodes.slice(0, 12).map((node) => (
+                    <span key={node.id} className="settings-model-chip" title={node.path}>
+                      <span className="settings-model-chip-label">{node.label}</span>
+                    </span>
+                  ))}
+                </div>
+                <div className="settings-knowledge-edge-list">
+                  {graphEdges.slice(0, 12).map((edge, index) => (
+                    <div key={`${edge.from}-${edge.to}-${index}`} className="settings-knowledge-edge">{edge.from} → {edge.to}</div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
@@ -2479,50 +2585,112 @@ function KnowledgePanel() {
       <section className="settings-card settings-knowledge-card">
         <div className="settings-section-header">
           <div>
-            <div className="settings-section-title">查询 System Wiki</div>
-            <div className="settings-section-description">用于验证 system_wiki_query / knowledge_search 的第一阶段效果。</div>
+            <div className="settings-section-title">Sources / Articles / Quality</div>
+            <div className="settings-section-description">查看导入源、编译文章、质量分和 provenance 路径。</div>
+          </div>
+          <button className="toolbar-button" type="button" onClick={() => void loadBrowse()} disabled={isLoadingBrowse}>
+            <RefreshCw size={14} />
+            {isLoadingBrowse ? '刷新中…' : '刷新索引'}
+          </button>
+        </div>
+
+        <div className="settings-knowledge-browser-grid">
+          <div className="settings-knowledge-browser-panel">
+            <div className="settings-provider-console-label">Sources</div>
+            <div className="settings-knowledge-source-list">
+              {browseSnapshot?.sources.length ? browseSnapshot.sources.map((source) => (
+                <button key={source.id} className={`settings-knowledge-source-item ${source.id === selectedSource?.id ? 'active' : ''}`} type="button" onClick={() => setSelectedSourceId(source.id)}>
+                  <span className="settings-knowledge-source-title">{source.title}</span>
+                  <span className="settings-provider-model-meta-line">
+                    {source.kind} · {source.status ?? 'unknown'} · score {source.quality?.score ?? '-'}
+                  </span>
+                </button>
+              )) : (
+                <div className="settings-provider-model-empty">
+                  <div className="settings-provider-empty-title">暂无 Sources</div>
+                  <div className="settings-provider-empty-copy">导入文件或写入文本后会出现在这里。</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="settings-knowledge-browser-panel">
+            <div className="settings-provider-console-label">Quality</div>
+            {selectedSource ? (
+              <div className="settings-knowledge-quality-card">
+                <div className="settings-provider-model-name">
+                  <span>{selectedSource.title}</span>
+                  <span className="settings-provider-default-badge">{selectedSource.status ?? 'unknown'}</span>
+                </div>
+                <div className="settings-provider-model-meta-line"><code>{selectedSource.rawTextPath ?? selectedSource.id}</code></div>
+                <div className="settings-info-grid">
+                  <div className="settings-info-row"><div className="settings-info-label">Score</div><div className="settings-info-value">{selectedQuality?.score ?? '-'}</div></div>
+                  <div className="settings-info-row"><div className="settings-info-label">Grade</div><div className="settings-info-value">{selectedQuality?.grade ?? '-'}</div></div>
+                  <div className="settings-info-row"><div className="settings-info-label">Articles</div><div className="settings-info-value">{String(selectedSource.articleIds?.length ?? 0)}</div></div>
+                </div>
+                {selectedQuality?.issues.length ? (
+                  <ul className="settings-knowledge-issue-list">
+                    {selectedQuality.issues.map((issue) => <li key={issue}>{issue}</li>)}
+                  </ul>
+                ) : <div className="settings-form-help">暂无质量问题。</div>}
+              </div>
+            ) : <div className="settings-form-help">选择左侧 source 查看质量报告。</div>}
+          </div>
+
+          <div className="settings-knowledge-browser-panel">
+            <div className="settings-provider-console-label">Articles</div>
+            <div className="settings-knowledge-source-list">
+              {visibleArticles.length ? visibleArticles.map((article) => (
+                <button key={article.id} className={`settings-knowledge-source-item ${article.id === selectedArticleId ? 'active' : ''}`} type="button" onClick={() => void openArticle(article.id)}>
+                  <span className="settings-knowledge-source-title">{article.title}</span>
+                  <span className="settings-provider-model-meta-line"><code>{article.path}</code></span>
+                </button>
+              )) : <div className="settings-form-help">当前 source 暂无文章，点击“编译 Pending”。</div>}
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-knowledge-article-preview">
+          <div className="settings-provider-console-label">Article Preview</div>
+          {articlePreview?.ok ? (
+            <>
+              <div className="settings-provider-model-name"><span>{articlePreview.title}</span></div>
+              <div className="settings-provider-model-meta-line"><code>{articlePreview.path}</code></div>
+              <pre className="settings-knowledge-pre">{articlePreview.content}</pre>
+            </>
+          ) : <div className="settings-form-help">选择一篇 article 查看 Markdown 内容与 provenance frontmatter。</div>}
+        </div>
+      </section>
+
+      <section className="settings-card settings-knowledge-card">
+        <div className="settings-section-header">
+          <div>
+            <div className="settings-section-title">查询 Knowledge Base</div>
+            <div className="settings-section-description">用于验证 Knowledge Compiler 的 summaries、articles、chunks 检索效果。</div>
           </div>
         </div>
         <div className="settings-knowledge-form">
           <div className="settings-model-input-row">
-            <input
-              className="settings-text-input"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void submitQuery();
-                }
-              }}
-              placeholder="例如：OpenAgent runtime 如何接入知识库？"
-            />
-            <button className="primary-button" type="button" onClick={() => void submitQuery()} disabled={isQuerying}>
-              {isQuerying ? '查询中…' : '查询'}
-            </button>
+            <input className="settings-text-input" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void submitQuery(); } }} placeholder="例如：OpenAgent runtime 如何接入知识库？" />
+            <button className="primary-button" type="button" onClick={() => void submitQuery()} disabled={isQuerying}>{isQuerying ? '查询中…' : '查询'}</button>
           </div>
 
           <div className="settings-provider-model-table">
-            {queryResults.length > 0 ? (
-              queryResults.map((result) => (
-                <div key={result.id} className="settings-provider-model-row settings-knowledge-result-row">
-                  <div className="settings-provider-model-main">
-                    <div className="settings-provider-model-name">
-                      <span>{result.title}</span>
-                      <span className="settings-provider-default-badge">{result.source}</span>
-                    </div>
-                    <div className="settings-provider-model-meta-line">
-                      {result.path ? <code>{result.path}</code> : null}
-                      {typeof result.score === 'number' ? <span className="settings-provider-model-token">score {result.score}</span> : null}
-                    </div>
-                    <div className="settings-knowledge-result-content">{result.content}</div>
+            {queryResults.length > 0 ? queryResults.map((result) => (
+              <div key={result.id} className="settings-provider-model-row settings-knowledge-result-row">
+                <div className="settings-provider-model-main">
+                  <div className="settings-provider-model-name"><span>{result.title}</span><span className="settings-provider-default-badge">{result.source}</span></div>
+                  <div className="settings-provider-model-meta-line">
+                    {result.path ? <code>{result.path}</code> : null}
+                    {typeof result.score === 'number' ? <span className="settings-provider-model-token">score {result.score}</span> : null}
                   </div>
+                  <div className="settings-knowledge-result-content">{result.content}</div>
                 </div>
-              ))
-            ) : (
+              </div>
+            )) : (
               <div className="settings-provider-model-empty">
                 <div className="settings-provider-empty-title">还没有查询结果</div>
-                <div className="settings-provider-empty-copy">先摄取一段系统知识，或查询已存在的 wiki 页面。</div>
+                <div className="settings-provider-empty-copy">先摄取一段系统知识，或查询已编译的知识文章。</div>
               </div>
             )}
           </div>
@@ -2532,35 +2700,23 @@ function KnowledgePanel() {
       <section className="settings-card settings-knowledge-card">
         <div className="settings-section-header">
           <div>
-            <div className="settings-section-title">摄取到 System Wiki</div>
-            <div className="settings-section-description">把明确提供的系统/项目知识写入 raw、sources、index、overview 和 log。</div>
+            <div className="settings-section-title">摄取到 Knowledge Base</div>
+            <div className="settings-section-description">把明确提供的系统/项目知识写入 raw，并编译生成 summaries、concepts、wiki articles、graph 和 index；文件原件会归档到 media 或 files。</div>
           </div>
         </div>
         <div className="settings-knowledge-form">
           <label className="settings-form-field">
             <span className="settings-form-label">标题</span>
-            <input
-              className="settings-text-input"
-              value={ingestTitle}
-              onChange={(event) => setIngestTitle(event.target.value)}
-              placeholder="例如：OpenAgent Knowledge Layer 设计"
-            />
+            <input className="settings-text-input" value={ingestTitle} onChange={(event) => setIngestTitle(event.target.value)} placeholder="例如：OpenAgent Knowledge Layer 设计" />
           </label>
           <label className="settings-form-field">
             <span className="settings-form-label">内容</span>
-            <textarea
-              className="settings-textarea settings-knowledge-textarea"
-              value={ingestContent}
-              onChange={(event) => setIngestContent(event.target.value)}
-              placeholder="粘贴 Markdown 或纯文本内容。"
-              rows={10}
-            />
+            <textarea className="settings-textarea settings-knowledge-textarea" value={ingestContent} onChange={(event) => setIngestContent(event.target.value)} placeholder="粘贴 Markdown 或纯文本内容。" rows={10} />
           </label>
           <div className="settings-model-input-row">
-            <button className="primary-button" type="button" onClick={() => void submitIngest()}>
-              写入 System Wiki
-            </button>
-            <span className="settings-provider-muted">第一阶段只支持显式文本摄取；文件导入和 lint/graph 后续实现。</span>
+            <button className="primary-button" type="button" onClick={() => void submitIngest()}>写入 Knowledge Base</button>
+            <button className="toolbar-button" type="button" onClick={() => void importFiles()}><FolderOpen size={14} />导入文件</button>
+            <span className="settings-provider-muted">支持文本、图片、音视频、doc/docx、PDF、xlsx、pptx 等本地文件导入。</span>
           </div>
         </div>
       </section>

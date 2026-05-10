@@ -5,6 +5,7 @@ import type {
   MessageItem,
   PatchArtifact,
   PlanStepItem,
+  PlanUpdatedPayload,
   RunFailurePayload,
   ToolCallItem,
   UiEvent,
@@ -486,12 +487,53 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
         runErrorDetail: null,
         runLog: [...prev.runLog, makeLog(event, 'info', 'Run started')]
       };
-    case 'plan.updated':
+    case 'plan.created': {
+      const payload = event.payload as PlanUpdatedPayload;
       return {
         ...prev,
-        plan: mergePlanStepsForDisplay(prev.plan, (event.payload as { steps?: PlanStepItem[] }).steps ?? prev.plan, prev.runStatus),
-        runLog: [...prev.runLog, makeLog(event, 'info', 'Plan updated')]
+        plan: payload.steps ?? prev.plan,
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || 'Agent Plan created')]
       };
+    }
+    case 'plan.updated': {
+      const payload = event.payload as PlanUpdatedPayload;
+      return {
+        ...prev,
+        plan: mergePlanStepsForDisplay(prev.plan, payload.steps ?? prev.plan, prev.runStatus),
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || 'Plan updated')]
+      };
+    }
+    case 'plan.approval.required': {
+      const payload = event.payload as PlanUpdatedPayload;
+      return {
+        ...prev,
+        runLog: [...prev.runLog, makeLog(event, 'warn', payload.reason || 'Agent Plan approval required')]
+      };
+    }
+    case 'plan.approval.resolved': {
+      const payload = event.payload as PlanUpdatedPayload;
+      return {
+        ...prev,
+        plan: payload.steps ?? prev.plan,
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || 'Agent Plan approval resolved')]
+      };
+    }
+    case 'plan.completed': {
+      const payload = event.payload as PlanUpdatedPayload;
+      return {
+        ...prev,
+        plan: payload.steps ?? prev.plan.map((step) => ({ ...step, status: 'completed' })),
+        runLog: [...prev.runLog, makeLog(event, 'info', payload.reason || 'Agent Plan completed')]
+      };
+    }
+    case 'plan.failed': {
+      const payload = event.payload as PlanUpdatedPayload;
+      return {
+        ...prev,
+        plan: payload.steps ?? prev.plan,
+        runLog: [...prev.runLog, makeLog(event, 'warn', payload.reason || 'Agent Plan failed')]
+      };
+    }
     case 'tool.started': {
       const tool = event.payload as ToolCallItem;
       const browserSessions = upsertBrowserSessionFromTool(prev.browserSessions, tool);

@@ -70,6 +70,16 @@ export interface ProjectMemoryUpdateRequest {
   evidence?: string;
 }
 
+export interface KnowledgeUpdateRequest {
+  shouldUpdateKnowledge: boolean;
+  title: string;
+  content: string;
+  reason: string;
+  confidence: 'medium' | 'high';
+  tags?: string[];
+  evidence?: string;
+}
+
 interface SoulProposalIndex {
   proposals: SoulChangeProposal[];
 }
@@ -448,16 +458,17 @@ export function extractOpenAgentMetadata(content: string): {
   soulChangeRequests: SoulChangeRequest[];
   userUpdates: UserMemoryUpdateRequest[];
   memoryUpdates: ProjectMemoryUpdateRequest[];
+  knowledgeUpdates: KnowledgeUpdateRequest[];
 } {
   const metadataRegex = /<!--\s*openagent:metadata\s*([\s\S]*?)\s*-->/i;
   const match = content.match(metadataRegex);
   if (!match) {
-    return { cleanContent: content, soulChangeRequests: [], userUpdates: [], memoryUpdates: [] };
+    return { cleanContent: content, soulChangeRequests: [], userUpdates: [], memoryUpdates: [], knowledgeUpdates: [] };
   }
 
   const cleanContent = content.replace(metadataRegex, '').trim();
   try {
-    const parsed = JSON.parse(match[1].trim()) as { soulChangeRequests?: unknown; userUpdates?: unknown; memoryUpdates?: unknown };
+    const parsed = JSON.parse(match[1].trim()) as { soulChangeRequests?: unknown; userUpdates?: unknown; memoryUpdates?: unknown; systemWikiUpdates?: unknown; knowledgeUpdates?: unknown };
     const soulChangeRequests = Array.isArray(parsed.soulChangeRequests)
       ? parsed.soulChangeRequests
           .map(normalizeSoulChangeRequest)
@@ -473,9 +484,15 @@ export function extractOpenAgentMetadata(content: string): {
           .map(normalizeProjectMemoryUpdateRequest)
           .filter((request): request is ProjectMemoryUpdateRequest => Boolean(request))
       : [];
-    return { cleanContent, soulChangeRequests, userUpdates, memoryUpdates };
+    const knowledgeInput = Array.isArray(parsed.knowledgeUpdates) ? parsed.knowledgeUpdates : parsed.systemWikiUpdates;
+    const knowledgeUpdates = Array.isArray(knowledgeInput)
+      ? knowledgeInput
+          .map(normalizeKnowledgeUpdateRequest)
+          .filter((request): request is KnowledgeUpdateRequest => Boolean(request))
+      : [];
+    return { cleanContent, soulChangeRequests, userUpdates, memoryUpdates, knowledgeUpdates };
   } catch {
-    return { cleanContent, soulChangeRequests: [], userUpdates: [], memoryUpdates: [] };
+    return { cleanContent, soulChangeRequests: [], userUpdates: [], memoryUpdates: [], knowledgeUpdates: [] };
   }
 }
 
@@ -597,6 +614,27 @@ function normalizeProjectMemoryUpdateRequest(value: unknown): ProjectMemoryUpdat
     summary: stripBulletPrefix(summary),
     reuse: stripBulletPrefix(reuse),
     confidence,
+    evidence: normalizeOptionalText(item.evidence)
+  };
+}
+
+function normalizeKnowledgeUpdateRequest(value: unknown): KnowledgeUpdateRequest | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Partial<KnowledgeUpdateRequest>;
+  if (item.shouldUpdateKnowledge !== true) return null;
+  const confidence = normalizeAutoMemoryConfidence(item.confidence);
+  if (!confidence) return null;
+  const title = normalizeOptionalText(item.title);
+  const content = normalizeOptionalText(item.content);
+  const reason = normalizeOptionalText(item.reason);
+  if (!title || !content || !reason) return null;
+  return {
+    shouldUpdateKnowledge: true,
+    title,
+    content,
+    reason,
+    confidence,
+    tags: Array.isArray(item.tags) ? item.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : undefined,
     evidence: normalizeOptionalText(item.evidence)
   };
 }

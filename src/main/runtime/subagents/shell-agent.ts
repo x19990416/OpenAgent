@@ -7,7 +7,7 @@ const MAX_FIND_RESULTS = 1000;
 export class ShellAgent {
   readonly id = 'shell' as const;
 
-  async run(input: SubagentRunInput): Promise<SubagentRunResult> {
+  async run(input: SubagentRunInput<ShellAgentTask>): Promise<SubagentRunResult> {
     input.onLog?.({
       scope: 'runtime',
       message: 'system shell agent started',
@@ -35,7 +35,7 @@ export class ShellAgent {
     return this.runFindTask(input, task);
   }
 
-  private async runCountTask(input: SubagentRunInput, task: { operation: 'count_files'; root: string; extension: string }) {
+  private async runCountTask(input: SubagentRunInput<ShellAgentTask>, task: { operation: 'count_files'; root: string; extension: string }) {
     const command = `find ${shellQuote(task.root)} -type f -name ${shellQuote(`*.${task.extension}`)} | wc -l`;
     const startedAt = Date.now();
     const shellResult = await this.runReadOnlyCommand(input, command);
@@ -52,7 +52,7 @@ export class ShellAgent {
     };
   }
 
-  private async runFindTask(input: SubagentRunInput, task: { operation: 'find_files'; root: string; extension: string | null }) {
+  private async runFindTask(input: SubagentRunInput<ShellAgentTask>, task: { operation: 'find_files'; root: string; extension: string | null }) {
     const namePredicate = task.extension ? ` -name ${shellQuote(`*.${task.extension}`)}` : '';
     const command = `find ${shellQuote(task.root)} -type f${namePredicate} | head -n ${MAX_FIND_RESULTS}`;
     const shellResult = await this.runReadOnlyCommand(input, command);

@@ -20,10 +20,33 @@ export interface MessageItem {
   attachments?: PromptAttachmentDescriptor[];
 }
 
+export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' | 'blocked';
+
 export interface PlanStepItem {
   id: string;
   title: string;
-  status: 'pending' | 'in_progress' | 'completed';
+  status: PlanStepStatus;
+}
+
+export interface AgentPlanItem {
+  id: string;
+  runId: string;
+  threadId: string;
+  goal: string;
+  mode: 'planning' | 'executing';
+  status: 'draft' | 'exploring' | 'awaiting_approval' | 'executing' | 'blocked' | 'completed' | 'failed' | 'cancelled';
+  approvalRequired: boolean;
+  approvalReason?: string;
+  riskLevel: 'low' | 'medium' | 'high';
+  summary?: string;
+  steps: PlanStepItem[];
+}
+
+export interface PlanUpdatedPayload {
+  plan?: AgentPlanItem;
+  changedStepId?: string;
+  reason?: string;
+  steps?: PlanStepItem[];
 }
 
 export interface ToolCallItem {
@@ -69,7 +92,12 @@ export interface UiEvent {
   id: string;
   type:
     | 'run.started'
+    | 'plan.created'
     | 'plan.updated'
+    | 'plan.approval.required'
+    | 'plan.approval.resolved'
+    | 'plan.completed'
+    | 'plan.failed'
     | 'tool.started'
     | 'tool.completed'
     | 'tool.failed'

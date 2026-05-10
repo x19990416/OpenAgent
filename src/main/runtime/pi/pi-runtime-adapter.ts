@@ -7,7 +7,7 @@ import {
   SessionManager,
   SettingsManager,
 } from '@mariozechner/pi-coding-agent';
-import type { AgentRuntimeAdapter, AgentRuntimeRunInput, AgentRuntimeRunResult, RuntimeMessage } from '../runtime-types.js';
+import type { AgentRuntimeAdapter, AgentRuntimeRunInput, AgentRuntimeRunResult, RuntimeAttachment, RuntimeMessage } from '../runtime-types.js';
 import { CancelledError, errorToMessage, isCancelledError } from '../errors.js';
 import { createPiModelContext } from './pi-model-registry.js';
 import { appendLlmResponseLog } from '../runtime-info-logger.js';
@@ -103,10 +103,12 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         message: 'pi loop iteration 4: prompt session',
         data: {
           promptLength: input.prompt.length,
-          transcriptMessageCount: input.messages.length
+          transcriptMessageCount: input.messages.length,
+          attachmentCount: input.attachments?.length ?? 0,
+          imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const requestBody = buildPiPrompt(input.systemPrompt, input.prompt, input.messages);
+      const requestBody = buildPiPrompt(input.systemPrompt, input.prompt, input.messages, input.attachments ?? []);
       appendLlmResponseLog({
         scope: 'agent-loop',
         message: 'LLM request body',
@@ -117,10 +119,12 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           model: input.model,
           prompt: requestBody,
           promptLength: requestBody.length,
-          transcriptMessageCount: input.messages.length
+          transcriptMessageCount: input.messages.length,
+          attachmentCount: input.attachments?.length ?? 0,
+          imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const assistantText = await this.promptSession(session, requestBody, input.onLog);
+      const assistantText = await this.promptSession(session, requestBody, input.attachments ?? [], input.onLog);
       const message: RuntimeMessage = {
         id: `assistant-${randomUUID()}`,
         role: 'assistant',
@@ -154,7 +158,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     }
   }
 
-  private async promptSession(session: any, prompt: string, onLog?: AgentRuntimeRunInput['onLog']) {
+  private async promptSession(session: any, prompt: string, attachments: RuntimeAttachment[], onLog?: AgentRuntimeRunInput['onLog']) {
     let assistantText = '';
     let loopCount = 0;
     let activeLoop = 0;
@@ -194,10 +198,17 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         message: 'pi prompt loop: prompt started',
         data: {
           promptLength: prompt.length,
-          initialRequest: buildPromptRequestSnapshot(session, prompt)
+          initialRequest: buildPromptRequestSnapshot(session, prompt),
+          attachmentCount: attachments.length,
+          imageAttachmentCount: getImageContents(attachments).length
         }
       });
-      await session.prompt(prompt);
+      const imageContents = getImageContents(attachments);
+      if (imageContents.length > 0 && typeof session.sendUserMessage === 'function') {
+        await session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents]);
+      } else {
+        await session.prompt(prompt);
+      }
       onLog?.({
         scope: 'agent-loop',
         message: 'pi prompt loop: prompt resolved',
@@ -221,6 +232,34 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
     return assistantText.trim();
   }
+}
+
+
+type PiPromptContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+type PiImageContent = Extract<PiPromptContent, { type: 'image' }>;
+
+function getImageContents(attachments: RuntimeAttachment[]): PiImageContent[] {
+  return attachments
+    .filter((attachment) => attachment.kind === 'image')
+    .map((attachment) => {
+      const source = typeof attachment.imageDataUrl === 'string' ? attachment.imageDataUrl : typeof attachment.dataUrl === 'string' ? attachment.dataUrl : '';
+      const parsed = parseDataUrlImage(source, attachment.mimeType);
+      return parsed ? { type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType } : null;
+    })
+    .filter((item): item is PiImageContent => Boolean(item));
+}
+
+function parseDataUrlImage(source: string, fallbackMimeType?: string) {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(source);
+  if (match) {
+    return { mimeType: match[1] || fallbackMimeType || 'image/png', data: match[2] };
+  }
+
+  if (source && fallbackMimeType?.startsWith('image/')) {
+    return { mimeType: fallbackMimeType, data: source };
+  }
+
+  return null;
 }
 
 
@@ -255,7 +294,7 @@ function coerceAssistantText(content: unknown): string {
   return '';
 }
 
-function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: RuntimeMessage[]) {
+function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: RuntimeMessage[], attachments: RuntimeAttachment[]) {
   const recentTranscript = formatRecentTranscript(messages, userPrompt);
   return [
     '<openagent-system-instructions>',
@@ -267,10 +306,32 @@ function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: Runti
     recentTranscript || '(当前 thread 还没有可用历史消息。)',
     '</openagent-session-context>',
     '',
+    '<openagent-current-attachments>',
+    formatCurrentAttachments(attachments) || '(本轮没有附件。)',
+    '</openagent-current-attachments>',
+    '',
     '<user-prompt>',
     userPrompt,
     '</user-prompt>'
   ].join('\n');
+}
+
+
+function formatCurrentAttachments(attachments: RuntimeAttachment[]) {
+  return attachments
+    .map((attachment, index) => {
+      const parts = [
+        `${index + 1}. name=${attachment.name}`,
+        `kind=${attachment.kind}`,
+        attachment.mimeType ? `mimeType=${attachment.mimeType}` : '',
+        Number.isFinite(attachment.size) ? `size=${attachment.size} bytes` : '',
+        attachment.path ? `path=${attachment.path}` : '',
+        attachment.kind === 'image' && (attachment.imageDataUrl || attachment.dataUrl) ? 'imagePayload=attached-to-current-message' : '',
+        attachment.kind === 'text' && attachment.textContent ? `textPreview=${attachment.textContent.slice(0, 2000)}` : ''
+      ].filter(Boolean);
+      return parts.join('; ');
+    })
+    .join('\n');
 }
 
 function formatRecentTranscript(messages: RuntimeMessage[], currentPrompt: string) {
@@ -283,11 +344,30 @@ function formatRecentTranscript(messages: RuntimeMessage[], currentPrompt: strin
     .map((message) => {
       const role = message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user';
       const content = message.content.trim();
-      if (!content) return '';
-      return `<message role=\"${role}\">\n${content}\n</message>`;
+      const attachments = formatTranscriptAttachments(message.attachments ?? []);
+      if (!content && !attachments) return '';
+      return `<message role=\"${role}\">\n${content}${attachments ? `\n${attachments}` : ''}\n</message>`;
     })
     .filter(Boolean)
     .join('\n\n');
+}
+
+function formatTranscriptAttachments(attachments: RuntimeAttachment[]) {
+  if (attachments.length === 0) return '';
+  return [
+    '<attachments>',
+    ...attachments.map((attachment, index) => {
+      const parts = [
+        `${index + 1}. name=${attachment.name}`,
+        `kind=${attachment.kind}`,
+        attachment.mimeType ? `mimeType=${attachment.mimeType}` : '',
+        Number.isFinite(attachment.size) ? `size=${attachment.size} bytes` : '',
+        attachment.path ? `path=${attachment.path}` : ''
+      ].filter(Boolean);
+      return parts.join('; ');
+    }),
+    '</attachments>'
+  ].join('\n');
 }
 
 function buildPromptRequestSnapshot(session: any, prompt: string) {
