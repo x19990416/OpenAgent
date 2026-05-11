@@ -1,4 +1,6 @@
 import path from 'node:path';
+import os from 'node:os';
+import { existsSync } from 'node:fs';
 
 export type PathAccessKind = 'read' | 'write' | 'execute';
 
@@ -36,7 +38,27 @@ export function classifyToolPathAccess(input: { toolName: string; args: unknown;
 }
 
 export function resolveAgainstWorkspace(workspaceRoot: string, requestedPath: string) {
-  return path.resolve(workspaceRoot, requestedPath || '.');
+  const expandedPath = expandUserPathAlias(requestedPath || '.');
+  return path.resolve(workspaceRoot, expandedPath);
+}
+
+export function expandUserPathAlias(requestedPath: string) {
+  if (!path.isAbsolute(requestedPath)) return requestedPath;
+
+  const normalizedPath = path.normalize(requestedPath);
+  const segments = normalizedPath.split(path.sep);
+  const topLevel = segments[1];
+  const maybeHomeFolder = segments[2];
+  const canonicalHomeFolder = getCanonicalHomeFolder(maybeHomeFolder);
+
+  // macOS users often say "/Users/Downloads" when they mean the current
+  // user's Downloads directory. Only rewrite that shorthand when the literal
+  // path does not exist, so a real /Users/<name> directory is never hidden.
+  if (topLevel !== 'Users' || !canonicalHomeFolder || existsSync(normalizedPath)) {
+    return requestedPath;
+  }
+
+  return path.join(os.homedir(), canonicalHomeFolder, ...segments.slice(3));
 }
 
 export function isInsidePath(targetPath: string, rootPath: string) {
@@ -49,3 +71,19 @@ export function isInsidePath(targetPath: string, rootPath: string) {
 function asRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 }
+
+function getCanonicalHomeFolder(value?: string) {
+  if (!value) return null;
+  const match = STANDARD_HOME_FOLDERS.find((folder) => folder.toLowerCase() === value.toLowerCase());
+  return match ?? null;
+}
+
+const STANDARD_HOME_FOLDERS = [
+  'Desktop',
+  'Documents',
+  'Downloads',
+  'Movies',
+  'Music',
+  'Pictures',
+  'Public'
+];

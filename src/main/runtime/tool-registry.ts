@@ -1,6 +1,7 @@
 import { opendir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeTool } from './runtime-types.js';
+import { expandUserPathAlias } from './path-policy.js';
 
 const DEFAULT_LIMIT = 1000;
 const MAX_READ_BYTES = 100_000;
@@ -376,7 +377,7 @@ async function* walkFilePaths(root: string, signal: AbortSignal): AsyncGenerator
 
 function resolveLocalPath(workspaceRoot: string, requestedPath: string) {
   const value = requestedPath || '.';
-  return path.resolve(workspaceRoot, value);
+  return path.resolve(workspaceRoot, expandUserPathAlias(value));
 }
 
 function createTextMatcher(pattern: string, ignoreCase: boolean, literal: boolean) {

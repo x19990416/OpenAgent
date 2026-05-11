@@ -13,6 +13,29 @@ export default defineConfig({
   },
   build: {
     outDir: '../../dist/renderer',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](react|react-dom)[\\/]/,
+              priority: 30
+            },
+            {
+              name: 'markdown-vendor',
+              test: /node_modules[\\/](react-markdown|remark-gfm|unified|micromark|mdast-util-|hast-util-|remark-|rehype-)[\\/]/,
+              priority: 20
+            },
+            {
+              name: 'ui-vendor',
+              test: /node_modules[\\/](lucide-react|clsx|tailwind-merge)[\\/]/,
+              priority: 10
+            }
+          ]
+        }
+      }
+    }
   }
 });
