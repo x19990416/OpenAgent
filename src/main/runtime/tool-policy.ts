@@ -39,6 +39,7 @@ const READ_ONLY_TOOLS = new Set([
 
 const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_file', 'knowledge_compile', 'knowledge_compile_topic', 'knowledge_capture']);
 const FILE_WRITE_TOOLS = new Set(['write_file']);
+const SHELL_EXEC_TOOLS = new Set(['shell_exec']);
 
 export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
@@ -80,6 +81,10 @@ export class ToolPolicy {
       return this.decideFileWrite(tool, args);
     }
 
+    if (SHELL_EXEC_TOOLS.has(tool.name)) {
+      return this.decideShellExec(tool, args);
+    }
+
     if (KNOWLEDGE_WRITE_TOOLS.has(tool.name)) {
       return {
         kind: 'requires_approval',
@@ -98,6 +103,37 @@ export class ToolPolicy {
     return {
       kind: 'deny',
       reason: `Tool requires an explicit OpenAgent policy before execution: ${tool.name}`
+    };
+  }
+
+  private decideShellExec(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+    const pathAccess = classifyToolPathAccess({ toolName: tool.name, args, workspaceRoot: this.workspaceRoot });
+    if (!pathAccess) {
+      return { kind: 'deny', reason: `Cannot classify cwd for shell execution tool: ${tool.name}` };
+    }
+
+    const command = String(asRecord(args).command ?? '').trim();
+    if (!command) return { kind: 'deny', reason: 'shell_exec command is required' };
+
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: '请求执行 shell 命令',
+        risk: isLikelyDestructiveCommand(command) ? 'high' : 'medium',
+        description: [
+          `OpenAgent 需要执行命令：${command}`,
+          `执行目录：${pathAccess.targetPath}`,
+          `当前 workspace：${this.workspaceRoot}`,
+          pathAccess.isExternal ? '执行目录位于 workspace 外部。' : '执行目录位于 workspace 内。',
+          '批准后仅用于本次 tool 调用。'
+        ].join('\n'),
+        actionType: 'shell.exec',
+        targetPath: pathAccess.targetPath,
+        access: 'execute',
+        recursive: false,
+        scope: 'once',
+        payloadPreview: this.summarizeArgs(args)
+      }
     };
   }
 
@@ -190,6 +226,7 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('knowledge-write') && KNOWLEDGE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
   if (allowedTools.includes('file-write') && FILE_WRITE_TOOLS.has(toolName)) return true;
+  if (allowedTools.includes('shell-exec') && SHELL_EXEC_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('tool-executor')) return true;
   return false;
 }
@@ -212,4 +249,8 @@ function isDangerousWritePath(targetPath: string) {
     `${process.env.HOME ?? ''}/.ssh`,
     `${process.env.HOME ?? ''}/.gnupg`
   ].filter(Boolean).some((root) => normalized === root || normalized.startsWith(`${root}/`));
+}
+
+function isLikelyDestructiveCommand(command: string) {
+  return /\b(rm\s+-|mv\s+|chmod\s+|chown\s+|dd\s+|mkfs|git\s+reset|git\s+clean|sudo\s+|launchctl\s+|kill\s+)/i.test(command);
 }

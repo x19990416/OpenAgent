@@ -1,4 +1,5 @@
 import { mkdir, opendir, readFile, stat, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { RuntimeTool } from './runtime-types.js';
 import { expandUserPathAlias } from './path-policy.js';
@@ -7,6 +8,8 @@ const DEFAULT_LIMIT = 1000;
 const MAX_READ_BYTES = 100_000;
 const MAX_WRITE_BYTES = 1_000_000;
 const MAX_FIND_RESULTS = 10_000;
+const MAX_SHELL_OUTPUT_BYTES = 60_000;
+const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
 
 export class ToolRegistry {
   private readonly tools = new Map<string, RuntimeTool>();
@@ -27,13 +30,14 @@ export class ToolRegistry {
 export function createDefaultToolRegistry(workspaceRoot: string) {
   const registry = new ToolRegistry();
 
-  // Pi/OpenAI-compatible read-only tool names. Keep execution owned by OpenAgent.
+  // Pi/OpenAI-compatible file/tool names. Keep execution owned by OpenAgent.
   registry.register(createLsTool(workspaceRoot));
   registry.register(createReadTool(workspaceRoot));
   registry.register(createFindTool(workspaceRoot));
   registry.register(createGrepTool(workspaceRoot));
   registry.register(createCountFilesTool(workspaceRoot));
   registry.register(createWriteFileTool(workspaceRoot));
+  registry.register(createShellExecTool(workspaceRoot));
   registry.register(createCurrentTimeTool());
 
   // Legacy OpenAgent names kept for older prompts/UI affordances.
@@ -41,6 +45,55 @@ export function createDefaultToolRegistry(workspaceRoot: string) {
   registry.register(createReadFileTool(workspaceRoot));
 
   return registry;
+}
+
+function createShellExecTool(workspaceRoot: string): RuntimeTool {
+  return {
+    name: 'shell_exec',
+    label: 'Shell Exec',
+    description: 'Execute a shell command through OpenAgent policy and approval. Use this for running scripts or local programs to complete tasks and produce artifacts. Do not use for simple read-only file search when shell_agent or read/find/grep can do it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'Shell command to execute.' },
+        cwd: { type: 'string', description: 'Working directory. Relative paths are resolved from the OpenAgent workspace. Defaults to workspace root.' },
+        timeoutMs: { type: 'number', description: 'Timeout in milliseconds. Defaults to 120000, max 600000.' }
+      },
+      required: ['command'],
+      additionalProperties: false
+    },
+    execute: async ({ input, signal }) => {
+      throwIfAborted(signal);
+      const args = asRecord(input);
+      const command = String(args.command ?? '').trim();
+      if (!command) return { ok: false, content: 'command is required' };
+      const cwd = resolveLocalPath(workspaceRoot, String(args.cwd ?? '.'));
+      const cwdStat = await stat(cwd).catch(() => null);
+      if (!cwdStat?.isDirectory()) return { ok: false, content: `cwd is not a directory: ${cwd}` };
+      const timeoutMs = normalizeLimit(args.timeoutMs, DEFAULT_SHELL_TIMEOUT_MS, 600_000);
+      const result = await runShellCommand(command, cwd, timeoutMs, signal);
+      const stdout = truncateOutput(result.stdout);
+      const stderr = truncateOutput(result.stderr);
+      const content = [
+        `exitCode: ${result.exitCode}`,
+        stdout ? `stdout:\n${stdout}` : '',
+        stderr ? `stderr:\n${stderr}` : ''
+      ].filter(Boolean).join('\n\n') || `exitCode: ${result.exitCode}`;
+      return {
+        ok: result.exitCode === 0,
+        content,
+        data: {
+          command,
+          cwd,
+          exitCode: result.exitCode,
+          stdout,
+          stderr,
+          durationMs: result.durationMs,
+          timedOut: result.timedOut
+        }
+      };
+    }
+  };
 }
 
 function createWriteFileTool(workspaceRoot: string): RuntimeTool {
@@ -479,6 +532,54 @@ function escapeRegExp(value: string) {
 
 function toPosixPath(value: string) {
   return value.split(path.sep).join('/');
+}
+
+function runShellCommand(command: string, cwd: string, timeoutMs: number, signal: AbortSignal): Promise<{ exitCode: number | null; stdout: string; stderr: string; durationMs: number; timedOut: boolean }> {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const child = spawn('/bin/bash', ['-lc', command], { cwd });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const finish = (exitCode: number | null) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      resolve({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
+    };
+    const abort = () => {
+      child.kill('SIGTERM');
+      reject(new Error('shell_exec aborted'));
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+
+    signal.addEventListener('abort', abort, { once: true });
+    child.stdout.on('data', (chunk) => {
+      stdout = truncateOutput(stdout + String(chunk));
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = truncateOutput(stderr + String(chunk));
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(error);
+    });
+    child.on('close', (exitCode) => finish(exitCode));
+  });
+}
+
+function truncateOutput(value: string) {
+  return Buffer.byteLength(value, 'utf8') > MAX_SHELL_OUTPUT_BYTES
+    ? `${value.slice(0, MAX_SHELL_OUTPUT_BYTES)}\n...[truncated]`
+    : value;
 }
 
 function normalizeLimit(value: unknown, fallback: number, max: number) {

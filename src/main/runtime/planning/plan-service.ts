@@ -182,7 +182,7 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
         title: step.title,
         description: step.description,
         status: 'pending',
-        allowedTools: step.allowedTools?.length ? step.allowedTools : ['tool-executor'],
+        allowedTools: normalizeExecuteAllowedTools(step.allowedTools),
         requiresApproval: Boolean(step.requiresApproval),
         approvalReason: step.requiresApproval ? 'LLM 计划标记该步骤需要审批。' : undefined,
         riskLevel: step.riskLevel || riskLevel,
@@ -214,6 +214,14 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
   );
 
   return steps;
+}
+
+function normalizeExecuteAllowedTools(allowedTools?: string[]) {
+  const tools = allowedTools?.length ? Array.from(new Set(allowedTools)) : ['tool-executor'];
+  const canExecuteOrWrite = tools.some((tool) => ['tool-executor', 'write_file', 'file-write', 'shell_exec', 'shell-exec'].includes(tool));
+  if (canExecuteOrWrite) return tools;
+
+  return [...tools, 'tool-executor'];
 }
 
 function normalizeIntentDecision(decision: LlmPlanningIntentDecision): PlanningIntentDecision {

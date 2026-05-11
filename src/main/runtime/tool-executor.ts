@@ -156,7 +156,7 @@ function inferActivityKind(toolName: string) {
   if (toolName === 'write_file') return 'write';
   if (toolName === 'ls' || toolName === 'list_directory') return 'list';
   if (toolName === 'grep' || toolName === 'find' || toolName === 'count_files') return 'search';
-  if (toolName === 'shell_agent' || toolName.includes('shell') || toolName.includes('exec')) return 'command';
+  if (toolName === 'shell_agent' || toolName === 'shell_exec' || toolName.includes('shell') || toolName.includes('exec')) return 'command';
   if (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_')) return 'search';
   return 'tool';
 }
@@ -195,6 +195,10 @@ function formatActivityTitle(toolName: string, args: unknown, status: 'running' 
     return failed
       ? `Failed shell agent ${operation}`
       : `${status === 'running' ? 'Running' : 'Ran'} shell agent ${operation}${pattern ? `: ${shorten(pattern, 80)}` : ''}`;
+  }
+  if (toolName === 'shell_exec') {
+    const command = textArg(record, 'command');
+    return failed ? 'Failed command' : `${status === 'running' ? 'Running' : 'Ran'} command${command ? `: ${shorten(command, 80)}` : ''}`;
   }
   if (toolName.includes('shell') || toolName.includes('exec')) {
     const command = textArg(record, 'command') || textArg(record, 'cmd');

@@ -115,6 +115,7 @@ export function AppShell(props: AppShellProps) {
 
                 <PromptComposer
                   onSubmitPrompt={onSubmitPrompt}
+                  onStopRun={onStopRun}
                   onWorkspaceChange={onWorkspaceChange}
                   runStatus={viewModel.runStatus}
                   workspace={viewModel.workspace}

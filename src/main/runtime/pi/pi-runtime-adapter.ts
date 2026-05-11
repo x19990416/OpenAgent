@@ -120,11 +120,11 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const promptResult = await this.promptSession(session, requestBody, input.attachments ?? [], input.onLog);
+      const promptResult = await this.promptSession(session, requestBody, input.attachments ?? [], input.abortSignal, input.onLog);
       const assistantText = promptResult.assistantText;
       const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
-      if (unparsedToolCall && promptResult.toolResultCount === 0) {
-        const message = `模型返回了未解析的工具调用文本，工具未执行：${unparsedToolCall.toolName}`;
+      if (unparsedToolCall) {
+        const message = `模型最终返回了未解析的工具调用文本，工具未执行：${unparsedToolCall.toolName}`;
         input.onLog?.({
           scope: 'agent-loop',
           message: 'unparsed_tool_call',
@@ -136,6 +136,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             toolName: unparsedToolCall.toolName,
             assistantText,
             toolResultCount: promptResult.toolResultCount,
+            hadPriorToolResults: promptResult.toolResultCount > 0,
             loopCount: promptResult.loopCount
           }
         });
@@ -178,7 +179,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     }
   }
 
-  private async promptSession(session: any, prompt: string, attachments: RuntimeAttachment[], onLog?: AgentRuntimeRunInput['onLog']) {
+  private async promptSession(session: any, prompt: string, attachments: RuntimeAttachment[], abortSignal: AbortSignal, onLog?: AgentRuntimeRunInput['onLog']) {
     let assistantText = '';
     let loopCount = 0;
     let activeLoop = 0;
@@ -217,6 +218,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     });
 
     try {
+      throwIfAborted(abortSignal);
       onLog?.({
         scope: 'agent-loop',
         message: 'pi prompt loop: prompt started',
@@ -228,11 +230,10 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         }
       });
       const imageContents = getImageContents(attachments);
-      if (imageContents.length > 0 && typeof session.sendUserMessage === 'function') {
-        await session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents]);
-      } else {
-        await session.prompt(prompt);
-      }
+      const promptPromise = imageContents.length > 0 && typeof session.sendUserMessage === 'function'
+        ? session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents])
+        : session.prompt(prompt);
+      await raceWithAbort(promptPromise, abortSignal, session);
       onLog?.({
         scope: 'agent-loop',
         message: 'pi prompt loop: prompt resolved',
@@ -259,6 +260,50 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       loopCount,
       toolResultCount
     };
+  }
+}
+
+function throwIfAborted(signal: AbortSignal) {
+  if (signal.aborted) {
+    throw new CancelledError();
+  }
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal, session: any) {
+  if (signal.aborted) {
+    stopPiSession(session);
+    return Promise.reject(new CancelledError());
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      stopPiSession(session);
+      reject(new CancelledError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+function stopPiSession(session: any) {
+  for (const method of ['abort', 'cancel', 'stop'] as const) {
+    if (typeof session?.[method] === 'function') {
+      try {
+        session[method]();
+      } catch {
+        // Best-effort only: OpenAgent already flips run state to cancelled.
+      }
+      return;
+    }
   }
 }
 
@@ -296,7 +341,7 @@ function detectUnparsedToolCallText(text: string, toolNames: string[]) {
 
   const toolName = toolNames.find((name) => {
     const escaped = escapeRegExp(name);
-    return new RegExp(`^(?:<\\|tool_call>)?\\s*(?::?\\s*)?(?:call:)?${escaped}\\s*\\{`, 's').test(trimmed);
+    return new RegExp(`^(?:<\\|tool_call>)?\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{`, 's').test(trimmed);
   });
 
   return toolName ? { toolName } : null;

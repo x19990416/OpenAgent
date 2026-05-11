@@ -358,6 +358,7 @@ export interface PlanExecutionContext {
 | `write_file` workspace 内新文件 | 可直接执行，但必须记录 tool/run/activity 事件 |
 | `write_file` workspace 外路径 | 必须触发 `file.write` 审批 |
 | `write_file` 覆盖已有文件 | 必须触发覆盖审批；未声明 `overwrite=true` 时由工具拒绝 |
+| `shell_exec` 运行脚本/程序 | 必须触发 `shell.exec` 审批，并记录命令、cwd、输出摘要 |
 | 外部路径写入 | 无论 plan 如何都必须走审批 |
 | git commit/push | 必须显式审批或用户明确要求 |
 | destructive shell | 必须审批，且不能由 plan 隐式授权 |
@@ -520,12 +521,20 @@ Plan Mode 执行阶段必须区分 **真实结构化工具调用** 和 **模型�
 call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 ```
 
-但 runtime 日志中的 `toolResults` 为空时，说明 `find` 没有通过 OpenAgent `ToolExecutor` 执行。此时：
+说明 `find` 没有通过 OpenAgent `ToolExecutor` 执行。此时：
 
 - 不把该文本保存为正常完成的助手回答。
 - 不通过文本解析补执行工具调用。
 - 当前 run / plan step 应进入失败或阻塞状态，并给出“模型返回未解析工具调用文本，工具未执行”的错误摘要。
 - `runtime-info.log` 应记录 `unparsed_tool_call`，用于定位 provider/tool-call 协议问题。
+
+注意这个保护不能只看本轮总 `toolResults` 是否为空。混合场景也要拦截：例如模型先真实调用 `write_file` 写出脚本，随后最终 assistant 文本又返回
+
+```text
+call:shell_exec{command:<|"|>python3 get_stock_data.py<|"|>}<tool_call|>
+```
+
+此时虽然前面已有 `write_file` 的 tool result，但最终的 `shell_exec` 仍然没有被结构化执行，run / plan step 也必须失败或阻塞，不能把这段伪语法展示给用户。
 
 这样可以避免 Plan Mode 面板把“看似在执行”的伪语法误展示成真实进展，也避免绕过 OpenAgent 的 ToolPolicy、审批、日志和 UI event。
 
@@ -543,3 +552,29 @@ OpenAgent 已补齐统一写文件工具：
 - `shell_agent` 继续只承担只读命令型文件任务，不负责写文件。
 
 Pi 侧仍只负责结构化调用；实际写入由 `ToolExecutor -> ToolPolicy -> write_file` 完成。
+
+### 15.5 本次增强：通用程序执行能力
+
+OpenAgent 的目标不是只支持某一种文件格式，而是支持通用的“写程序并执行程序完成任务”工作流：
+
+1. 通过 `write_file` 写入脚本或源文件，例如 Python、Node.js、Shell 脚本。
+2. 通过 `shell_exec` 在指定 `cwd` 执行脚本、本地程序或 CLI。
+3. 通过 read/find/grep 或后续工具读取和验证产物。
+
+约束：
+
+- `shell_exec` 不绕过 OpenAgent，必须走 `ToolExecutor -> ToolPolicy -> Approval`。
+- `shell_agent` 仍只做只读文件统计和检索，不能承担程序执行。
+- 依赖安装、外部路径、破坏性命令、长时间命令都应在审批内容里清晰展示。
+- Plan Mode 中这类 step 应声明 `shell_exec` / `shell-exec` 或 `tool-executor`，让用户能看到风险和执行边界。
+
+### 15.6 本次修正：执行步骤不能被误收窄成只读
+
+真实执行任务中，LLM 生成计划时可能把执行步骤错误标成 `knowledge` / `read-only`，导致后续 `write_file` 或 `shell_exec` 被 `ToolPolicy` 拒绝。例如获取实时股票数据时，模型需要写脚本并运行 HTTP 请求，但 plan step 却只允许只读工具。
+
+修正策略：
+
+- Runtime 仍保留 planning/design step 的只读限制。
+- 对 `kind=execute` 的业务执行步骤，如果 LLM 没有显式给出 `write_file` / `file-write` / `shell_exec` / `shell-exec` / `tool-executor`，runtime 会自动补上 `tool-executor`。
+- 这不是绕过审批：`shell_exec`、外部路径写入、覆盖、破坏性命令仍然由 `ToolPolicy -> Approval` 单独控制。
+- 这样避免 Plan Mode 误把“需要实际执行”的任务卡在只读设计阶段，也避免模型在工具被拒后退化成伪 `call:shell_exec...<tool_call|>` 文本。

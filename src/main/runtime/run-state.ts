@@ -25,16 +25,18 @@ export class RunStateStore {
 
   stop(runId?: string) {
     if (runId) {
-      this.controllers.get(runId)?.abort();
-      return this.controllers.has(runId);
+      const controller = this.controllers.get(runId);
+      if (!controller) return [];
+      controller.abort();
+      return [runId];
     }
 
-    let stopped = false;
-    for (const controller of this.controllers.values()) {
+    const stoppedRunIds: string[] = [];
+    for (const [activeRunId, controller] of this.controllers.entries()) {
       controller.abort();
-      stopped = true;
+      stoppedRunIds.push(activeRunId);
     }
-    return stopped;
+    return stoppedRunIds;
   }
 
   list() {

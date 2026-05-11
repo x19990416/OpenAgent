@@ -19,7 +19,8 @@ const PATH_ARG_BY_TOOL: Record<string, { argName: string; fallback: string; acce
   write_file: { argName: 'path', fallback: '', access: 'write' },
   list_directory: { argName: 'path', fallback: '.', access: 'read' },
   read_file: { argName: 'path', fallback: '', access: 'read' },
-  shell_agent: { argName: 'root', fallback: '.', access: 'read' }
+  shell_agent: { argName: 'root', fallback: '.', access: 'read' },
+  shell_exec: { argName: 'cwd', fallback: '.', access: 'execute' }
 };
 
 export function classifyToolPathAccess(input: { toolName: string; args: unknown; workspaceRoot: string }): PathAccessClassification | null {

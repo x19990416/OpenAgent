@@ -611,6 +611,16 @@ export class RuntimeService {
       );
       appendProgressStep('调用模型并等待 agent loop 返回');
       const result = await this.adapter.run(runInput);
+      if (abortSignal.aborted) {
+        const summary = '运行已停止。';
+        if (activePlan) {
+          activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
+          this.emitPlan('plan.failed', activePlan, summary);
+        }
+        this.runState.finish(runId, { status: 'cancelled', summary });
+        this.eventBus.emit('run.cancelled', { runId, summary });
+        return { ok: false, runId, status: 'cancelled', error: summary };
+      }
       let summary = summarizeRunResult(result);
 
       if (result.status === 'completed' && result.assistantMessage) {
@@ -804,6 +814,16 @@ export class RuntimeService {
       return { ok: false, runId, status: 'failed', error: summary };
     } catch (error) {
       const message = errorToMessage(error);
+      if (abortSignal.aborted) {
+        const summary = '运行已停止。';
+        if (activePlan) {
+          activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
+          this.emitPlan('plan.failed', activePlan, summary);
+        }
+        this.runState.finish(runId, { status: 'cancelled', summary });
+        this.eventBus.emit('run.cancelled', { runId, summary });
+        return { ok: false, runId, status: 'cancelled', error: summary };
+      }
       if (activePlan) {
         activePlan = planExecutor?.failCurrent(message) ?? this.planService.markFailed(activePlan, message);
         this.emitPlan('plan.failed', activePlan, message);
@@ -861,7 +881,25 @@ export class RuntimeService {
 
 
   stopRun(runId?: string) {
-    return { ok: this.runState.stop(runId) };
+    const stoppedRunIds = this.runState.stop(runId);
+    const rejectedApprovals = this.approvalService.rejectPendingForRun(runId);
+    for (const request of rejectedApprovals) {
+      this.eventBus.emit('approval.resolved', {
+        approvalId: request.id,
+        decision: 'rejected',
+        scope: request.scope,
+        summary: '任务已停止，待审批操作已取消。'
+      });
+    }
+    const targetRunIds = stoppedRunIds.length > 0
+      ? stoppedRunIds
+      : rejectedApprovals.map((request) => request.runId).filter((id): id is string => Boolean(id));
+    for (const stoppedRunId of new Set(targetRunIds)) {
+      const summary = '运行已停止。';
+      this.runState.finish(stoppedRunId, { status: 'cancelled', summary });
+      this.eventBus.emit('run.cancelled', { runId: stoppedRunId, summary });
+    }
+    return { ok: stoppedRunIds.length > 0 || rejectedApprovals.length > 0 };
   }
 
   createThread(input?: { agentId?: string; title?: string }) {

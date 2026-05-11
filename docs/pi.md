@@ -173,6 +173,7 @@ await session.prompt(input.prompt, { images });
 - 创建 session 后显式 `setActiveToolsByName(openAgentTools.map(name))`，确保 `shell_agent`、`knowledge_agent`、`write_file` 这类非 Pi 内置工具也处于 active 状态。
 - `shell_agent` 只做只读命令型文件任务，例如 count/find/find-containing；不得承担写文件。
 - 写文件统一使用 `write_file`，实际执行仍走 `ToolExecutor -> ToolPolicy -> Approval -> fs.writeFile`。
+- 需要“写程序并执行程序完成任务”时，先用 `write_file` 写脚本/源文件，再用 `shell_exec` 执行；`shell_exec` 必须走审批、日志和 UI event。
 
 ### 5.1 伪 tool_call 保护
 
@@ -188,7 +189,7 @@ call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 处理规则：
 
 - 不允许通过正则或文本匹配把这类内容“补执行”为工具调用，避免模型文本绕过 ToolPolicy、审批和审计。
-- 如果本轮没有对应的结构化 tool result，但最终 assistant 文本像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答。
+- 如果最终 assistant 文本本身像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答；即使此前已经有其他结构化 tool result（例如先成功 `write_file`，最后又吐出伪 `shell_exec`）也不能放行。
 - run log 需要记录 `unparsed_tool_call` 诊断信息，包括 `runId`、`threadId`、模型、文本摘要和是否存在真实 tool results。
 - UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。
 - 根本修复应优先切换/配置支持 tool calling 的模型，或修正 Pi/provider 的结构化 tool-call 适配；不得把伪文本当作授权执行入口。

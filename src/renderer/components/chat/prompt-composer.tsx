@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Mic, Package, Paperclip, Shield, Sparkles, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, Mic, Package, Paperclip, Shield, Sparkles, Square, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type {
   LlmProviderCatalog,
@@ -12,6 +12,7 @@ import type { WorkspaceMeta } from '@shared-types/events';
 
 interface PromptComposerProps {
   onSubmitPrompt: (payload: PromptSubmission) => Promise<PromptSubmissionResult>;
+  onStopRun: (runId?: string) => Promise<{ ok: boolean; error?: string }>;
   onWorkspaceChange: (workspace: WorkspaceMeta) => void;
   runStatus: RunStatus;
   workspace: WorkspaceMeta;
@@ -22,9 +23,10 @@ const emptyProviderCatalog: LlmProviderCatalog = {
   providers: []
 };
 
-export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, workspace }: PromptComposerProps) {
+export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, runStatus, workspace }: PromptComposerProps) {
   const [value, setValue] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   const [catalog, setCatalog] = useState<LlmProviderCatalog>(emptyProviderCatalog);
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
@@ -35,7 +37,8 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
   const [skillPickerIndex, setSkillPickerIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const isBusy = runStatus === 'waiting_approval' || isSubmitting;
+  const isRunActive = runStatus === 'running' || runStatus === 'waiting_approval';
+  const isBusy = isRunActive || isSubmitting || isStopping;
   const runnableProviders = useMemo(
     () =>
       catalog.providers.filter((provider) => {
@@ -152,6 +155,22 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
       }
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleStopRun() {
+    if (!isRunActive || isStopping) return;
+
+    window.desktopApi?.logDiagnostic?.('info', 'prompt composer stop clicked', {
+      workspaceRoot: workspace.rootPath,
+      runStatus
+    });
+
+    setIsStopping(true);
+    try {
+      await onStopRun();
+    } finally {
+      setIsStopping(false);
     }
   }
 
@@ -499,10 +518,17 @@ export function PromptComposer({ onSubmitPrompt, onWorkspaceChange, runStatus, w
             </button>
           </div>
           <div className="composer-actions">
-            <button className="primary-button" type="button" disabled={isBusy} onClick={() => void handleSubmit()}>
-              <ArrowUp size={14} />
-              发送
-            </button>
+            {isRunActive ? (
+              <button className="danger-button composer-stop-button" type="button" disabled={isStopping} onClick={() => void handleStopRun()}>
+                <Square size={14} />
+                {isStopping ? '停止中' : '停止'}
+              </button>
+            ) : (
+              <button className="primary-button" type="button" disabled={isBusy} onClick={() => void handleSubmit()}>
+                <ArrowUp size={14} />
+                发送
+              </button>
+            )}
           </div>
         </div>
         {runStatus === 'waiting_approval' && (

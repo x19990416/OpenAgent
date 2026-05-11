@@ -107,6 +107,17 @@ export class ApprovalService {
     };
   }
 
+  rejectPendingForRun(runId?: string) {
+    const rejected: RuntimeApprovalRequest[] = [];
+    for (const [approvalId, pending] of this.pending.entries()) {
+      if (runId && pending.request.runId !== runId) continue;
+      this.pending.delete(approvalId);
+      pending.resolve('rejected');
+      rejected.push(pending.request);
+    }
+    return rejected;
+  }
+
   private addGrant(request: RuntimeApprovalRequest, scope: Exclude<ApprovalScope, 'once'>) {
     const grant: ApprovalGrant = {
       scope,

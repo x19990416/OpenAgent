@@ -1756,6 +1756,22 @@ button {
   border-color: rgba(220, 38, 38, 0.18);
 }
 
+.composer-stop-button {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.22);
+  color: var(--danger);
+}
+
+.composer-stop-button:hover {
+  background: rgba(220, 38, 38, 0.12);
+  border-color: rgba(220, 38, 38, 0.34);
+}
+
+.composer-stop-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .sidebar,
 .workspace-main,
 .inspector,
