@@ -4273,6 +4273,8 @@ html.is-electron .topbar-brand {
 
 .run-status-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 12px 0 2px 42px;
 }
@@ -4280,9 +4282,67 @@ html.is-electron .topbar-brand {
 .ghost-button.compact,
 .success-button.compact,
 .danger-button.compact {
-  padding: 8px 14px;
-  border-radius: 12px;
+  justify-content: center;
+  min-width: 84px;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 14px;
   font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.ghost-button svg,
+.success-button svg,
+.danger-button svg {
+  flex: 0 0 auto;
+}
+
+.run-status-actions.minimal .ghost-button.compact,
+.run-status-actions.minimal .success-button.compact,
+.run-status-actions.minimal .danger-button.compact {
+  flex: 0 0 auto;
+}
+
+.run-status-actions.minimal .success-button.compact {
+  background: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.22);
+}
+
+.run-status-actions.minimal .danger-button.compact {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+.run-status-actions.minimal .ghost-button.compact {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.run-status-actions.minimal .ghost-button.compact:hover,
+.run-status-actions.minimal .success-button.compact:hover,
+.run-status-actions.minimal .danger-button.compact:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.run-status-actions.minimal .ghost-button.compact:disabled,
+.run-status-actions.minimal .success-button.compact:disabled,
+.run-status-actions.minimal .danger-button.compact:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow: none;
+}
+
+.run-status-actions.minimal .success-button.compact:hover {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.32);
+}
+
+.run-status-actions.minimal .danger-button.compact:hover {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 .run-status-minimal {
@@ -4327,5 +4387,330 @@ html.is-electron .topbar-brand {
 
 .run-status-actions.minimal {
   margin-left: 30px;
-  margin-top: 4px;
+  margin-top: 6px;
+  gap: 8px;
+}
+
+.approval-icon-actions {
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.approval-icon-button,
+.ghost-button.compact.approval-icon-button,
+.success-button.compact.approval-icon-button,
+.danger-button.compact.approval-icon-button {
+  position: relative;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.approval-icon-actions .approval-icon-button,
+.run-status-actions.minimal .ghost-button.compact.approval-icon-button,
+.run-status-actions.minimal .success-button.compact.approval-icon-button,
+.run-status-actions.minimal .danger-button.compact.approval-icon-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.approval-icon-button:hover,
+.run-status-actions.minimal .ghost-button.compact.approval-icon-button:hover,
+.run-status-actions.minimal .success-button.compact.approval-icon-button:hover,
+.run-status-actions.minimal .danger-button.compact.approval-icon-button:hover {
+  background: transparent;
+  border: 0;
+  transform: none;
+  box-shadow: none;
+}
+
+.success-button.approval-icon-button {
+  color: var(--success);
+}
+
+.danger-button.approval-icon-button {
+  color: var(--danger);
+}
+
+.ghost-button.approval-icon-button {
+  color: var(--text-secondary);
+}
+
+.approval-icon-button::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.approval-icon-button:hover::after,
+.approval-icon-button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.approval-icon-button:disabled::after {
+  display: none;
+}
+
+.runtime-activity-block {
+  margin: 8px 0 0 30px;
+}
+
+.runtime-activity-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.runtime-activity-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.runtime-activity-toggle svg {
+  transition: transform 160ms ease;
+}
+
+.runtime-activity-toggle svg.expanded {
+  transform: rotate(180deg);
+}
+
+.runtime-activity-list {
+  display: grid;
+  gap: 7px;
+}
+
+.runtime-activity-hidden-tip {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.runtime-activity-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+}
+
+.runtime-activity-item.running {
+  color: var(--text-soft);
+}
+
+.runtime-activity-item.failed {
+  color: var(--danger);
+}
+
+.runtime-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.runtime-activity-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.runtime-activity-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-mode-progress-card {
+  display: grid;
+  gap: 12px;
+  padding: 6px 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.plan-mode-header {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-mode-title-stack {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plan-mode-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: var(--font-weight-normal);
+  line-height: 1.35;
+}
+
+.plan-mode-description.run-status-description {
+  margin-left: 30px;
+}
+
+.plan-mode-summary {
+  margin-left: 30px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plan-mode-summary span {
+  color: var(--text-muted);
+}
+
+.plan-mode-summary p {
+  margin: 0;
+}
+
+.plan-mode-step-list.task-progress-list {
+  margin-top: 2px;
+  margin-left: 30px;
+  padding-left: 0;
+}
+
+.plan-mode-step-list .task-progress-item {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+}
+
+.plan-mode-step-list .task-progress-index,
+.plan-mode-step-list .task-progress-text {
+  font-size: var(--font-size-md);
+}
+
+.plan-mode-step-list .plan-step-detail,
+.plan-mode-step-list .plan-step-approval,
+.plan-mode-step-list .task-step-script {
+  margin-left: 42px;
+}
+
+.plan-mode-activity-section {
+  display: grid;
+  gap: 6px;
+  margin-left: 30px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.plan-mode-subtitle {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.runtime-activity-block.embedded {
+  margin: 0;
+}
+
+.plan-mode-step-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-left: 30px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.plan-mode-steps-toggle.runtime-activity-toggle {
+  margin: 0;
+}
+
+.plan-step-activity {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 8px 42px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.07);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.plan-step-activity .runtime-activity-list {
+  gap: 6px;
+}
+
+.runtime-activity-summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  text-align: left;
+}
+
+.runtime-activity-summary-toggle:not(:disabled) {
+  cursor: pointer;
+}
+
+.runtime-activity-summary-toggle:disabled {
+  cursor: default;
+}
+
+.runtime-activity-summary-toggle svg {
+  transition: transform 160ms ease;
+}
+
+.runtime-activity-summary-toggle svg.expanded {
+  transform: rotate(180deg);
+}
+
+.runtime-activity-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.plan-mode-activity-overview {
+  margin-top: 2px;
+  padding-top: 0;
+  border-top: 0;
 }

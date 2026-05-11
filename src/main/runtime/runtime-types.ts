@@ -164,6 +164,7 @@ export interface RuntimeUiEvent {
     | 'tool.started'
     | 'tool.completed'
     | 'tool.failed'
+    | 'runtime.activity'
     | 'message.completed'
     | 'patch.ready'
     | 'approval.required'

@@ -66,6 +66,34 @@ export interface ToolCallItem {
   meta?: Record<string, unknown>;
 }
 
+export type RuntimeActivityKind =
+  | 'thinking'
+  | 'search'
+  | 'read'
+  | 'list'
+  | 'tool'
+  | 'approval'
+  | 'message'
+  | 'command';
+
+export type RuntimeActivityStatus = 'running' | 'completed' | 'failed';
+
+export interface RuntimeActivityItem {
+  id: string;
+  runId?: string;
+  threadId?: string;
+  kind: RuntimeActivityKind;
+  status: RuntimeActivityStatus;
+  title: string;
+  detail?: string;
+  toolName?: string;
+  target?: string;
+  planId?: string;
+  planStepId?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
 export interface PatchArtifact {
   filesChanged: number;
   additions: number;
@@ -110,6 +138,7 @@ export interface UiEvent {
     | 'tool.started'
     | 'tool.completed'
     | 'tool.failed'
+    | 'runtime.activity'
     | 'message.completed'
     | 'patch.ready'
     | 'approval.required'

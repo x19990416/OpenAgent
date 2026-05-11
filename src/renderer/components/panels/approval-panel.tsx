@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check, Clock3, Infinity, X } from 'lucide-react';
 import type { ApprovalRequest } from '@shared-types/events';
 import type { BrowserSessionItem } from '@/types/workbench';
 
@@ -9,7 +10,7 @@ export function ApprovalPanel({
 }: {
   approvals: ApprovalRequest[];
   browserSessions: BrowserSessionItem[];
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
 }) {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
@@ -19,7 +20,7 @@ export function ApprovalPanel({
     return '低风险提示';
   }
 
-  async function handleResolve(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') {
+  async function handleResolve(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') {
     setResolvingId(approvalId);
 
     try {
@@ -54,30 +55,46 @@ export function ApprovalPanel({
                 {typeof approval.recursive === 'boolean' ? ` · ${approval.recursive ? '包含子目录' : '仅当前文件/目录'}` : ''}
               </div>
             ) : null}
-            <div className="inline-actions mt-12">
+            <div className="inline-actions mt-12 approval-icon-actions">
               <button
-                className="success-button"
+                className="success-button approval-icon-button"
                 type="button"
+                aria-label="批准"
+                data-tooltip="批准"
                 disabled={resolvingId === approval.id}
                 onClick={() => void handleResolve(approval.id, 'approved')}
               >
-                批准
+                <Check size={14} />
               </button>
               <button
-                className="ghost-button"
+                className="ghost-button approval-icon-button"
                 type="button"
+                aria-label="本会话允许"
+                data-tooltip="本会话允许"
+                disabled={resolvingId === approval.id}
+                onClick={() => void handleResolve(approval.id, 'approved', 'session')}
+              >
+                <Clock3 size={14} />
+              </button>
+              <button
+                className="ghost-button approval-icon-button"
+                type="button"
+                aria-label="始终允许"
+                data-tooltip="始终允许"
                 disabled={resolvingId === approval.id}
                 onClick={() => void handleResolve(approval.id, 'approved', 'always')}
               >
-                始终允许
+                <Infinity size={14} />
               </button>
               <button
-                className="danger-button"
+                className="danger-button approval-icon-button"
                 type="button"
+                aria-label="拒绝"
+                data-tooltip="拒绝"
                 disabled={resolvingId === approval.id}
                 onClick={() => void handleResolve(approval.id, 'rejected')}
               >
-                拒绝
+                <X size={14} />
               </button>
             </div>
           </div>

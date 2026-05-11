@@ -20,6 +20,8 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | `docs/pi.md` | 设计或实现 Pi runtime、agent loop、tool adapter、session/memory/compaction 时必须阅读。 |
 | `docs/plan-mode.md` | 设计或实现 Agent Plan Mode、计划审批、分步执行、plan 持久化时必须阅读。 |
 | `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
+| `docs/plugins.md` | 设计或实现插件系统、飞书/Slack/企业微信等 channel、插件 tools/skills/remote UI 时必须阅读。 |
+| `docs/approval-scope.md` | 设计或实现审批按钮、外部路径授权、tool approval scope 时必须阅读。 |
 | `agents.md` | 每次开始开发前阅读，用作路由和约束入口。 |
 
 ## 3. 当前目录职责
@@ -33,7 +35,8 @@ src/
 docs/
 ├── pi.md                 # Pi Agent 集成开发指导
 ├── plan-mode.md          # Agent Plan Mode 设计与实现计划
-└── knowledge.md          # system wiki 知识层设计
+├── knowledge.md          # system wiki 知识层设计
+└── plugins.md            # OpenAgent 插件系统标准
 ```
 
 ### `src/main`
@@ -213,7 +216,8 @@ pnpm build
 | agent loop / Pi 集成 | `docs/pi.md`，然后新增 `src/main/runtime` |
 | Agent Plan Mode / 计划审批 / 分步执行 | `docs/plan-mode.md`，然后新增 `src/main/runtime/planning` |
 | session/thread 持久化 | `src/main/runtime/session-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
-| tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节 |
+| tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节，审批 scope 另见 `docs/approval-scope.md` |
 | model/provider 配置 | 后续 model config store，避免写死在 Pi adapter |
-| plugin/skill 注入 | 先设计 enabled/loaded/relevant 过滤，再进入 prompt |
+| plugin/skill 注入 | `docs/plugins.md`，先设计 enabled/loaded/relevant 过滤，再进入 prompt |
+| 飞书/Slack/企业微信等外部入口 | `docs/plugins.md`，按 channel + tools + remote UI 插件实现 |
 | agent brain / system wiki / 知识库 | `docs/knowledge.md`，然后 `src/main/runtime/knowledge` |

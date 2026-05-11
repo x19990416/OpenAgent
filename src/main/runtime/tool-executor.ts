@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { ToolExecutionError } from './errors.js';
 import { ToolPolicy } from './tool-policy.js';
 import type { ApprovalDecision, RuntimeApprovalRequest } from './approval-service.js';
@@ -50,6 +51,28 @@ export class ToolExecutor {
       createdAt: new Date().toISOString(),
       meta: { ...basePayload, ...meta }
     });
+    const makeActivityPayload = (
+      status: 'running' | 'completed' | 'failed',
+      detail?: string
+    ) => {
+      const createdAt = new Date().toISOString();
+      const target = inferActivityTarget(input.toolName, input.args, this.options.workspaceRoot);
+      return {
+        id: input.toolCallId,
+        runId: this.options.runId,
+        threadId: this.options.threadId,
+        kind: inferActivityKind(input.toolName),
+        status,
+        title: formatActivityTitle(input.toolName, input.args, status, target),
+        detail,
+        toolName: input.toolName,
+        target,
+        planId: planContext?.planId,
+        planStepId: planContext?.stepId,
+        createdAt,
+        completedAt: status === 'running' ? undefined : createdAt
+      };
+    };
 
     const decision = this.policy.decide(tool, input.args, planContext);
     if (decision.kind === 'deny') {
@@ -88,6 +111,7 @@ export class ToolExecutor {
     }
 
     this.options.onLog?.({ scope: 'runtime', message: 'tool execution started', data: basePayload });
+    this.options.emitUiEvent?.('runtime.activity', makeActivityPayload('running'));
     this.options.emitUiEvent?.('tool.started', makeUiPayload('running', `执行 ${input.toolName}: ${argsPreview}`));
 
     try {
@@ -109,6 +133,7 @@ export class ToolExecutor {
         durationMs
       };
       this.options.onLog?.({ scope: 'runtime', message: 'tool execution completed', data: payload });
+      this.options.emitUiEvent?.('runtime.activity', makeActivityPayload(result.ok ? 'completed' : 'failed', result.ok ? undefined : result.content.slice(0, 500)));
       this.options.emitUiEvent?.(
         result.ok ? 'tool.completed' : 'tool.failed',
         makeUiPayload(result.ok ? 'completed' : 'failed', result.ok ? `${input.toolName} 执行完成` : `${input.toolName} 执行失败`, payload)
@@ -119,8 +144,99 @@ export class ToolExecutor {
       const message = error instanceof Error ? error.message : String(error);
       const payload = { ...basePayload, error: message, durationMs };
       this.options.onLog?.({ scope: 'runtime', message: 'tool execution failed', data: payload });
+      this.options.emitUiEvent?.('runtime.activity', makeActivityPayload('failed', message));
       this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', `${input.toolName} 执行失败：${message}`, payload));
       throw error;
     }
   }
+}
+
+function inferActivityKind(toolName: string) {
+  if (toolName === 'read' || toolName === 'read_file') return 'read';
+  if (toolName === 'ls' || toolName === 'list_directory') return 'list';
+  if (toolName === 'grep' || toolName === 'find' || toolName === 'count_files') return 'search';
+  if (toolName === 'shell_agent' || toolName.includes('shell') || toolName.includes('exec')) return 'command';
+  if (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_')) return 'search';
+  return 'tool';
+}
+
+function formatActivityTitle(toolName: string, args: unknown, status: 'running' | 'completed' | 'failed', target?: string) {
+  const record = asRecord(args);
+  const suffix = target ? ` ${target}` : '';
+  const failed = status === 'failed';
+  const verb = failed ? 'Failed' : '';
+
+  if (toolName === 'read' || toolName === 'read_file') return failed ? `Failed to read${suffix}` : `${status === 'running' ? 'Reading' : 'Read'}${suffix}`;
+  if (toolName === 'ls' || toolName === 'list_directory') return failed ? `Failed to list files${suffix ? ` in ${target}` : ''}` : `${status === 'running' ? 'Listing files' : 'Listed files'}${suffix ? ` in ${target}` : ''}`;
+  if (toolName === 'find') {
+    const pattern = textArg(record, 'pattern') || target || 'files';
+    return failed ? `Failed to search for ${pattern}` : `${status === 'running' ? 'Searching for' : 'Searched for'} ${pattern}`;
+  }
+  if (toolName === 'grep') {
+    const pattern = textArg(record, 'pattern') || 'text';
+    return failed ? `Failed to search for ${pattern}` : `${status === 'running' ? 'Searching for' : 'Searched for'} ${pattern}`;
+  }
+  if (toolName === 'count_files') {
+    const pattern = textArg(record, 'pattern') || 'files';
+    return failed ? `Failed to count ${pattern}` : `${status === 'running' ? 'Counting' : 'Counted'} ${pattern}`;
+  }
+  if (toolName === 'knowledge_agent') {
+    const operation = textArg(record, 'operation') || 'query';
+    const query = textArg(record, 'query') || textArg(record, 'topic') || textArg(record, 'filePath');
+    return failed
+      ? `Failed knowledge ${operation}`
+      : `${status === 'running' ? 'Running' : 'Completed'} knowledge ${operation}${query ? `: ${shorten(query, 80)}` : ''}`;
+  }
+  if (toolName === 'shell_agent') {
+    const operation = textArg(record, 'operation') || 'task';
+    const pattern = textArg(record, 'contentPattern') || textArg(record, 'namePattern') || textArg(record, 'extension');
+    return failed
+      ? `Failed shell agent ${operation}`
+      : `${status === 'running' ? 'Running' : 'Ran'} shell agent ${operation}${pattern ? `: ${shorten(pattern, 80)}` : ''}`;
+  }
+  if (toolName.includes('shell') || toolName.includes('exec')) {
+    const command = textArg(record, 'command') || textArg(record, 'cmd');
+    return failed ? 'Failed command' : `${status === 'running' ? 'Running' : 'Ran'} command${command ? `: ${shorten(command, 80)}` : ''}`;
+  }
+
+  const label = toolName.replace(/^tool[._-]/u, '');
+  return failed ? `${verb} ${label}` : `${status === 'running' ? 'Running' : 'Completed'} ${label}`;
+}
+
+function inferActivityTarget(toolName: string, args: unknown, workspaceRoot?: string) {
+  const record = asRecord(args);
+  const raw =
+    textArg(record, 'path') ||
+    textArg(record, 'filePath') ||
+    textArg(record, 'root') ||
+    textArg(record, 'cwd') ||
+    '';
+  if (!raw) return undefined;
+  return formatPathForActivity(raw, workspaceRoot);
+}
+
+function formatPathForActivity(value: string, workspaceRoot?: string) {
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!path.isAbsolute(normalized)) return shorten(normalized, 80);
+  if (workspaceRoot) {
+    const relative = path.relative(workspaceRoot, normalized);
+    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return shorten(relative, 80);
+    }
+  }
+  return shorten(path.basename(normalized) || normalized, 80);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function textArg(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function shorten(value: string, maxLength: number) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }

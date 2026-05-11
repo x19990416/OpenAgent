@@ -1,14 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentPlan, AgentPlanStep, PlanRiskLevel } from './plan-types.js';
 import { PlanStore } from './plan-store.js';
-import { PlanLlmGenerator, type LlmPlanDraft } from './plan-llm.js';
+import { PlanLlmGenerator, type LlmPlanDraft, type LlmPlanningIntentDecision } from './plan-llm.js';
 
 export interface CreateDraftPlanInput {
   runId: string;
   threadId: string;
   agentId: string;
   prompt: string;
+  intent: PlanningIntentDecision;
   now?: string;
+}
+
+export interface PlanningIntentDecision {
+  shouldPlan: boolean;
+  approvalRequired: boolean;
+  riskLevel: PlanRiskLevel;
+  reason?: string;
+  source: 'llm' | 'fallback';
 }
 
 export class PlanService {
@@ -19,17 +28,24 @@ export class PlanService {
     this.store = new PlanStore(agentId);
   }
 
-  shouldPlan(prompt: string) {
-    const normalized = prompt.toLowerCase();
-    return (
-      /\bplan\b|plan mode|计划|规划|先说怎么做|先不要改|设计方案|实现掉|帮我实现|开发|重构|改一下|落实/.test(normalized) &&
-      !/不要.*plan|不用.*计划|直接回答|只回答|不要修改代码/.test(normalized)
-    );
+  async classifyPlanningIntent(prompt: string): Promise<PlanningIntentDecision> {
+    const llmDecision = await this.llm.classifyIntent({ prompt, fallbackRiskLevel: 'medium' }).catch(() => null);
+    if (llmDecision) {
+      return normalizeIntentDecision(llmDecision);
+    }
+
+    return {
+      shouldPlan: false,
+      approvalRequired: false,
+      riskLevel: 'medium',
+      reason: 'LLM planning classifier unavailable; skip Agent Plan Mode and continue with normal runtime execution.',
+      source: 'fallback'
+    };
   }
 
   async createDraftPlan(input: CreateDraftPlanInput) {
     const now = input.now || new Date().toISOString();
-    const riskLevel = inferRiskLevel(input.prompt);
+    const riskLevel = input.intent.riskLevel;
     const llmDraft = await this.llm.generate({ prompt: input.prompt, riskLevel }).catch(() => null);
     const plan: AgentPlan = {
       id: `plan-${randomUUID()}`,
@@ -38,16 +54,18 @@ export class PlanService {
       agentId: input.agentId,
       goal: input.prompt,
       mode: 'planning',
-      status: 'awaiting_approval',
+      status: input.intent.approvalRequired ? 'awaiting_approval' : 'draft',
       createdAt: now,
       updatedAt: now,
-      approvalRequired: true,
-      approvalReason: llmDraft?.approvalReason || 'Plan Mode 已为该任务生成执行计划；需要用户确认后再进入执行阶段。',
-      steps: buildDraftSteps(input.prompt, riskLevel, llmDraft),
+      approvalRequired: input.intent.approvalRequired,
+      approvalReason: input.intent.approvalRequired
+        ? (llmDraft?.approvalReason || input.intent.reason || 'Plan Mode 已为该任务生成执行计划；需要用户确认后再进入执行阶段。')
+        : (input.intent.reason || llmDraft?.approvalReason),
+      steps: buildDraftSteps(riskLevel, llmDraft),
       revision: 0,
       source: llmDraft ? 'llm' : 'runtime',
       riskLevel,
-      summary: llmDraft?.summary || '等待用户确认执行计划。'
+      summary: llmDraft?.summary || (input.intent.approvalRequired ? '等待用户确认执行计划。' : '已生成执行计划，将自动进入执行。')
     };
     return this.store.save(plan);
   }
@@ -58,7 +76,7 @@ export class PlanService {
       mode: 'executing',
       status: 'executing',
       approvedAt: new Date().toISOString(),
-      summary: '用户已确认计划，开始执行。',
+      summary: plan.approvalRequired ? '用户已确认计划，开始执行。' : '计划已自动进入执行。',
       steps: plan.steps.map((step, index) => ({
         ...step,
         status: index === 0 ? 'in_progress' : 'pending',
@@ -136,19 +154,12 @@ export class PlanService {
   }
 }
 
-function inferRiskLevel(prompt: string): PlanRiskLevel {
-  if (/删除|重置|reset|push|发布|数据库|清理|destructive|rm\s+-rf/i.test(prompt)) return 'high';
-  if (/实现|开发|修改|改一下|重构|写入|新增|接入|落实/i.test(prompt)) return 'medium';
-  return 'low';
-}
-
-function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | null): AgentPlanStep[] {
-  const isCodeChange = /实现|开发|修改|改一下|重构|写入|新增|接入|落实|代码/i.test(prompt);
+function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | null): AgentPlanStep[] {
   const steps: AgentPlanStep[] = [
     {
       id: 'plan-step-inspect',
-      title: '只读检查相关文档、类型和 runtime 入口',
-      description: '确认任务边界、现有事件流、持久化和审批入口。',
+      title: '只读检查相关上下文和任务边界',
+      description: '确认输入、目标、输出位置、已有文件和需要遵守的运行约束。',
       status: 'pending',
       allowedTools: ['read', 'grep', 'list'],
       riskLevel: 'low',
@@ -156,8 +167,8 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: Ll
     },
     {
       id: 'plan-step-design',
-      title: '细化最小实现方案并确认风险点',
-      description: '把计划约束到最小可交付范围，避免无关重构。',
+      title: '细化最小执行路径并确认风险点',
+      description: '把计划约束到最小可交付范围，避免无关操作。',
       status: 'pending',
       allowedTools: ['read'],
       riskLevel: 'low',
@@ -171,7 +182,7 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: Ll
         title: step.title,
         description: step.description,
         status: 'pending',
-        allowedTools: step.allowedTools?.length ? step.allowedTools : isCodeChange ? ['tool-executor'] : ['message'],
+        allowedTools: step.allowedTools?.length ? step.allowedTools : ['tool-executor'],
         requiresApproval: Boolean(step.requiresApproval),
         approvalReason: step.requiresApproval ? 'LLM 计划标记该步骤需要审批。' : undefined,
         riskLevel: step.riskLevel || riskLevel,
@@ -179,14 +190,12 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: Ll
       }))
     : [{
         id: 'plan-step-execute-1',
-        title: isCodeChange ? '按计划进入 agent loop，并通过 OpenAgent tools 执行任务' : '按计划进入 agent loop，生成最终回复',
-        description: isCodeChange
-          ? 'Pi 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。'
-          : 'Pi 负责推理循环；OpenAgent runtime 持续跟踪 plan 状态。',
+        title: '按计划进入 agent loop，并通过 OpenAgent tools 执行任务',
+        description: 'Pi 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。',
         status: 'pending',
-        allowedTools: isCodeChange ? ['tool-executor'] : ['message'],
-        requiresApproval: isCodeChange && riskLevel !== 'low',
-        approvalReason: isCodeChange ? '该步骤可能修改项目文件或调用工具。' : undefined,
+        allowedTools: ['tool-executor'],
+        requiresApproval: riskLevel !== 'low',
+        approvalReason: riskLevel !== 'low' ? '该步骤可能调用工具或影响当前工作区。' : undefined,
         riskLevel,
         kind: 'execute'
       } satisfies AgentPlanStep];
@@ -205,4 +214,15 @@ function buildDraftSteps(prompt: string, riskLevel: PlanRiskLevel, llmDraft?: Ll
   );
 
   return steps;
+}
+
+function normalizeIntentDecision(decision: LlmPlanningIntentDecision): PlanningIntentDecision {
+  const riskLevel = decision.riskLevel || 'medium';
+  return {
+    shouldPlan: decision.shouldPlan,
+    approvalRequired: riskLevel === 'high' || Boolean(decision.approvalRequired),
+    riskLevel,
+    reason: decision.reason,
+    source: 'llm'
+  };
 }

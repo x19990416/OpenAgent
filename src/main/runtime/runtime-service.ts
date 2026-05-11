@@ -176,8 +176,10 @@ export class RuntimeService {
             : 'Agent Plan 已拒绝。'
           : result.decision === 'approved'
             ? result.scope === 'always'
-              ? '已设为始终允许，后续审批将自动通过。'
-              : '外部路径访问已批准，agent 将继续执行。'
+              ? '已设为始终允许，同类操作后续将自动通过。'
+              : result.scope === 'session'
+                ? '已设为本会话允许，同类操作本会话内将自动通过。'
+                : '外部路径访问已批准，agent 将继续执行。'
             : '外部路径访问已拒绝。'
       });
     }
@@ -185,10 +187,10 @@ export class RuntimeService {
   }
 
   private async requestToolApproval(request: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
-    if (this.approvalService.isAutoApproved()) {
+    const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
+    if (this.approvalService.isRequestApproved(approvalRequest)) {
       return 'approved' as const;
     }
-    const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
     this.eventBus.emit('approval.required', approvalRequest);
     return decision;
   }
@@ -328,20 +330,22 @@ export class RuntimeService {
     const transcript = new TranscriptStore(sessionFile);
     transcript.appendMessage(userMessage);
 
-    const draftPlan = this.planService.shouldPlan(prompt)
+    const planningIntent = await this.planService.classifyPlanningIntent(prompt);
+    const draftPlan = planningIntent.shouldPlan
       ? await this.planService.createDraftPlan({
           runId,
           threadId: thread.threadId,
           agentId: this.options.agentId,
           prompt,
+          intent: planningIntent,
           now
         })
       : null;
 
     this.eventBus.emit('run.started', { runId, threadId: thread.threadId });
     if (draftPlan) {
-      this.emitPlan('plan.created', draftPlan, 'Agent Plan Mode 已生成待确认计划。');
-      this.emitPlan('plan.updated', draftPlan, '等待用户确认计划。');
+      this.emitPlan('plan.created', draftPlan, draftPlan.approvalRequired ? 'Agent Plan Mode 已生成待确认计划。' : 'Agent Plan Mode 已生成自动执行计划。');
+      this.emitPlan('plan.updated', draftPlan, draftPlan.approvalRequired ? '等待用户确认计划。' : 'LLM classifier 判定无需人工确认，将自动执行计划。');
     } else {
       this.eventBus.emit('plan.updated', {
         steps: [
@@ -446,34 +450,38 @@ export class RuntimeService {
 
     try {
       if (activePlan) {
-        this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户确认 Agent Plan。' });
-        this.eventBus.emit('plan.approval.required', this.toPlanPayload(activePlan, '请确认是否按该计划执行。'));
-        const decision = await this.requestToolApproval({
-          title: '执行 Agent Plan',
-          risk: activePlan.riskLevel,
-          description: formatPlanApprovalDescription(activePlan),
-          actionType: 'agent-plan.execute',
-          access: 'execute',
-          scope: 'once',
-          payloadPreview: formatPlanApprovalDescription(activePlan),
-          runId,
-          threadId: thread.threadId
-        });
-        if (decision !== 'approved') {
-          activePlan = this.planService.reject(activePlan);
-          this.emitPlan('plan.failed', activePlan, '用户取消了 Agent Plan。');
-          this.runState.finish(runId, { status: 'cancelled', summary: '用户取消了 Agent Plan。' });
-          this.eventBus.emit('run.cancelled', { runId, summary: '用户取消了 Agent Plan。' });
-          return { ok: false, runId, status: 'cancelled', error: '用户取消了 Agent Plan。' };
+        if (activePlan.approvalRequired) {
+          this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户确认 Agent Plan。' });
+          this.eventBus.emit('plan.approval.required', this.toPlanPayload(activePlan, '请确认是否按该计划执行。'));
+          const decision = await this.requestToolApproval({
+            title: '执行 Agent Plan',
+            risk: activePlan.riskLevel,
+            description: formatPlanApprovalDescription(activePlan),
+            actionType: 'agent-plan.execute',
+            access: 'execute',
+            scope: 'once',
+            payloadPreview: formatPlanApprovalDescription(activePlan),
+            runId,
+            threadId: thread.threadId
+          });
+          if (decision !== 'approved') {
+            activePlan = this.planService.reject(activePlan);
+            this.emitPlan('plan.failed', activePlan, '用户取消了 Agent Plan。');
+            this.runState.finish(runId, { status: 'cancelled', summary: '用户取消了 Agent Plan。' });
+            this.eventBus.emit('run.cancelled', { runId, summary: '用户取消了 Agent Plan。' });
+            return { ok: false, runId, status: 'cancelled', error: '用户取消了 Agent Plan。' };
+          }
         }
         activePlan = this.planService.approve(activePlan);
         planExecutor = new PlanExecutor(activePlan, this.planService, (nextPlan, reason, changedStepId) => {
           activePlan = nextPlan;
           this.emitPlan('plan.updated', nextPlan, reason, changedStepId);
         });
-        this.runState.update(runId, { status: 'running', summary: 'Agent Plan 已确认，开始执行。' });
-        this.eventBus.emit('plan.approval.resolved', this.toPlanPayload(activePlan, '用户已确认 Agent Plan。'));
-        this.emitPlan('plan.updated', activePlan, '用户已确认计划，开始执行。');
+        this.runState.update(runId, { status: 'running', summary: activePlan.approvalRequired ? 'Agent Plan 已确认，开始执行。' : 'Agent Plan 自动进入执行。' });
+        if (activePlan.approvalRequired) {
+          this.eventBus.emit('plan.approval.resolved', this.toPlanPayload(activePlan, '用户已确认 Agent Plan。'));
+        }
+        this.emitPlan('plan.updated', activePlan, activePlan.approvalRequired ? '用户已确认计划，开始执行。' : 'LLM classifier 判定无需人工确认，自动执行计划。');
       }
 
       const runInput = buildRunInput({
@@ -1006,10 +1014,6 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
     if (entry.message.includes('prepare Pi managers')) return '准备 Pi session 管理器和资源加载器';
     if (entry.message.includes('create AgentSession')) return '创建 Pi AgentSession，并注入 OpenAgent tools';
     if (entry.message.includes('prompt session')) return '提交用户请求到 AgentSession';
-    const requestMatch = entry.message.match(/LLM loop #(\d+) request started/);
-    if (requestMatch) return `第 ${requestMatch[1]} 轮 agent loop：发送模型请求`;
-    const replyMatch = entry.message.match(/LLM loop #(\d+) reply completed/);
-    if (replyMatch) return `第 ${replyMatch[1]} 轮 agent loop：处理模型回复`;
     if (entry.message.includes('prompt resolved')) return '模型与工具循环已结束';
     if (entry.message.includes('raw response body saved')) return '保存模型原始响应日志';
   }

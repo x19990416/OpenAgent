@@ -19,6 +19,7 @@ export const initialWorkbenchData: WorkbenchViewModel = {
   latestSessionSummary: null,
   messages: [],
   tools: [],
+  runtimeActivities: [],
   runtimeTasks: [],
   scheduledTasks: [],
   browserSessions: [],

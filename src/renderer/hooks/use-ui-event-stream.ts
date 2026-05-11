@@ -7,6 +7,7 @@ import type {
   PlanStepItem,
   PlanUpdatedPayload,
   RunFailurePayload,
+  RuntimeActivityItem,
   ToolCallItem,
   UiEvent,
   WorkspaceMeta
@@ -372,7 +373,7 @@ export function useUiEventStream() {
         console.error('selectThread failed', error);
       }
     },
-    resolveApproval: async (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => {
+    resolveApproval: async (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => {
       if (!window.desktopApi) {
         const createdAt = new Date().toISOString();
         setViewModel((prev) => ({
@@ -482,7 +483,8 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
         ...prev,
         runStatus: 'running',
         workspace: { ...prev.workspace, runStatus: 'running' },
-        plan: prev.plan.some((step) => step.id !== PLACEHOLDER_PLAN_STEP_ID) ? prev.plan : [],
+        plan: [],
+        runtimeActivities: [],
         runErrorSummary: null,
         runErrorDetail: null,
         runLog: [...prev.runLog, makeLog(event, 'info', 'Run started')]
@@ -572,6 +574,13 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
         tools: prev.tools.map((item) => (item.id === tool.id ? tool : item)),
         browserSessions,
         runLog: [...prev.runLog, makeLog(event, 'error', `${tool.name} failed`)]
+      };
+    }
+    case 'runtime.activity': {
+      const activity = event.payload as RuntimeActivityItem;
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12)
       };
     }
     case 'message.completed': {
@@ -754,6 +763,15 @@ function upsertTool(previousTools: ToolCallItem[], tool: ToolCallItem) {
   }
 
   return previousTools.map((item, index) => (index === existingIndex ? tool : item));
+}
+
+function upsertRuntimeActivity(previousActivities: RuntimeActivityItem[], activity: RuntimeActivityItem) {
+  const existingIndex = previousActivities.findIndex((item) => item.id === activity.id);
+  if (existingIndex < 0) {
+    return [...previousActivities, activity];
+  }
+
+  return previousActivities.map((item, index) => (index === existingIndex ? { ...item, ...activity } : item));
 }
 
 function normalizeMessageContent(content: unknown) {

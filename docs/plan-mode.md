@@ -252,15 +252,23 @@ plan.failed
 `RuntimeService.submitPrompt()` 收到用户输入后：
 
 1. 先构建基础 run context。
-2. `PlanService.shouldPlan(input)` 判断是否进入 Plan Mode。
-3. 简单问答直接走现有 adapter。
-4. 复杂任务进入 planning。
+2. `PlanService.classifyPlanningIntent(input)` 调用轻量 LLM classifier，输出结构化判断。
+3. `shouldPlan=false` 的简单问答、解释、翻译、只读回答直接走现有 adapter。
+4. `shouldPlan=true` 的复杂任务进入 planning，并继续由 LLM 生成结构化计划。
+5. `approvalRequired=false` 的低/中风险 workspace-local 任务可以自动进入执行；`approvalRequired=true` 的高风险、外部影响或破坏性任务仍必须等待用户确认。
 
-第一版判断可以保守：
+Intent classifier 不再依赖固定业务关键词表，而是要求 LLM 判断：
 
-- 明确要求“计划 / plan / 先说怎么做 / 先不要改 / 设计方案” => 进入 planning。
-- 涉及多文件修改、runtime 改造、审批风险、git 操作 => 默认 planning。
-- 单纯解释、定位、只读回答 => 可直接执行只读探索或直接回答。
+```ts
+{
+  shouldPlan: boolean;
+  approvalRequired: boolean;
+  riskLevel: 'low' | 'medium' | 'high';
+  reason: string;
+}
+```
+
+判断维度包括但不限于：是否多步骤、是否写文件、是否多文件输出、是否代码修改、是否删除/清理数据、是否 git/发布/外部影响、用户是否要求自动完成而不是中途确认。LLM 不可用时降级为普通 runtime 执行，不使用关键词规则强行触发 Plan Mode；后续工具级 policy/approval 仍负责具体风险拦截。
 
 ### 8.2 Planning 阶段
 

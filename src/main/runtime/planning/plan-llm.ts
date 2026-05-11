@@ -14,6 +14,13 @@ export interface LlmPlanDraft {
   approvalReason?: string;
 }
 
+export interface LlmPlanningIntentDecision {
+  shouldPlan: boolean;
+  approvalRequired?: boolean;
+  riskLevel?: 'low' | 'medium' | 'high';
+  reason?: string;
+}
+
 const ALLOWED_TOOL_HINTS = [
   'read-only',
   'shell_agent',
@@ -26,6 +33,33 @@ const ALLOWED_TOOL_HINTS = [
 ];
 
 export class PlanLlmGenerator {
+  async classifyIntent(input: { prompt: string; fallbackRiskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanningIntentDecision | null> {
+    const schema = '{"shouldPlan":true,"approvalRequired":true,"riskLevel":"low|medium|high","reason":"string"}';
+    const text = await generateText([
+      'Decide whether this OpenAgent user request needs Agent Plan Mode.',
+      'Return strict JSON only. No Markdown. No code fence.',
+      'Agent Plan Mode is useful for multi-step tasks, file writes, multi-file output, code changes, data deletion, risky operations, git operations, long-running work, or tasks that need a visible structured execution plan.',
+      'Simple Q&A, explanation, translation, or read-only answers usually do not need Agent Plan Mode.',
+      'approvalRequired means OpenAgent should pause for explicit user confirmation before executing the generated plan.',
+      'Set approvalRequired true for destructive actions, git push/commit, external impact, database cleanup, or ambiguous high-risk writes.',
+      'If the user clearly asks the agent to complete the task autonomously and the risk is only low/medium workspace-local work, approvalRequired can be false; tool-level approvals still apply later.',
+      `Schema: ${schema}`,
+      `Fallback risk: ${input.fallbackRiskLevel}`,
+      '<user_request>',
+      input.prompt.slice(0, 4000),
+      '</user_request>'
+    ].join('\n'));
+    if (!text) return null;
+    const parsed = parseJson(text) as Record<string, unknown> | null;
+    if (!parsed) return null;
+    return {
+      shouldPlan: asBoolean(parsed.shouldPlan),
+      approvalRequired: typeof parsed.approvalRequired === 'boolean' ? parsed.approvalRequired : undefined,
+      riskLevel: asRisk(parsed.riskLevel, input.fallbackRiskLevel),
+      reason: asString(parsed.reason).slice(0, 240)
+    };
+  }
+
   async generate(input: { prompt: string; riskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanDraft | null> {
     const schema = '{"summary":"string","approvalReason":"string","steps":[{"title":"string","description":"string","allowedTools":["read-only"],"riskLevel":"low|medium|high","requiresApproval":false}]}';
     const text = await generateText([
@@ -131,6 +165,12 @@ function sanitizeAllowedTools(value: unknown) {
 
 function asRisk(value: unknown, fallback: 'low' | 'medium' | 'high') {
   return value === 'low' || value === 'medium' || value === 'high' ? value : fallback;
+}
+
+function asBoolean(value: unknown) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return false;
 }
 
 function defaultBaseUrl(providerId: string) {

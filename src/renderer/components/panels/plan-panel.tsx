@@ -1,6 +1,6 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Circle, LoaderCircle, ShieldCheck, Square } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Circle, Clock3, Infinity, LoaderCircle, ShieldCheck, Square, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import type { ApprovalRequest, PlanStepItem, RunStatus } from '@shared-types/events';
+import type { ApprovalRequest, PlanStepItem, RunStatus, RuntimeActivityItem } from '@shared-types/events';
 import type { RunLogItem } from '@/types/workbench';
 
 function getStepIcon(status: PlanStepItem['status']) {
@@ -20,6 +20,7 @@ export function PlanPanel({
   logs,
   runStatus,
   latestSessionSummary,
+  runtimeActivities,
   approvals,
   onResolveApproval,
   onStopRun,
@@ -30,8 +31,9 @@ export function PlanPanel({
   logs: RunLogItem[];
   runStatus: RunStatus;
   latestSessionSummary: string | null;
+  runtimeActivities: RuntimeActivityItem[];
   approvals: ApprovalRequest[];
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
   onStopRun: (runId?: string) => Promise<{ ok: boolean; error?: string }>;
   runErrorSummary: string | null;
   runErrorDetail: string | null;
@@ -54,6 +56,14 @@ export function PlanPanel({
   }, [commandScript, currentStep?.id]);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
+  const [arePlanStepsExpanded, setArePlanStepsExpanded] = useState(false);
+  const planActivities = useMemo(() => groupActivitiesByPlanStep(runtimeActivities), [runtimeActivities]);
+  const visiblePlanEntries = useMemo(() => {
+    const entries = effectivePlan.map((step, index) => ({ step, index }));
+    if (arePlanStepsExpanded || entries.length <= 1) return entries;
+    const focusedIndex = getFocusedPlanStepIndex(effectivePlan, runStatus, approvalStepId);
+    return focusedIndex >= 0 ? [entries[focusedIndex]] : entries.slice(-1);
+  }, [approvalStepId, arePlanStepsExpanded, effectivePlan, runStatus]);
 
   useEffect(() => {
     if (currentStep?.id && stepScripts[currentStep.id]) {
@@ -61,7 +71,7 @@ export function PlanPanel({
     }
   }, [currentStep?.id, stepScripts]);
 
-  async function handleResolveApproval(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') {
+  async function handleResolveApproval(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') {
     setResolvingApprovalId(approvalId);
     try {
       await onResolveApproval(approvalId, decision, scope);
@@ -73,34 +83,57 @@ export function PlanPanel({
   return (
     <div className="section-list">
       <div className="section-title">进度</div>
-      {latestSessionSummary && plan.length > 0 ? (
-        <div className="section-card plan-summary-card">
-          <div className="text-strong">本次摘要</div>
-          <div className="body-copy-soft mt-8">{latestSessionSummary}</div>
-        </div>
-      ) : null}
       {plan.length === 0 ? (
-        <RunStatusCard
-          runStatus={runStatus}
-          approvals={approvals}
-          latestSessionSummary={latestSessionSummary}
-          runErrorSummary={runErrorSummary}
-          runErrorDetail={runErrorDetail}
-          resolvingApprovalId={resolvingApprovalId}
-          onResolveApproval={handleResolveApproval}
-        />
-      ) : plan.length > 0 ? (
-        <div className="task-progress-card task-progress-card-compact">
-          <div className="task-progress-header">
-            <div className="task-progress-summary">
-              <div className="task-progress-meta">
-                共 {effectivePlan.length} 个任务，已经完成 {effectiveCompletedCount} 个
-              </div>
+        <>
+          <RunStatusCard
+            runStatus={runStatus}
+            approvals={approvals}
+            latestSessionSummary={latestSessionSummary}
+            runErrorSummary={runErrorSummary}
+            runErrorDetail={runErrorDetail}
+            resolvingApprovalId={resolvingApprovalId}
+            onResolveApproval={handleResolveApproval}
+          />
+          {shouldShowRuntimeActivities(runStatus, runtimeActivities) ? (
+            <RuntimeActivityList activities={runtimeActivities} />
+          ) : null}
+        </>
+      ) : (
+        <div className="task-progress-card task-progress-card-compact plan-mode-progress-card">
+          <PlanModeHeader
+            runStatus={runStatus}
+            pendingApproval={pendingApproval}
+            completedCount={effectiveCompletedCount}
+            totalCount={effectivePlan.length}
+            runErrorSummary={runErrorSummary}
+            runErrorDetail={runErrorDetail}
+          />
+
+          {shouldShowRuntimeActivities(runStatus, runtimeActivities) ? (
+            <div className="plan-mode-activity-section plan-mode-activity-overview">
+              <div className="plan-mode-subtitle">运行明细</div>
+              <RuntimeActivityList activities={runtimeActivities} embedded />
             </div>
+          ) : null}
+
+          <div className="plan-mode-step-toolbar">
+            <span>执行步骤</span>
+            {effectivePlan.length > 1 ? (
+              <button
+                type="button"
+                className="runtime-activity-toggle plan-mode-steps-toggle"
+                onClick={() => setArePlanStepsExpanded((current) => !current)}
+              >
+                <span>{arePlanStepsExpanded ? '收起步骤' : `展开全部 ${effectivePlan.length} 个步骤`}</span>
+                <ChevronDown size={14} className={arePlanStepsExpanded ? 'expanded' : ''} />
+              </button>
+            ) : null}
           </div>
 
-          <div className="task-progress-list">
-            {effectivePlan.map((step, index) => (
+          <div className="task-progress-list plan-mode-step-list">
+            {visiblePlanEntries.map(({ step, index }) => {
+              const stepActivities = planActivities[step.id] ?? [];
+              return (
               <div key={`${step.id}-${index}`} className={`task-progress-step ${step.status}`}>
                 <div className={`task-progress-item ${step.status}`}>
                   <div className="task-progress-index">{index + 1}.</div>
@@ -158,13 +191,152 @@ export function PlanPanel({
                     {expandedStepId === step.id && <pre className="task-step-script-block">{stepScripts[step.id]}</pre>}
                   </div>
                 )}
+                {stepActivities.length > 0 ? (
+                  <div className="plan-step-activity">
+                    <div className="plan-mode-subtitle">本步骤运行明细</div>
+                    <RuntimeActivityList activities={stepActivities} embedded />
+                  </div>
+                ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
+
         </div>
-      ) : null}
+      )}
     </div>
   );
+}
+
+function PlanModeHeader({
+  runStatus,
+  pendingApproval,
+  completedCount,
+  totalCount,
+  runErrorSummary,
+  runErrorDetail
+}: {
+  runStatus: RunStatus;
+  pendingApproval: ApprovalRequest | null;
+  completedCount: number;
+  totalCount: number;
+  runErrorSummary: string | null;
+  runErrorDetail: string | null;
+}) {
+  const content = getRunStatusContent(runStatus, pendingApproval, null, runErrorSummary, runErrorDetail);
+  const detail = pendingApproval ? formatAgentPlanApprovalReason(pendingApproval) : content.description || runErrorDetail;
+
+  return (
+    <div className="plan-mode-header">
+      <div className={`run-status-line ${content.status}`}>
+        <span className="run-status-icon">{getStepIcon(content.status)}</span>
+        <div className="plan-mode-title-stack">
+          <span className="run-status-title">{formatPlanModeTitle(content.title)}</span>
+          <span className="plan-mode-count">共 {totalCount} 个计划步骤，已完成 {completedCount} 个</span>
+        </div>
+      </div>
+      {detail ? <div className="run-status-description plan-mode-description">{detail}</div> : null}
+    </div>
+  );
+}
+
+function groupActivitiesByPlanStep(activities: RuntimeActivityItem[]) {
+  return activities.reduce<Record<string, RuntimeActivityItem[]>>((groups, activity) => {
+    if (!activity.planStepId) return groups;
+    groups[activity.planStepId] = [...(groups[activity.planStepId] ?? []), activity];
+    return groups;
+  }, {});
+}
+
+function getFocusedPlanStepIndex(plan: PlanStepItem[], runStatus: RunStatus, approvalStepId: string | null) {
+  if (approvalStepId) {
+    const approvalIndex = plan.findIndex((step) => step.id === approvalStepId);
+    if (approvalIndex >= 0) return approvalIndex;
+  }
+
+  const activeIndex = plan.findIndex((step) => step.status === 'in_progress' || step.status === 'blocked');
+  if (activeIndex >= 0) return activeIndex;
+
+  const failedIndex = plan.findIndex((step) => step.status === 'failed');
+  if (failedIndex >= 0) return failedIndex;
+
+  if (runStatus === 'succeeded') {
+    const lastCompletedIndex = findLastPlanStepIndex(plan, (step) => step.status === 'completed');
+    if (lastCompletedIndex >= 0) return lastCompletedIndex;
+  }
+
+  const pendingIndex = plan.findIndex((step) => step.status === 'pending');
+  return pendingIndex >= 0 ? pendingIndex : plan.length - 1;
+}
+
+function findLastPlanStepIndex(plan: PlanStepItem[], predicate: (step: PlanStepItem) => boolean) {
+  for (let index = plan.length - 1; index >= 0; index -= 1) {
+    if (predicate(plan[index])) return index;
+  }
+  return -1;
+}
+
+function RuntimeActivityList({ activities, embedded = false }: { activities: RuntimeActivityItem[]; embedded?: boolean }) {
+
+  const collapseLimit = 3;
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (activities.length === 0) return null;
+
+  const shouldCollapse = activities.length > collapseLimit;
+  const visibleActivities = shouldCollapse && !isExpanded ? activities.slice(-collapseLimit) : activities;
+  const hiddenCount = activities.length - visibleActivities.length;
+  const summary = summarizeRuntimeActivities(activities);
+
+  return (
+    <div className={`runtime-activity-block${embedded ? ' embedded' : ''}`}>
+      <button
+        type="button"
+        className="runtime-activity-summary-toggle"
+        onClick={() => shouldCollapse && setIsExpanded((current) => !current)}
+        disabled={!shouldCollapse}
+      >
+        <span className="runtime-activity-summary-icon">⌘</span>
+        <span>{summary}</span>
+        {shouldCollapse ? <ChevronDown size={14} className={isExpanded ? 'expanded' : ''} /> : null}
+      </button>
+      <div className="runtime-activity-list">
+        {hiddenCount > 0 ? <div className="runtime-activity-hidden-tip">已折叠前 {hiddenCount} 条</div> : null}
+        {visibleActivities.map((activity) => (
+          <div key={activity.id} className={`runtime-activity-item ${activity.status}`}>
+            <span className="runtime-activity-icon">
+              {activity.status === 'running' ? (
+                <LoaderCircle size={13} className="task-progress-icon spinning" />
+              ) : activity.status === 'failed' ? (
+                <AlertTriangle size={13} />
+              ) : (
+                <CheckCircle2 size={13} />
+              )}
+            </span>
+            <span className="runtime-activity-title" title={activity.title}>{activity.title}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {
+  const completed = activities.filter((activity) => activity.status !== 'failed');
+  const readCount = completed.filter((activity) => activity.kind === 'read' || activity.kind === 'list').length;
+  const searchCount = completed.filter((activity) => activity.kind === 'search').length;
+  const commandCount = completed.filter((activity) => activity.kind === 'command').length;
+  const toolCount = completed.filter((activity) => activity.kind === 'tool').length;
+  const failedCount = activities.filter((activity) => activity.status === 'failed').length;
+  const parts: string[] = [];
+
+  if (readCount > 0) parts.push(`已探索 ${readCount} 个文件`);
+  if (searchCount > 0) parts.push(`${searchCount} 次搜索`);
+  if (commandCount > 0) parts.push(`已运行 ${commandCount} 条命令`);
+  if (toolCount > 0) parts.push(`已调用 ${toolCount} 个工具`);
+  if (failedCount > 0) parts.push(`${failedCount} 个失败`);
+
+  return parts.length > 0 ? parts.join('，') : `${activities.length} 条运行明细`;
 }
 
 function PlanStepApprovalActions({
@@ -174,7 +346,7 @@ function PlanStepApprovalActions({
 }: {
   approval: ApprovalRequest;
   resolvingApprovalId: string | null;
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
 }) {
   return (
     <div className="plan-step-approval">
@@ -186,30 +358,46 @@ function PlanStepApprovalActions({
       <pre className="run-status-detail compact minimal plan-step-approval-detail">
         {formatCompactApprovalDetail(approval)}
       </pre>
-      <div className="run-status-actions minimal plan-step-approval-actions">
+      <div className="run-status-actions minimal plan-step-approval-actions approval-icon-actions">
         <button
-          className="success-button compact"
+          className="success-button compact approval-icon-button"
           type="button"
+          aria-label="批准并继续"
+          data-tooltip="批准并继续"
           disabled={resolvingApprovalId === approval.id}
           onClick={() => void onResolveApproval(approval.id, 'approved')}
         >
-          批准并继续
+          <Check size={14} />
         </button>
         <button
-          className="ghost-button compact"
+          className="ghost-button compact approval-icon-button"
           type="button"
+          aria-label="本会话允许"
+          data-tooltip="本会话允许"
+          disabled={resolvingApprovalId === approval.id}
+          onClick={() => void onResolveApproval(approval.id, 'approved', 'session')}
+        >
+          <Clock3 size={14} />
+        </button>
+        <button
+          className="ghost-button compact approval-icon-button"
+          type="button"
+          aria-label="始终允许"
+          data-tooltip="始终允许"
           disabled={resolvingApprovalId === approval.id}
           onClick={() => void onResolveApproval(approval.id, 'approved', 'always')}
         >
-          始终允许
+          <Infinity size={14} />
         </button>
         <button
-          className="danger-button compact"
+          className="danger-button compact approval-icon-button"
           type="button"
+          aria-label="拒绝"
+          data-tooltip="拒绝"
           disabled={resolvingApprovalId === approval.id}
           onClick={() => void onResolveApproval(approval.id, 'rejected')}
         >
-          拒绝
+          <X size={14} />
         </button>
       </div>
     </div>
@@ -232,10 +420,10 @@ function RunStatusCard({
   runErrorSummary: string | null;
   runErrorDetail: string | null;
   resolvingApprovalId: string | null;
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
 }) {
   const pendingApproval = approvals[0] ?? null;
-  const content = getRunStatusContent(runStatus, pendingApproval, latestSessionSummary, runErrorSummary, runErrorDetail);
+  const content = getRunStatusContent(runStatus, pendingApproval, null, runErrorSummary, runErrorDetail);
   const approvalDetail = pendingApproval ? formatCompactApprovalDetail(pendingApproval) : content.detail;
 
   return (
@@ -247,30 +435,46 @@ function RunStatusCard({
       {content.description ? <div className="run-status-description">{content.description}</div> : null}
       {approvalDetail ? <pre className="run-status-detail compact minimal">{approvalDetail}</pre> : null}
       {pendingApproval ? (
-        <div className="run-status-actions minimal">
+        <div className="run-status-actions minimal approval-icon-actions">
           <button
-            className="success-button compact"
+            className="success-button compact approval-icon-button"
             type="button"
+            aria-label="批准并继续"
+            data-tooltip="批准并继续"
             disabled={resolvingApprovalId === pendingApproval.id}
             onClick={() => void onResolveApproval(pendingApproval.id, 'approved')}
           >
-            批准并继续
+            <Check size={14} />
           </button>
           <button
-            className="ghost-button compact"
+            className="ghost-button compact approval-icon-button"
             type="button"
+            aria-label="本会话允许"
+            data-tooltip="本会话允许"
+            disabled={resolvingApprovalId === pendingApproval.id}
+            onClick={() => void onResolveApproval(pendingApproval.id, 'approved', 'session')}
+          >
+            <Clock3 size={14} />
+          </button>
+          <button
+            className="ghost-button compact approval-icon-button"
+            type="button"
+            aria-label="始终允许"
+            data-tooltip="始终允许"
             disabled={resolvingApprovalId === pendingApproval.id}
             onClick={() => void onResolveApproval(pendingApproval.id, 'approved', 'always')}
           >
-            始终允许
+            <Infinity size={14} />
           </button>
           <button
-            className="danger-button compact"
+            className="danger-button compact approval-icon-button"
             type="button"
+            aria-label="拒绝"
+            data-tooltip="拒绝"
             disabled={resolvingApprovalId === pendingApproval.id}
             onClick={() => void onResolveApproval(pendingApproval.id, 'rejected')}
           >
-            拒绝
+            <X size={14} />
           </button>
         </div>
       ) : null}
@@ -345,8 +549,19 @@ function getRunStatusContent(
   };
 }
 
+function formatPlanModeTitle(title: string) {
+  if (title === '思考中') return '计划执行中';
+  if (title === '本次运行已完成') return '计划执行完成';
+  return title;
+}
+
 function shouldShowStopButton(step: PlanStepItem, runStatus: RunStatus) {
   return runStatus === 'running' && step.status === 'in_progress' && step.title.includes('tool.shell.exec');
+}
+
+function shouldShowRuntimeActivities(runStatus: RunStatus, activities: RuntimeActivityItem[]) {
+  if (activities.length === 0) return false;
+  return runStatus === 'running' || runStatus === 'waiting_approval' || runStatus === 'succeeded' || runStatus === 'failed' || runStatus === 'cancelled';
 }
 
 function getApprovalStepId(plan: PlanStepItem[], currentStep: PlanStepItem | null) {

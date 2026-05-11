@@ -4,6 +4,7 @@ import type {
   PatchArtifact,
   PlanStepItem,
   RunStatus,
+  RuntimeActivityItem,
   ToolCallItem,
   WorkspaceMeta
 } from '@shared-types/events';
@@ -139,6 +140,7 @@ export interface WorkbenchViewModel {
   latestSessionSummary: string | null;
   messages: MessageItem[];
   tools: ToolCallItem[];
+  runtimeActivities: RuntimeActivityItem[];
   runtimeTasks: RuntimeTaskItem[];
   scheduledTasks: ScheduledTaskItem[];
   browserSessions: BrowserSessionItem[];

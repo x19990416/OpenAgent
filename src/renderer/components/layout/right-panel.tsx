@@ -12,7 +12,7 @@ interface RightPanelProps {
   onTabChange: (tab: RightInspectorTab) => void;
   viewModel: WorkbenchViewModel;
   onStopRun: (runId?: string) => Promise<{ ok: boolean; error?: string }>;
-  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'always') => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
 }
 
 const tabs: Array<{ key: RightInspectorTab; label: string }> = [
@@ -55,6 +55,7 @@ export function RightPanel({
             logs={viewModel.runLog}
             runStatus={viewModel.runStatus}
             latestSessionSummary={viewModel.latestSessionSummary}
+            runtimeActivities={viewModel.runtimeActivities}
             approvals={viewModel.approvals}
             onResolveApproval={onResolveApproval}
             onStopRun={onStopRun}
