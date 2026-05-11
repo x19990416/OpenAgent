@@ -38,6 +38,7 @@ const READ_ONLY_TOOLS = new Set([
 ]);
 
 const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_file', 'knowledge_compile', 'knowledge_compile_topic', 'knowledge_capture']);
+const FILE_WRITE_TOOLS = new Set(['write_file']);
 
 export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
@@ -75,6 +76,9 @@ export class ToolPolicy {
       return { kind: 'allow' };
     }
 
+    if (FILE_WRITE_TOOLS.has(tool.name)) {
+      return this.decideFileWrite(tool, args);
+    }
 
     if (KNOWLEDGE_WRITE_TOOLS.has(tool.name)) {
       return {
@@ -95,6 +99,47 @@ export class ToolPolicy {
       kind: 'deny',
       reason: `Tool requires an explicit OpenAgent policy before execution: ${tool.name}`
     };
+  }
+
+  private decideFileWrite(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+    const pathAccess = classifyToolPathAccess({ toolName: tool.name, args, workspaceRoot: this.workspaceRoot });
+    if (!pathAccess) {
+      return { kind: 'deny', reason: `Cannot classify target path for file write tool: ${tool.name}` };
+    }
+
+    if (isDangerousWritePath(pathAccess.targetPath)) {
+      return {
+        kind: 'deny',
+        reason: `Refusing to write to protected system or credential path: ${pathAccess.targetPath}`
+      };
+    }
+
+    const payloadPreview = this.summarizeArgs(args);
+    const overwrite = Boolean(asRecord(args).overwrite);
+    if (pathAccess.isExternal || overwrite) {
+      return {
+        kind: 'requires_approval',
+        approval: {
+          title: pathAccess.isExternal ? '请求写入 workspace 外部路径' : '请求覆盖文件',
+          risk: pathAccess.isExternal || overwrite ? 'medium' : 'low',
+          description: [
+            `OpenAgent 需要写入文件：${pathAccess.targetPath}`,
+            `当前 workspace：${this.workspaceRoot}`,
+            pathAccess.isExternal ? '目标位于 workspace 外部，必须经用户批准。' : '目标位于 workspace 内。',
+            overwrite ? '本次调用声明允许覆盖已有文件。' : '本次调用不允许覆盖已有文件。',
+            '批准后仅用于本次 tool 调用。'
+          ].join('\n'),
+          actionType: 'file.write',
+          targetPath: pathAccess.targetPath,
+          access: 'write',
+          recursive: false,
+          scope: 'once',
+          payloadPreview
+        }
+      };
+    }
+
+    return { kind: 'allow' };
   }
 
 
@@ -144,6 +189,27 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('read-only') && READ_ONLY_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('knowledge-write') && KNOWLEDGE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
+  if (allowedTools.includes('file-write') && FILE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('tool-executor')) return true;
   return false;
+}
+
+function asRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+}
+
+function isDangerousWritePath(targetPath: string) {
+  const normalized = targetPath.replace(/\/+$/, '') || '/';
+  return [
+    '/bin',
+    '/sbin',
+    '/usr/bin',
+    '/usr/sbin',
+    '/System',
+    '/Library',
+    '/etc',
+    '/private/etc',
+    `${process.env.HOME ?? ''}/.ssh`,
+    `${process.env.HOME ?? ''}/.gnupg`
+  ].filter(Boolean).some((root) => normalized === root || normalized.startsWith(`${root}/`));
 }

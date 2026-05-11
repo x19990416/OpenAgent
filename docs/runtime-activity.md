@@ -274,6 +274,7 @@ emitUiEvent?.('runtime.activity', {
 | tool | running title | completed title |
 | --- | --- | --- |
 | `read_file` / `read` | `Reading <file>` | `Read <file>` |
+| `write_file` | `Writing <file>` | `Wrote <file>` |
 | `list_directory` / `ls` | `Listing files in <dir>` | `Listed files in <dir>` |
 | `grep` / `search.text` / `find` | `Searching for <query>` | `Searched for <query>` |
 | `knowledge_agent` | `Querying knowledge base` | `Queried knowledge base` |

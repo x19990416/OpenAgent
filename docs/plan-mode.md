@@ -355,6 +355,9 @@ export interface PlanExecutionContext {
 | planning mode | 只允许 read-only 工具 |
 | executing + step.allowedTools | 只允许 step 声明的工具 |
 | step.requiresApproval | 工具执行前发 approval.required |
+| `write_file` workspace 内新文件 | 可直接执行，但必须记录 tool/run/activity 事件 |
+| `write_file` workspace 外路径 | 必须触发 `file.write` 审批 |
+| `write_file` 覆盖已有文件 | 必须触发覆盖审批；未声明 `overwrite=true` 时由工具拒绝 |
 | 外部路径写入 | 无论 plan 如何都必须走审批 |
 | git commit/push | 必须显式审批或用户明确要求 |
 | destructive shell | 必须审批，且不能由 plan 隐式授权 |
@@ -506,3 +509,37 @@ Renderer 不应该：
 - LLM 不可用、无 API key、响应不可解析或无有效步骤时，自动回退 runtime 模板步骤。
 - LLM 生成的业务步骤会作为多个 `kind: execute` step 插入到固定 runtime 阶段 `inspect -> design -> execute* -> finalize` 之间。
 - 当前仍然是单次 agent loop 执行所有 execute steps；执行完成后 runtime 会统一标记这些业务步骤完成。
+
+### 15.3 本次增强：伪 tool_call 失败保护
+
+Plan Mode 执行阶段必须区分 **真实结构化工具调用** 和 **模型文本里吐出的伪工具调用**。
+
+例如模型返回：
+
+```text
+call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
+```
+
+但 runtime 日志中的 `toolResults` 为空时，说明 `find` 没有通过 OpenAgent `ToolExecutor` 执行。此时：
+
+- 不把该文本保存为正常完成的助手回答。
+- 不通过文本解析补执行工具调用。
+- 当前 run / plan step 应进入失败或阻塞状态，并给出“模型返回未解析工具调用文本，工具未执行”的错误摘要。
+- `runtime-info.log` 应记录 `unparsed_tool_call`，用于定位 provider/tool-call 协议问题。
+
+这样可以避免 Plan Mode 面板把“看似在执行”的伪语法误展示成真实进展，也避免绕过 OpenAgent 的 ToolPolicy、审批、日志和 UI event。
+
+### 15.4 本次增强：统一 `write_file` 写文件工具
+
+OpenAgent 已补齐统一写文件工具：
+
+- `write_file` 是唯一面向模型暴露的普通文本文件写入工具。
+- 参数为 `path`、`content`，可选 `overwrite`、`createDirs`。
+- 相对路径从当前 OpenAgent workspace 解析。
+- workspace 内新文件写入可以直接执行并记录 tool/run/activity 事件。
+- workspace 外写入必须走 `file.write` 审批。
+- 覆盖已有文件必须显式传 `overwrite=true`，且会触发覆盖审批。
+- 系统目录和敏感凭证目录应由 `ToolPolicy` 直接拒绝。
+- `shell_agent` 继续只承担只读命令型文件任务，不负责写文件。
+
+Pi 侧仍只负责结构化调用；实际写入由 `ToolExecutor -> ToolPolicy -> write_file` 完成。

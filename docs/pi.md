@@ -166,6 +166,33 @@ await session.prompt(input.prompt, { images });
 
 也就是**完全由 OpenAgent 管理工具集合**，不要混用 Pi 内置工具和 OpenAgent 工具，避免权限绕过和 UI 状态不可控。
 
+当前 OpenAgent 对 Pi 的工具接入规则：
+
+- Pi `tools` 必须传空数组，避免默认启用 Pi 内置 `read/bash/edit/write` 或同名内置工具。
+- OpenAgent 工具只通过 `customTools: toPiToolDefinitions(openAgentTools)` 注入。
+- 创建 session 后显式 `setActiveToolsByName(openAgentTools.map(name))`，确保 `shell_agent`、`knowledge_agent`、`write_file` 这类非 Pi 内置工具也处于 active 状态。
+- `shell_agent` 只做只读命令型文件任务，例如 count/find/find-containing；不得承担写文件。
+- 写文件统一使用 `write_file`，实际执行仍走 `ToolExecutor -> ToolPolicy -> Approval -> fs.writeFile`。
+
+### 5.1 伪 tool_call 保护
+
+OpenAgent 只承认 provider / Pi runtime 产生的结构化工具调用事件。模型在普通文本里输出的内容，例如：
+
+```text
+call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
+<|tool_call>call:ls{path:<|"|>..<|"|>}<tool_call|>
+```
+
+都属于 **未解析的伪工具调用文本**，不是已经执行的工具调用。
+
+处理规则：
+
+- 不允许通过正则或文本匹配把这类内容“补执行”为工具调用，避免模型文本绕过 ToolPolicy、审批和审计。
+- 如果本轮没有对应的结构化 tool result，但最终 assistant 文本像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答。
+- run log 需要记录 `unparsed_tool_call` 诊断信息，包括 `runId`、`threadId`、模型、文本摘要和是否存在真实 tool results。
+- UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。
+- 根本修复应优先切换/配置支持 tool calling 的模型，或修正 Pi/provider 的结构化 tool-call 适配；不得把伪文本当作授权执行入口。
+
 ## 6. Tool Adapter 约定
 
 OpenAgent 自己的工具接口建议保持稳定：

@@ -77,13 +77,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         sessionManager,
         settingsManager,
         resourceLoader,
-        tools: input.tools.map((tool) => ({
-          name: tool.name,
-          label: tool.label ?? tool.name,
-          description: tool.description,
-          parameters: tool.parameters as any,
-          execute: async () => ({ content: [{ type: 'text' as const, text: 'OpenAgent tool placeholder' }], details: undefined })
-        })),
+        tools: [],
         customTools: toPiToolDefinitions(
           input.tools,
           new ToolExecutor(input.tools, {
@@ -98,6 +92,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         ),
         thinkingLevel: 'off'
       });
+      session.setActiveToolsByName?.(input.tools.map((tool) => tool.name));
 
       input.onLog?.({
         scope: 'agent-loop',
@@ -125,7 +120,31 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const assistantText = await this.promptSession(session, requestBody, input.attachments ?? [], input.onLog);
+      const promptResult = await this.promptSession(session, requestBody, input.attachments ?? [], input.onLog);
+      const assistantText = promptResult.assistantText;
+      const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
+      if (unparsedToolCall && promptResult.toolResultCount === 0) {
+        const message = `模型返回了未解析的工具调用文本，工具未执行：${unparsedToolCall.toolName}`;
+        input.onLog?.({
+          scope: 'agent-loop',
+          message: 'unparsed_tool_call',
+          data: {
+            runId: input.runId,
+            threadId: input.threadId,
+            providerId: input.providerId,
+            model: input.model,
+            toolName: unparsedToolCall.toolName,
+            assistantText,
+            toolResultCount: promptResult.toolResultCount,
+            loopCount: promptResult.loopCount
+          }
+        });
+        return {
+          status: 'failed',
+          error: message,
+          summary: message
+        };
+      }
       const message: RuntimeMessage = {
         id: `assistant-${randomUUID()}`,
         role: 'assistant',
@@ -163,6 +182,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     let assistantText = '';
     let loopCount = 0;
     let activeLoop = 0;
+    let toolResultCount = 0;
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'turn_start') {
         activeLoop = typeof event.turnIndex === 'number' ? event.turnIndex + 1 : loopCount + 1;
@@ -178,6 +198,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       if (event.type === 'turn_end') {
         const resolvedLoop = typeof event.turnIndex === 'number' ? event.turnIndex + 1 : activeLoop || loopCount || 1;
         loopCount = Math.max(loopCount, resolvedLoop);
+        if (Array.isArray(event.toolResults)) {
+          toolResultCount += event.toolResults.length;
+        }
         onLog?.({
           scope: 'agent-loop',
           message: `LLM loop #${resolvedLoop} reply completed`,
@@ -231,7 +254,11 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       throw new CancelledError('Pi session completed without assistant output');
     }
 
-    return assistantText.trim();
+    return {
+      assistantText: assistantText.trim(),
+      loopCount,
+      toolResultCount
+    };
   }
 }
 
@@ -261,6 +288,22 @@ function parseDataUrlImage(source: string, fallbackMimeType?: string) {
   }
 
   return null;
+}
+
+function detectUnparsedToolCallText(text: string, toolNames: string[]) {
+  const trimmed = text.trim();
+  if (!trimmed || !trimmed.includes('<tool_call|>')) return null;
+
+  const toolName = toolNames.find((name) => {
+    const escaped = escapeRegExp(name);
+    return new RegExp(`^(?:<\\|tool_call>)?\\s*(?::?\\s*)?(?:call:)?${escaped}\\s*\\{`, 's').test(trimmed);
+  });
+
+  return toolName ? { toolName } : null;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 

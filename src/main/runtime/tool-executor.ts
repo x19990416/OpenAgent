@@ -153,6 +153,7 @@ export class ToolExecutor {
 
 function inferActivityKind(toolName: string) {
   if (toolName === 'read' || toolName === 'read_file') return 'read';
+  if (toolName === 'write_file') return 'write';
   if (toolName === 'ls' || toolName === 'list_directory') return 'list';
   if (toolName === 'grep' || toolName === 'find' || toolName === 'count_files') return 'search';
   if (toolName === 'shell_agent' || toolName.includes('shell') || toolName.includes('exec')) return 'command';
@@ -180,6 +181,7 @@ function formatActivityTitle(toolName: string, args: unknown, status: 'running' 
     const pattern = textArg(record, 'pattern') || 'files';
     return failed ? `Failed to count ${pattern}` : `${status === 'running' ? 'Counting' : 'Counted'} ${pattern}`;
   }
+  if (toolName === 'write_file') return failed ? `Failed to write${suffix}` : `${status === 'running' ? 'Writing' : 'Wrote'}${suffix}`;
   if (toolName === 'knowledge_agent') {
     const operation = textArg(record, 'operation') || 'query';
     const query = textArg(record, 'query') || textArg(record, 'topic') || textArg(record, 'filePath');

@@ -23,6 +23,8 @@ export interface LlmPlanningIntentDecision {
 
 const ALLOWED_TOOL_HINTS = [
   'read-only',
+  'write_file',
+  'file-write',
   'shell_agent',
   'knowledge_agent',
   'knowledge',
@@ -69,10 +71,11 @@ export class PlanLlmGenerator {
       'Each step must be actionable, observable, and short.',
       'approvalReason must be one short natural sentence explaining why user confirmation is needed before execution.',
       `Use only these allowedTools hints: ${ALLOWED_TOOL_HINTS.join(', ')}`,
-      'For code implementation or file-changing work, include tool-executor on the relevant step.',
+      'For simple text file creation or text file writing, prefer write_file or file-write on the relevant step.',
+      'For broader code implementation or mixed tool work, include tool-executor on the relevant step.',
       'For read-only investigation, use read-only.',
       'For knowledge-base work, use knowledge or knowledge-write.',
-      'Risk must be low, medium, or high. requiresApproval should be true for write/git/destructive/external-impact steps.',
+      'Risk must be low, medium, or high. requiresApproval should be true for external writes, overwrites, git, destructive, or external-impact steps; simple workspace-local new file writes do not require extra approval by themselves.',
       `Schema: ${schema}`,
       `Overall risk: ${input.riskLevel}`,
       '<user_goal>',

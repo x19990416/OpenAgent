@@ -1,10 +1,11 @@
-import { opendir, readFile, stat } from 'node:fs/promises';
+import { mkdir, opendir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeTool } from './runtime-types.js';
 import { expandUserPathAlias } from './path-policy.js';
 
 const DEFAULT_LIMIT = 1000;
 const MAX_READ_BYTES = 100_000;
+const MAX_WRITE_BYTES = 1_000_000;
 const MAX_FIND_RESULTS = 10_000;
 
 export class ToolRegistry {
@@ -32,6 +33,7 @@ export function createDefaultToolRegistry(workspaceRoot: string) {
   registry.register(createFindTool(workspaceRoot));
   registry.register(createGrepTool(workspaceRoot));
   registry.register(createCountFilesTool(workspaceRoot));
+  registry.register(createWriteFileTool(workspaceRoot));
   registry.register(createCurrentTimeTool());
 
   // Legacy OpenAgent names kept for older prompts/UI affordances.
@@ -39,6 +41,56 @@ export function createDefaultToolRegistry(workspaceRoot: string) {
   registry.register(createReadFileTool(workspaceRoot));
 
   return registry;
+}
+
+function createWriteFileTool(workspaceRoot: string): RuntimeTool {
+  return {
+    name: 'write_file',
+    label: 'Write File',
+    description: 'Write UTF-8 text content to a local file. Relative paths are resolved from the OpenAgent workspace. Existing files are not overwritten unless overwrite is true.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path to write. Relative paths are resolved from the OpenAgent workspace.' },
+        content: { type: 'string', description: 'UTF-8 text content to write.' },
+        overwrite: { type: 'boolean', description: 'Overwrite an existing file. Defaults to false.' },
+        createDirs: { type: 'boolean', description: 'Create parent directories when needed. Defaults to true.' }
+      },
+      required: ['path', 'content'],
+      additionalProperties: false
+    },
+    execute: async ({ input, signal }) => {
+      throwIfAborted(signal);
+      const args = asRecord(input);
+      const requestedPath = String(args.path ?? '').trim();
+      if (!requestedPath) return { ok: false, content: 'path is required' };
+      if (typeof args.content !== 'string') return { ok: false, content: 'content must be a string' };
+      if (Buffer.byteLength(args.content, 'utf8') > MAX_WRITE_BYTES) {
+        return { ok: false, content: `content exceeds ${MAX_WRITE_BYTES} bytes` };
+      }
+
+      const target = resolveLocalPath(workspaceRoot, requestedPath);
+      const existing = await stat(target).catch(() => null);
+      if (existing?.isDirectory()) return { ok: false, content: `Cannot write file because target is a directory: ${target}` };
+      if (existing && args.overwrite !== true) {
+        return { ok: false, content: `File exists: ${target}. Set overwrite=true to replace it.` };
+      }
+
+      if (args.createDirs !== false) {
+        await mkdir(path.dirname(target), { recursive: true });
+      }
+      await writeFile(target, args.content, 'utf8');
+      return {
+        ok: true,
+        content: `Wrote file: ${target}`,
+        data: {
+          path: target,
+          bytes: Buffer.byteLength(args.content, 'utf8'),
+          overwritten: Boolean(existing)
+        }
+      };
+    }
+  };
 }
 
 

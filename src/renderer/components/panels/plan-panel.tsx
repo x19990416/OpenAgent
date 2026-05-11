@@ -324,6 +324,7 @@ function RuntimeActivityList({ activities, embedded = false }: { activities: Run
 function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {
   const completed = activities.filter((activity) => activity.status !== 'failed');
   const readCount = completed.filter((activity) => activity.kind === 'read' || activity.kind === 'list').length;
+  const writeCount = completed.filter((activity) => activity.kind === 'write').length;
   const searchCount = completed.filter((activity) => activity.kind === 'search').length;
   const commandCount = completed.filter((activity) => activity.kind === 'command').length;
   const toolCount = completed.filter((activity) => activity.kind === 'tool').length;
@@ -331,6 +332,7 @@ function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {
   const parts: string[] = [];
 
   if (readCount > 0) parts.push(`已探索 ${readCount} 个文件`);
+  if (writeCount > 0) parts.push(`已写入 ${writeCount} 个文件`);
   if (searchCount > 0) parts.push(`${searchCount} 次搜索`);
   if (commandCount > 0) parts.push(`已运行 ${commandCount} 条命令`);
   if (toolCount > 0) parts.push(`已调用 ${toolCount} 个工具`);

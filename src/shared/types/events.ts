@@ -70,6 +70,7 @@ export type RuntimeActivityKind =
   | 'thinking'
   | 'search'
   | 'read'
+  | 'write'
   | 'list'
   | 'tool'
   | 'approval'

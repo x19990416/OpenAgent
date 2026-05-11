@@ -16,6 +16,7 @@ const PATH_ARG_BY_TOOL: Record<string, { argName: string; fallback: string; acce
   find: { argName: 'path', fallback: '.', access: 'read' },
   grep: { argName: 'path', fallback: '.', access: 'read' },
   count_files: { argName: 'path', fallback: '.', access: 'read' },
+  write_file: { argName: 'path', fallback: '', access: 'write' },
   list_directory: { argName: 'path', fallback: '.', access: 'read' },
   read_file: { argName: 'path', fallback: '', access: 'read' },
   shell_agent: { argName: 'root', fallback: '.', access: 'read' }
