@@ -18,6 +18,7 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | --- | --- |
 | `README.md` | 了解项目启动方式、目录和当前 UI 原型状态。 |
 | `docs/pi.md` | 设计或实现 Pi runtime、agent loop、tool adapter、session/memory/compaction 时必须阅读。 |
+| `docs/subagents.md` | 设计或实现 `shell_agent`、`knowledge_agent`、`pi_coding_agent`、子 agent 路由和生命周期时必须阅读。 |
 | `docs/plan-mode.md` | 设计或实现 Agent Plan Mode、计划审批、分步执行、plan 持久化时必须阅读。 |
 | `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
 | `docs/plugins.md` | 设计或实现插件系统、飞书/Slack/企业微信等 channel、插件 tools/skills/remote UI 时必须阅读。 |
@@ -35,6 +36,7 @@ src/
 docs/
 ├── pi.md                 # Pi Agent 集成开发指导
 ├── plan-mode.md          # Agent Plan Mode 设计与实现计划
+├── subagents.md          # 子 agent 架构、职责边界和 pi_coding_agent 开发规划
 ├── knowledge.md          # system wiki 知识层设计
 └── plugins.md            # OpenAgent 插件系统标准
 ```
@@ -93,6 +95,7 @@ src/main/runtime/
 ├── event-bus.ts                # UI event 分发
 ├── session-store.ts            # thread/session 文件定位与元数据
 ├── planning/                   # Agent Plan Mode、计划审批、分步执行
+├── subagents/                  # shell_agent / knowledge_agent / pi_coding_agent
 ├── knowledge/                  # agent brain / system wiki provider 与工具
 └── pi/
     ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 主适配层
@@ -128,6 +131,8 @@ src/main/runtime/
 - Tool 必须支持 `AbortSignal`。
 - Tool start/update/end/fail 必须能进入 UI 事件流。
 - shell、git、外部路径、破坏性操作必须走 policy / approval。
+- `shell_agent` 只承担确定性只读文件搜索/统计；写程序、运行脚本、生成复杂文件、调用 API、安装依赖等执行型任务应交给 `pi_coding_agent` 或显式 tool。
+- `pi_coding_agent` 与 `shell_agent`、`knowledge_agent` 是同层系统子 agent；内部使用 Pi child session，但仍必须通过 OpenAgent tools、policy、approval、logs 和 UI event。
 - MCP plugin tool 先转成 OpenAgent tool，再统一转 Pi tool。
 - skill 注入应区分：已发现、已启用、已加载、当前任务相关；不要把所有 skill 全局塞进每一轮 prompt。
 - knowledge tool 必须走 OpenAgent `ToolRegistry`、policy、run log 和 UI event，不允许绕过 OpenAgent 直接执行。
@@ -195,9 +200,10 @@ pnpm build
 4. 默认接入 Pi embedded session，并使用 Pi ModelRegistry / AuthStorage。
 5. 接 streaming / tool events / cancellation。
 6. 接 OpenAgent tool policy / approval / patch。
-7. 接 skills / plugins / MCP。
-8. 接 session 恢复、memory、compaction。
-9. 接 knowledge layer：system wiki、知识检索和沉淀审批。
+7. 接子 agent 分层：保留 `shell_agent` 只读 fast path，新增 `pi_coding_agent` 处理写程序/执行/修复/复杂产物。
+8. 接 skills / plugins / MCP。
+9. 接 session 恢复、memory、compaction。
+10. 接 knowledge layer：system wiki、知识检索和沉淀审批。
 
 ## 12. 不要做的事
 
@@ -214,6 +220,7 @@ pnpm build
 | UI 样式、布局、交互 | `src/renderer` |
 | IPC、新 desktopApi 能力 | `src/main/preload.ts`、`src/shared/types`、`src/main/main.ts` |
 | agent loop / Pi 集成 | `docs/pi.md`，然后新增 `src/main/runtime` |
+| 子 agent / `shell_agent` / `pi_coding_agent` | `docs/subagents.md`，然后修改 `src/main/runtime/subagents` |
 | Agent Plan Mode / 计划审批 / 分步执行 | `docs/plan-mode.md`，然后新增 `src/main/runtime/planning` |
 | session/thread 持久化 | `src/main/runtime/session-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
 | tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节，审批 scope 另见 `docs/approval-scope.md` |

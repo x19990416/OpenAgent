@@ -1,6 +1,6 @@
-import type { RuntimeLogEntry, RuntimeUiEvent } from '../runtime-types.js';
+import type { RuntimeLogEntry, RuntimeToolExecutionContext, RuntimeUiEvent } from '../runtime-types.js';
 
-export type SystemSubagentId = 'shell' | 'knowledge';
+export type SystemSubagentId = 'shell' | 'knowledge' | 'pi_coding';
 
 export type ShellAgentTask =
   | { operation: 'count_files'; root?: string; extension: string }
@@ -24,7 +24,16 @@ export type KnowledgeAgentTask =
   | { operation: 'provenance'; targetId: string }
   | { operation: 'health' | 'lint' | 'graph' };
 
-export type SystemSubagentTask = ShellAgentTask | KnowledgeAgentTask;
+export interface PiCodingAgentTask {
+  task: string;
+  mode?: 'inspect' | 'edit' | 'execute' | 'generate';
+  allowedTools?: string[];
+  outputExpectation?: string;
+  workingDirectory?: string;
+  maxIterations?: number;
+}
+
+export type SystemSubagentTask = ShellAgentTask | KnowledgeAgentTask | PiCodingAgentTask;
 
 export interface SubagentRunInput<TTask extends SystemSubagentTask = SystemSubagentTask> {
   task: TTask;
@@ -33,6 +42,8 @@ export interface SubagentRunInput<TTask extends SystemSubagentTask = SystemSubag
   threadId?: string;
   workspaceRoot: string;
   signal: AbortSignal;
+  toolCallId?: string;
+  runtimeContext?: RuntimeToolExecutionContext;
   onLog?: (entry: RuntimeLogEntry) => void;
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
 }

@@ -83,6 +83,10 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           new ToolExecutor(input.tools, {
             runId: input.runId,
             threadId: input.threadId,
+            agentId: input.agentId,
+            sessionFile: input.sessionFile,
+            providerId: input.providerId,
+            model: input.model,
             onLog: input.onLog,
             emitUiEvent: input.emitUiEvent,
             workspaceRoot: input.workspaceRoot,
@@ -120,7 +124,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const promptResult = await this.promptSession(session, requestBody, input.attachments ?? [], input.abortSignal, input.onLog);
+      const promptResult = await this.promptSession(session, requestBody, input.attachments ?? [], input.abortSignal, input.onLog, input.maxIterations);
       const assistantText = promptResult.assistantText;
       const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
       if (unparsedToolCall) {
@@ -179,15 +183,22 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     }
   }
 
-  private async promptSession(session: any, prompt: string, attachments: RuntimeAttachment[], abortSignal: AbortSignal, onLog?: AgentRuntimeRunInput['onLog']) {
+  private async promptSession(session: any, prompt: string, attachments: RuntimeAttachment[], abortSignal: AbortSignal, onLog?: AgentRuntimeRunInput['onLog'], maxIterations?: number) {
     let assistantText = '';
     let loopCount = 0;
     let activeLoop = 0;
     let toolResultCount = 0;
+    let maxIterationsExceeded = false;
+    const maxLoopCount = normalizeMaxIterations(maxIterations);
     const unsubscribe = session.subscribe((event) => {
       if (event.type === 'turn_start') {
         activeLoop = typeof event.turnIndex === 'number' ? event.turnIndex + 1 : loopCount + 1;
         loopCount = Math.max(loopCount, activeLoop);
+        if (maxLoopCount && activeLoop > maxLoopCount) {
+          maxIterationsExceeded = true;
+          stopPiSession(session);
+          return;
+        }
         onLog?.({
           scope: 'agent-loop',
           message: `LLM loop #${activeLoop} request started`,
@@ -199,6 +210,11 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       if (event.type === 'turn_end') {
         const resolvedLoop = typeof event.turnIndex === 'number' ? event.turnIndex + 1 : activeLoop || loopCount || 1;
         loopCount = Math.max(loopCount, resolvedLoop);
+        if (maxLoopCount && resolvedLoop > maxLoopCount) {
+          maxIterationsExceeded = true;
+          stopPiSession(session);
+          return;
+        }
         if (Array.isArray(event.toolResults)) {
           toolResultCount += event.toolResults.length;
         }
@@ -246,6 +262,10 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       unsubscribe?.();
     }
 
+    if (maxIterationsExceeded) {
+      throw new Error(`Pi session exceeded maxIterations=${maxLoopCount}`);
+    }
+
     if (!assistantText.trim()) {
       const lastAssistant = session.state?.messages?.filter((message) => message.role === 'assistant').at(-1);
       assistantText = coerceAssistantText(lastAssistant?.content);
@@ -261,6 +281,11 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       toolResultCount
     };
   }
+}
+
+function normalizeMaxIterations(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.min(10, Math.floor(value)));
 }
 
 function throwIfAborted(signal: AbortSignal) {

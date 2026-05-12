@@ -279,6 +279,7 @@ emitUiEvent?.('runtime.activity', {
 | `grep` / `search.text` / `find` | `Searching for <query>` | `Searched for <query>` |
 | `knowledge_agent` | `Querying knowledge base` | `Queried knowledge base` |
 | `shell_agent` | `Running shell agent task` | `Ran shell agent task` |
+| `pi_coding_agent` | `Running pi coding agent` | `Completed pi coding agent` |
 | `shell_exec` | `Running command` | `Ran command` |
 | `tool.shell.exec` | `Running command` | `Ran command` |
 | unknown | `Running <toolName>` | `Completed <toolName>` |

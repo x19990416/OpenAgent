@@ -359,6 +359,7 @@ export interface PlanExecutionContext {
 | `write_file` workspace 外路径 | 必须触发 `file.write` 审批 |
 | `write_file` 覆盖已有文件 | 必须触发覆盖审批；未声明 `overwrite=true` 时由工具拒绝 |
 | `shell_exec` 运行脚本/程序 | 必须触发 `shell.exec` 审批，并记录命令、cwd、输出摘要 |
+| `pi_coding_agent` 执行编码/脚本任务 | 按 step 允许工具执行；其内部 `write_file` / `shell_exec` 仍按原工具策略审批 |
 | 外部路径写入 | 无论 plan 如何都必须走审批 |
 | git commit/push | 必须显式审批或用户明确要求 |
 | destructive shell | 必须审批，且不能由 plan 隐式授权 |
@@ -567,6 +568,7 @@ OpenAgent 的目标不是只支持某一种文件格式，而是支持通用的�
 - `shell_agent` 仍只做只读文件统计和检索，不能承担程序执行。
 - 依赖安装、外部路径、破坏性命令、长时间命令都应在审批内容里清晰展示。
 - Plan Mode 中这类 step 应声明 `shell_exec` / `shell-exec` 或 `tool-executor`，让用户能看到风险和执行边界。
+- 更推荐的复杂执行路径是声明 `pi_coding_agent` / `pi-coding`，由子 agent 负责写脚本、执行、修复和汇总；详见 `docs/subagents.md`。
 
 ### 15.6 本次修正：执行步骤不能被误收窄成只读
 
@@ -576,5 +578,6 @@ OpenAgent 的目标不是只支持某一种文件格式，而是支持通用的�
 
 - Runtime 仍保留 planning/design step 的只读限制。
 - 对 `kind=execute` 的业务执行步骤，如果 LLM 没有显式给出 `write_file` / `file-write` / `shell_exec` / `shell-exec` / `tool-executor`，runtime 会自动补上 `tool-executor`。
+- 对写程序、运行程序、API 获取、复杂文件生成这类任务，plan step 应优先允许 `pi_coding_agent` / `pi-coding` 或 `tool-executor`，不要只给 `knowledge` / `read-only`。
 - 这不是绕过审批：`shell_exec`、外部路径写入、覆盖、破坏性命令仍然由 `ToolPolicy -> Approval` 单独控制。
 - 这样避免 Plan Mode 误把“需要实际执行”的任务卡在只读设计阶段，也避免模型在工具被拒后退化成伪 `call:shell_exec...<tool_call|>` 文本。

@@ -40,6 +40,7 @@ const READ_ONLY_TOOLS = new Set([
 const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_file', 'knowledge_compile', 'knowledge_compile_topic', 'knowledge_capture']);
 const FILE_WRITE_TOOLS = new Set(['write_file']);
 const SHELL_EXEC_TOOLS = new Set(['shell_exec']);
+const PI_CODING_TOOLS = new Set(['pi_coding_agent']);
 
 export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
@@ -50,6 +51,10 @@ export class ToolPolicy {
 
     if (tool.name === 'knowledge_agent') {
       return decideKnowledgeAgent(args);
+    }
+
+    if (PI_CODING_TOOLS.has(tool.name)) {
+      return decidePiCodingAgent(args);
     }
 
     if (READ_ONLY_TOOLS.has(tool.name)) {
@@ -114,19 +119,29 @@ export class ToolPolicy {
 
     const command = String(asRecord(args).command ?? '').trim();
     if (!command) return { kind: 'deny', reason: 'shell_exec command is required' };
+    const dependencyInstall = classifyDependencyInstall(command);
 
     return {
       kind: 'requires_approval',
       approval: {
-        title: '请求执行 shell 命令',
-        risk: isLikelyDestructiveCommand(command) ? 'high' : 'medium',
+        title: dependencyInstall ? '请求安装依赖' : '请求执行 shell 命令',
+        risk: isLikelyDestructiveCommand(command) ? 'high' : dependencyInstall ? 'high' : 'medium',
         description: [
           `OpenAgent 需要执行命令：${command}`,
           `执行目录：${pathAccess.targetPath}`,
           `当前 workspace：${this.workspaceRoot}`,
           pathAccess.isExternal ? '执行目录位于 workspace 外部。' : '执行目录位于 workspace 内。',
+          dependencyInstall
+            ? [
+                '',
+                '依赖安装风险提示：',
+                `包管理器：${dependencyInstall.manager}`,
+                dependencyInstall.packages.length > 0 ? `候选包：${dependencyInstall.packages.join(', ')}` : '候选包：无法从命令中可靠解析',
+                '该操作可能访问网络、修改本地运行环境，并带来供应链风险。优先建议使用 workspace-local 虚拟环境或项目级依赖。'
+              ].join('\n')
+            : '',
           '批准后仅用于本次 tool 调用。'
-        ].join('\n'),
+        ].filter(Boolean).join('\n'),
         actionType: 'shell.exec',
         targetPath: pathAccess.targetPath,
         access: 'execute',
@@ -227,8 +242,16 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
   if (allowedTools.includes('file-write') && FILE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('shell-exec') && SHELL_EXEC_TOOLS.has(toolName)) return true;
+  if ((allowedTools.includes('pi-coding') || allowedTools.includes('coding')) && PI_CODING_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('tool-executor')) return true;
   return false;
+}
+
+function decidePiCodingAgent(args: unknown): ToolPolicyDecision {
+  const payload = asRecord(args);
+  const task = String(payload.task ?? '').trim();
+  if (!task) return { kind: 'deny', reason: 'pi_coding_agent task is required' };
+  return { kind: 'allow' };
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -253,4 +276,25 @@ function isDangerousWritePath(targetPath: string) {
 
 function isLikelyDestructiveCommand(command: string) {
   return /\b(rm\s+-|mv\s+|chmod\s+|chown\s+|dd\s+|mkfs|git\s+reset|git\s+clean|sudo\s+|launchctl\s+|kill\s+)/i.test(command);
+}
+
+function classifyDependencyInstall(command: string) {
+  const normalized = command.trim();
+  const match = /\b(?:(python3?|py)\s+-m\s+pip|pip3?)\s+install\s+([^;&|]+)/i.exec(normalized);
+  if (match) {
+    return { manager: 'pip', packages: extractPackageNames(match[2]) };
+  }
+  const npmMatch = /\b(npm|pnpm|yarn)\s+(?:add|install|i)\s+([^;&|]+)/i.exec(normalized);
+  if (npmMatch) {
+    return { manager: npmMatch[1].toLowerCase(), packages: extractPackageNames(npmMatch[2]) };
+  }
+  return null;
+}
+
+function extractPackageNames(value: string) {
+  return value
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item && !item.startsWith('-'))
+    .slice(0, 12);
 }

@@ -7,6 +7,10 @@ import type { PlanExecutionContext, RuntimeLogEntry, RuntimeTool, RuntimeToolExe
 export interface ToolExecutorOptions {
   runId?: string;
   threadId?: string;
+  agentId?: string;
+  sessionFile?: string;
+  providerId?: string;
+  model?: string;
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
   onLog?: (entry: RuntimeLogEntry) => void;
   policy?: ToolPolicy;
@@ -119,6 +123,20 @@ export class ToolExecutor {
         toolCallId: input.toolCallId,
         input: input.args,
         signal: input.signal,
+        context: {
+          runId: this.options.runId,
+          threadId: this.options.threadId,
+          agentId: this.options.agentId,
+          sessionFile: this.options.sessionFile,
+          workspaceRoot: this.options.workspaceRoot,
+          tools: this.tools,
+          providerId: this.options.providerId,
+          model: this.options.model,
+          onLog: this.options.onLog,
+          emitUiEvent: this.options.emitUiEvent,
+          requestApproval: this.options.requestApproval,
+          getPlanContext: this.options.getPlanContext
+        },
         onUpdate: (update) => {
           this.options.onLog?.({ scope: 'runtime', message: 'tool execution update', data: { ...basePayload, update } });
         }
@@ -154,6 +172,7 @@ export class ToolExecutor {
 function inferActivityKind(toolName: string) {
   if (toolName === 'read' || toolName === 'read_file') return 'read';
   if (toolName === 'write_file') return 'write';
+  if (toolName === 'pi_coding_agent') return 'tool';
   if (toolName === 'ls' || toolName === 'list_directory') return 'list';
   if (toolName === 'grep' || toolName === 'find' || toolName === 'count_files') return 'search';
   if (toolName === 'shell_agent' || toolName === 'shell_exec' || toolName.includes('shell') || toolName.includes('exec')) return 'command';
@@ -199,6 +218,10 @@ function formatActivityTitle(toolName: string, args: unknown, status: 'running' 
   if (toolName === 'shell_exec') {
     const command = textArg(record, 'command');
     return failed ? 'Failed command' : `${status === 'running' ? 'Running' : 'Ran'} command${command ? `: ${shorten(command, 80)}` : ''}`;
+  }
+  if (toolName === 'pi_coding_agent') {
+    const task = textArg(record, 'task') || 'coding task';
+    return failed ? `Failed pi coding agent: ${shorten(task, 80)}` : `${status === 'running' ? 'Running' : 'Completed'} pi coding agent: ${shorten(task, 80)}`;
   }
   if (toolName.includes('shell') || toolName.includes('exec')) {
     const command = textArg(record, 'command') || textArg(record, 'cmd');

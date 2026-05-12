@@ -85,12 +85,28 @@ export interface RuntimeToolExecutionInput {
   input: unknown;
   signal: AbortSignal;
   onUpdate?: (update: unknown) => void;
+  context?: RuntimeToolExecutionContext;
 }
 
 export interface RuntimeToolExecutionResult {
   ok: boolean;
   content: string;
   data?: unknown;
+}
+
+export interface RuntimeToolExecutionContext {
+  runId?: string;
+  threadId?: string;
+  agentId?: string;
+  sessionFile?: string;
+  workspaceRoot?: string;
+  tools?: RuntimeTool[];
+  providerId?: string;
+  model?: string;
+  onLog?: (entry: RuntimeLogEntry) => void;
+  emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
+  requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
+  getPlanContext?: () => PlanExecutionContext | null;
 }
 
 
@@ -120,6 +136,7 @@ export interface AgentRuntimeRunInput {
   emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
   requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
   getPlanContext?: () => PlanExecutionContext | null;
+  maxIterations?: number;
 }
 
 export interface RuntimeLogEntry {

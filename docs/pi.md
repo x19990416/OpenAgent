@@ -55,6 +55,7 @@ src/main/runtime/
 ├── run-state.ts                # active run、取消、状态机
 ├── event-bus.ts                # 统一 UI 事件分发
 ├── session-store.ts            # thread/session 文件定位与元数据
+├── subagents/                  # shell_agent / knowledge_agent / pi_coding_agent
 └── pi/
     ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 的主适配层
     ├── pi-session.ts           # createAgentSession / SessionManager
@@ -175,7 +176,44 @@ await session.prompt(input.prompt, { images });
 - 写文件统一使用 `write_file`，实际执行仍走 `ToolExecutor -> ToolPolicy -> Approval -> fs.writeFile`。
 - 需要“写程序并执行程序完成任务”时，先用 `write_file` 写脚本/源文件，再用 `shell_exec` 执行；`shell_exec` 必须走审批、日志和 UI event。
 
-### 5.1 伪 tool_call 保护
+### 5.1 子 Agent 与 Pi Coding Agent
+
+OpenAgent 的子 agent 位于 runtime `subagents/` 层，和 Pi 主 runtime adapter 是不同边界：
+
+- `shell_agent`：确定性只读 fast path，内部不是 Pi，只负责文件统计、文件查找、文件名+内容查找。
+- `knowledge_agent`：知识库能力入口，内部使用 OpenAgent `KnowledgeService`。
+- `pi_coding_agent`：计划新增的通用执行型子 agent，内部使用子级 Pi `AgentSession`，负责写代码、写脚本、运行脚本、调用 API、生成复杂产物和根据失败迭代修复。
+
+三者是同层并列关系，不应把 `shell_agent` 当成 Pi Coding 的替代品，也不应把所有确定性搜索任务都交给 Pi Coding。
+
+```mermaid
+flowchart TD
+  Main[Main Agent / PiRuntimeAdapter] --> Tools[OpenAgent ToolRegistry]
+  Tools --> Shell[shell_agent]
+  Tools --> Knowledge[knowledge_agent]
+  Tools --> Coding[pi_coding_agent]
+
+  Shell --> Policy[ToolPolicy / Approval / Logs / UI Events]
+  Knowledge --> Policy
+  Coding --> ChildPi[Child Pi AgentSession]
+  ChildPi --> ChildTools[OpenAgent child tools]
+  ChildTools --> Policy
+```
+
+`pi_coding_agent` 的关键约束：
+
+1. 子 Pi session 仍然传 `tools: []`，只能通过 `customTools` 使用 OpenAgent tools。
+2. 子 agent 可用 tools 初版建议限制为 `read`、`grep`、`find`、`write_file`、`shell_exec`。
+3. 子 agent tools 不包含 `pi_coding_agent` 本身，避免递归。
+4. 子 agent 的 `write_file`、`shell_exec`、依赖安装、外部路径写入仍必须走 OpenAgent `ToolPolicy` 和审批。
+5. 父 run 停止时，子 Pi session 和其内部工具执行必须随 `AbortSignal` 一起停止。
+6. 子 agent 的日志和 UI event 必须带 `subagentId` / `parentToolCallId`，便于审计。
+7. 子 agent 由 `SubagentService` 统一注册和调用，`pi_coding_agent` 不应绕开该层单独实例化。
+8. `workingDirectory`、`maxIterations` 等执行参数必须在 runtime 层生效，不能只依赖提示词约束。
+
+详细职责边界和开发计划见 `docs/subagents.md`。
+
+### 5.2 伪 tool_call 保护
 
 OpenAgent 只承认 provider / Pi runtime 产生的结构化工具调用事件。模型在普通文本里输出的内容，例如：
 

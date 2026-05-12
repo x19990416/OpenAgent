@@ -17,6 +17,7 @@ import { SoulManager, extractOpenAgentMetadata } from './memory/soul-manager.js'
 import { SubagentService } from './subagents/subagent-service.js';
 import { createShellAgentTool } from './subagents/shell-agent-tool.js';
 import { createKnowledgeAgentTool } from './subagents/knowledge-agent-tool.js';
+import { createPiCodingAgentTool } from './subagents/pi-coding-agent-tool.js';
 import { ApprovalService, type RuntimeApprovalRequest } from './approval-service.js';
 import { KnowledgeService } from './knowledge/knowledge-service.js';
 import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
@@ -62,6 +63,7 @@ export class RuntimeService {
     }
     this.toolRegistry.register(createShellAgentTool(this.subagents, options.workspaceRoot));
     this.toolRegistry.register(createKnowledgeAgentTool(this.subagents, options.workspaceRoot));
+    this.toolRegistry.register(createPiCodingAgentTool(this.subagents));
 
     const restoredThreads = this.sessionStore.listThreads({
       workspaceRoot: options.workspaceRoot,
