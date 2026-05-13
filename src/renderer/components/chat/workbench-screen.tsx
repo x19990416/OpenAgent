@@ -16,6 +16,7 @@ export function WorkbenchScreen() {
     selectThread,
     createThread,
     deleteThread,
+    compactThread,
     createScheduledTask,
     deleteScheduledTask,
     setScheduledTaskEnabled,
@@ -74,6 +75,7 @@ export function WorkbenchScreen() {
         await createThread();
       }}
       onDeleteThread={deleteThread}
+      onCompactThread={compactThread}
       onResolveApproval={resolveApproval}
       onCreateScheduledTask={createScheduledTask}
       onDeleteScheduledTask={deleteScheduledTask}

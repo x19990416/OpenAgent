@@ -319,7 +319,7 @@ export function createPiModelContext(input: { providerId: string; modelId: strin
   const selectedModel = selectPiModel(modelRegistry, input.providerId, input.modelId);
 
   if (!selectedModel) {
-    throw new Error(`Pi ModelRegistry cannot find model: ${input.providerId}/${input.modelId}`);
+    throw new Error(`Model registry cannot find model: ${input.providerId}/${input.modelId}`);
   }
 
   return {

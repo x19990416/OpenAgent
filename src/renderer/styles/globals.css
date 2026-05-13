@@ -4730,3 +4730,50 @@ html.is-electron .topbar-brand {
   padding-top: 0;
   border-top: 0;
 }
+
+.runtime-activity-detail {
+  color: var(--text-soft);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.status-badge.subagent {
+  min-width: auto;
+  color: var(--accent);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.runtime-activity-link {
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.runtime-activity-link:hover {
+  text-decoration: underline;
+}
+
+.runtime-activity-content {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.runtime-activity-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.runtime-activity-main .runtime-activity-title {
+  flex: 1 1 auto;
+}
+
+.runtime-activity-content .runtime-activity-link {
+  justify-self: start;
+}

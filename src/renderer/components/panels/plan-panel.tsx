@@ -313,12 +313,32 @@ function RuntimeActivityList({ activities, embedded = false }: { activities: Run
                 <CheckCircle2 size={13} />
               )}
             </span>
-            <span className="runtime-activity-title" title={activity.title}>{activity.title}</span>
+            <div className="runtime-activity-content">
+              <div className="runtime-activity-main">
+                <span className="runtime-activity-title" title={formatActivityTitleForTooltip(activity)}>{activity.title}</span>
+                {activity.meta?.subagentId ? <span className="status-badge subagent">{String(activity.meta.subagentId)}</span> : null}
+              </div>
+              {activity.detail ? <div className="runtime-activity-detail">{activity.detail}</div> : null}
+              {activity.meta?.childSessionFile ? (
+                <button
+                  type="button"
+                  className="runtime-activity-link"
+                  onClick={() => void window.desktopApi?.openPromptAttachment?.({ path: activity.meta?.childSessionFile, action: 'reveal' })}
+                >
+                  打开子会话
+                </button>
+              ) : null}
+            </div>
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function formatActivityTitleForTooltip(activity: RuntimeActivityItem) {
+  const meta = activity.meta?.childSessionFile ? `\nchildSessionFile: ${String(activity.meta.childSessionFile)}` : '';
+  return `${activity.title}${activity.detail ? `\n${activity.detail}` : ''}${meta}`;
 }
 
 function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {

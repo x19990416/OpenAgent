@@ -372,6 +372,7 @@ export interface DesktopApi {
   setActiveAgent: (payload: any) => Promise<any>;
   createThread: () => Promise<any>;
   selectThread: (payload: any) => Promise<any>;
+  compactThread?: (payload?: { threadId?: string }) => Promise<any>;
   deleteThread: (payload: any) => Promise<any>;
   resolveApproval: (payload: any) => Promise<any>;
   openPromptAttachment: (payload: any) => Promise<any>;

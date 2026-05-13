@@ -1,4 +1,5 @@
 import { mkdir, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { PiRuntimeAdapter } from '../pi/pi-runtime-adapter.js';
 import type { AgentRuntimeRunInput, PlanExecutionContext, RuntimeTool, RuntimeToolExecutionContext, RuntimeToolExecutionInput } from '../runtime-types.js';
@@ -14,7 +15,7 @@ export class PiCodingAgent {
   async run(input: { task: PiCodingAgentTask; toolCallId: string; context: RuntimeToolExecutionContext; signal: AbortSignal }): Promise<SubagentRunResult> {
     const taskText = input.task.task.trim();
     if (!taskText) {
-      return { ok: false, agentId: this.id, summary: 'pi_coding_agent task is required.', error: 'missing_task' };
+      return { ok: false, agentId: this.id, summary: 'coding agent task is required.', error: 'missing_task' };
     }
 
     const context = input.context;
@@ -26,16 +27,24 @@ export class PiCodingAgent {
     const model = context.model ?? '';
     const workingDirectory = await resolveWorkingDirectory(input.task.workingDirectory, workspaceRoot);
     const maxIterations = normalizeMaxIterations(input.task.maxIterations);
-    const sessionFile = await resolveChildSessionFile(context.sessionFile, context.runId, input.toolCallId, workspaceRoot);
+    const sessionFile = await resolveChildSessionFile(context.sessionFile, agentId, context.runId, input.toolCallId, workspaceRoot);
+    const childMeta = {
+      subagentId: 'pi_coding_agent',
+      parentRunId: context.runId,
+      parentThreadId: context.threadId,
+      parentToolCallId: input.toolCallId,
+      childRunId: runId,
+      childSessionFile: sessionFile,
+      workingDirectory
+    };
     const childTools = selectChildTools(context.tools ?? [], input.task.allowedTools, workingDirectory, workspaceRoot);
 
     context.onLog?.({
       scope: 'runtime',
-      message: 'pi_coding_agent child session started',
+      message: 'coding agent child session started',
       data: {
+        ...childMeta,
         subagentId: this.id,
-        parentRunId: context.runId,
-        parentToolCallId: input.toolCallId,
         runId,
         threadId,
         sessionFile,
@@ -45,6 +54,19 @@ export class PiCodingAgent {
         maxIterations,
         tools: childTools.map((tool) => tool.name)
       }
+    });
+
+    context.emitUiEvent?.('runtime.activity', {
+      id: `${runId}-child-session`,
+      runId: context.runId,
+      threadId,
+      kind: 'tool',
+      status: 'running',
+      title: 'coding agent child session started',
+      detail: `childRunId=${runId}; tools=${childTools.map((tool) => tool.name).join(', ')}`,
+      toolName: 'pi_coding_agent',
+      createdAt: new Date().toISOString(),
+      meta: childMeta
     });
 
     const childInput: AgentRuntimeRunInput = {
@@ -66,21 +88,13 @@ export class PiCodingAgent {
           ...entry,
           data: {
             ...(entry.data && typeof entry.data === 'object' ? entry.data as Record<string, unknown> : { value: entry.data }),
-            subagentId: this.id,
-            parentRunId: context.runId,
-            parentToolCallId: input.toolCallId,
-            childRunId: runId
+            ...childMeta,
+            subagentId: this.id
           }
         });
       },
       emitUiEvent: (type, payload) => {
-        context.emitUiEvent?.(type, decoratePayload(payload, {
-          subagentId: 'pi_coding_agent',
-          parentToolCallId: input.toolCallId,
-          parentRunId: context.runId,
-          childRunId: runId,
-          childSessionFile: sessionFile
-        }));
+        context.emitUiEvent?.(type, decoratePayload(payload, childMeta));
       },
       requestApproval: context.requestApproval,
       getPlanContext: () => buildChildPlanContext(context.getPlanContext?.()),
@@ -89,19 +103,39 @@ export class PiCodingAgent {
 
     const result = await this.adapter.run(childInput);
     const ok = result.status === 'completed';
-    const summary = result.summary || result.assistantMessage?.content || result.error || (ok ? 'pi_coding_agent completed.' : 'pi_coding_agent failed.');
+    const summary = formatChildSummary({
+      ok,
+      status: result.status,
+      rawSummary: result.summary || result.assistantMessage?.content || result.error || '',
+      childRunId: runId,
+      sessionFile,
+      workingDirectory,
+      tools: childTools.map((tool) => tool.name)
+    });
 
     context.onLog?.({
       scope: 'runtime',
-      message: 'pi_coding_agent child session completed',
+      message: 'coding agent child session completed',
       data: {
+        ...childMeta,
         subagentId: this.id,
-        parentRunId: context.runId,
-        parentToolCallId: input.toolCallId,
-        childRunId: runId,
         status: result.status,
         summary: summary.slice(0, 1000)
       }
+    });
+
+    context.emitUiEvent?.('runtime.activity', {
+      id: `${runId}-child-session`,
+      runId: context.runId,
+      threadId,
+      kind: 'tool',
+      status: ok ? 'completed' : 'failed',
+      title: ok ? 'coding agent child session completed' : 'coding agent child session failed',
+      detail: summary.slice(0, 500),
+      toolName: 'pi_coding_agent',
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      meta: childMeta
     });
 
     return {
@@ -115,6 +149,23 @@ export class PiCodingAgent {
   }
 }
 
+
+function formatChildSummary(input: { ok: boolean; status: string; rawSummary: string; childRunId: string; sessionFile: string; workingDirectory: string; tools: string[] }) {
+  const raw = input.rawSummary.trim() || (input.ok ? 'coding agent completed.' : 'coding agent failed.');
+  return [
+    input.ok ? 'coding agent completed.' : 'coding agent failed.',
+    '',
+    `status: ${input.status}`,
+    `childRunId: ${input.childRunId}`,
+    `sessionFile: ${input.sessionFile}`,
+    `workingDirectory: ${input.workingDirectory}`,
+    `tools: ${input.tools.join(', ') || '(none)'}`,
+    '',
+    'child summary:',
+    raw
+  ].join('\n');
+}
+
 function buildChildPrompt(task: PiCodingAgentTask) {
   return [
     `Task: ${task.task.slice(0, MAX_TASK_LENGTH)}`,
@@ -126,7 +177,7 @@ function buildChildPrompt(task: PiCodingAgentTask) {
 
 function buildChildSystemPrompt(input: { workspaceRoot: string; workingDirectory: string; mode: string; outputExpectation?: string }) {
   return [
-    'You are OpenAgent pi_coding_agent, a child coding agent running inside OpenAgent Runtime.',
+    'You are OpenAgent coding agent, a child coding agent running inside OpenAgent Runtime.',
     `workspaceRoot: ${input.workspaceRoot}`,
     `workingDirectory: ${input.workingDirectory}`,
     `mode: ${input.mode}`,
@@ -141,7 +192,7 @@ function buildChildSystemPrompt(input: { workspaceRoot: string; workingDirectory
     'Safety and tool rules:',
     '- Never claim a file was written or command was executed unless the tool call succeeded.',
     '- Do not output fake tool call text such as call:shell_exec{...}<tool_call|>; use structured tool calls only.',
-    '- Do not call pi_coding_agent or any recursive child-agent tool.',
+    '- Do not call recursive child-agent tools.',
     '- Do not bypass OpenAgent ToolPolicy, approval, logs, or UI events.',
     '- Prefer standard library or existing dependencies. If dependency installation is necessary, use shell_exec and explain the package, install location, and network risk.',
     input.outputExpectation ? `Final output expectation: ${input.outputExpectation}` : ''
@@ -163,10 +214,10 @@ function buildChildPlanContext(parentContext?: PlanExecutionContext | null): Pla
   };
 }
 
-async function resolveChildSessionFile(parentSessionFile: string | undefined, parentRunId: string | undefined, toolCallId: string, workspaceRoot: string) {
+async function resolveChildSessionFile(parentSessionFile: string | undefined, agentId: string, parentRunId: string | undefined, toolCallId: string, workspaceRoot: string) {
   const baseDir = parentSessionFile
     ? path.join(path.dirname(parentSessionFile), 'subagents', 'pi-coding')
-    : path.join(workspaceRoot, '.openagent-subagents', 'pi-coding');
+    : path.join(os.homedir(), '.openagent', 'agents', agentId, 'sessions', 'subagents', 'pi-coding');
   await mkdir(baseDir, { recursive: true });
   const prefix = parentRunId ? `${sanitizeFilePart(parentRunId)}-` : '';
   return path.join(baseDir, `${prefix}${sanitizeFilePart(toolCallId)}.jsonl`);

@@ -152,9 +152,28 @@ export interface AgentRuntimeRunResult {
   error?: string;
 }
 
+export interface AgentRuntimeCompactInput {
+  threadId: string;
+  agentId: string;
+  workspaceRoot: string;
+  sessionFile: string;
+  providerId: string;
+  model: string;
+  abortSignal?: AbortSignal;
+  onLog?: (entry: RuntimeLogEntry) => void;
+  emitUiEvent?: (type: RuntimeUiEvent['type'], payload?: unknown) => void;
+}
+
+export interface AgentRuntimeCompactResult {
+  ok: boolean;
+  summary?: string;
+  error?: string;
+  data?: unknown;
+}
+
 export interface AgentRuntimeAdapter {
   run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult>;
-  compact?(input: { threadId: string; sessionFile: string }): Promise<void>;
+  compact?(input: AgentRuntimeCompactInput): Promise<AgentRuntimeCompactResult>;
 }
 
 export interface RuntimeServiceOptions {
@@ -182,6 +201,7 @@ export interface RuntimeUiEvent {
     | 'tool.completed'
     | 'tool.failed'
     | 'runtime.activity'
+    | 'message.delta'
     | 'message.completed'
     | 'patch.ready'
     | 'approval.required'

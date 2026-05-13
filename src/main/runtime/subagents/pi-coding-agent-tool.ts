@@ -5,8 +5,8 @@ import type { PiCodingAgentTask } from './subagent-types.js';
 export function createPiCodingAgentTool(subagents: SubagentService): RuntimeTool {
   return {
     name: 'pi_coding_agent',
-    label: 'Pi Coding Agent',
-    description: 'Delegate coding, scripting, API fetching, complex artifact generation, command execution workflows, and iterative fix-and-run tasks to a child Pi Coding AgentSession. Use shell_agent only for deterministic read-only file search/count tasks.',
+    label: 'Coding Agent',
+    description: 'Delegate coding, scripting, API fetching, complex artifact generation, command execution workflows, and iterative fix-and-run tasks to a child coding AgentSession. Use shell_agent only for deterministic read-only file search/count tasks.',
     parameters: {
       type: 'object',
       properties: {
@@ -21,7 +21,7 @@ export function createPiCodingAgentTool(subagents: SubagentService): RuntimeTool
       additionalProperties: false
     },
     execute: async ({ input, signal, context, toolCallId }) => {
-      if (!context) return { ok: false, content: 'pi_coding_agent requires runtime execution context' };
+      if (!context) return { ok: false, content: 'coding agent requires runtime execution context' };
       const args = input && typeof input === 'object' ? input as Record<string, unknown> : {};
       const task = normalizeTask(args);
       if (!task.task) return { ok: false, content: 'task is required' };

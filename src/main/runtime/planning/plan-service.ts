@@ -191,7 +191,7 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
     : [{
         id: 'plan-step-execute-1',
         title: '按计划进入 agent loop，并通过 OpenAgent tools 执行任务',
-        description: 'Pi 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。',
+        description: 'AgentSession 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。',
         status: 'pending',
         allowedTools: ['tool-executor'],
         requiresApproval: riskLevel !== 'low',

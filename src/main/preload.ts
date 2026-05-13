@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
   setActiveAgent: (payload: unknown) => ipcRenderer.invoke('agents:set-active', payload),
   createThread: () => ipcRenderer.invoke('threads:create'),
   selectThread: (payload: unknown) => ipcRenderer.invoke('threads:select', payload),
+  compactThread: (payload?: unknown) => ipcRenderer.invoke('threads:compact', payload),
   deleteThread: (payload: unknown) => ipcRenderer.invoke('threads:delete', payload),
   resolveApproval: (payload: unknown) => ipcRenderer.invoke('approval:resolve', payload),
   openPromptAttachment: (payload: unknown) => ipcRenderer.invoke('attachment:open', payload),

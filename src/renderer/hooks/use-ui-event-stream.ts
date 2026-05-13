@@ -402,6 +402,17 @@ export function useUiEventStream() {
         console.error('resolveApproval failed', error);
       }
     },
+    compactThread: async (threadId?: string) => {
+      if (!window.desktopApi?.compactThread) {
+        return { ok: false, error: 'desktopApi.compactThread is unavailable' };
+      }
+      try {
+        return await window.desktopApi.compactThread(threadId ? { threadId } : undefined);
+      } catch (error) {
+        console.error('compactThread failed', error);
+        return { ok: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    },
     deleteThread: async (threadId: string) => {
       if (!window.desktopApi) {
         return;
@@ -432,6 +443,14 @@ export function useUiEventStream() {
       }
     }
   };
+}
+
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) return index;
+  }
+  return -1;
 }
 
 function applyStateSnapshot(
@@ -583,11 +602,47 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
         runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12)
       };
     }
-    case 'message.completed': {
-      const message = event.payload as MessageItem;
+    case 'message.delta': {
+      const payload = event.payload as { id?: string; role?: MessageItem['role']; delta?: string; content?: string; createdAt?: string };
+      const id = payload.id || `assistant-stream-${event.id}`;
+      const content = normalizeMessageContent(payload.content ?? payload.delta ?? '');
+      const existingIndex = prev.messages.findIndex((message) => message.id === id);
+      if (existingIndex >= 0) {
+        return {
+          ...prev,
+          messages: prev.messages.map((message, index) =>
+            index === existingIndex
+              ? { ...message, content }
+              : message
+          )
+        };
+      }
       return {
         ...prev,
-        messages: [...prev.messages, { ...message, content: normalizeMessageContent(message.content) }]
+        messages: [
+          ...prev.messages,
+          {
+            id,
+            role: payload.role === 'system' || payload.role === 'user' ? payload.role : 'assistant',
+            content,
+            createdAt: payload.createdAt || event.createdAt
+          }
+        ]
+      };
+    }
+    case 'message.completed': {
+      const message = event.payload as MessageItem;
+      const normalizedMessage = { ...message, content: normalizeMessageContent(message.content) };
+      const lastStreamingIndex = findLastIndex(prev.messages, (item) => item.role === 'assistant' && item.id.startsWith('assistant-stream-'));
+      if (lastStreamingIndex >= 0) {
+        return {
+          ...prev,
+          messages: prev.messages.map((item, index) => (index === lastStreamingIndex ? normalizedMessage : item))
+        };
+      }
+      return {
+        ...prev,
+        messages: [...prev.messages, normalizedMessage]
       };
     }
     case 'patch.ready': {

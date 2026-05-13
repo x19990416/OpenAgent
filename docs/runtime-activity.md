@@ -246,7 +246,7 @@ emitUiEvent?.('runtime.activity', {
 
 - 构建运行上下文完成
 - 解析模型配置
-- 创建 Pi AgentSession
+- 创建 AgentSession
 - 保存 transcript
 
 这些可以作为系统级 activity，但优先级低于 tool activity。
@@ -279,7 +279,7 @@ emitUiEvent?.('runtime.activity', {
 | `grep` / `search.text` / `find` | `Searching for <query>` | `Searched for <query>` |
 | `knowledge_agent` | `Querying knowledge base` | `Queried knowledge base` |
 | `shell_agent` | `Running shell agent task` | `Ran shell agent task` |
-| `pi_coding_agent` | `Running pi coding agent` | `Completed pi coding agent` |
+| `pi_coding_agent` | `Running coding agent` | `Completed coding agent` |
 | `shell_exec` | `Running command` | `Ran command` |
 | `tool.shell.exec` | `Running command` | `Ran command` |
 | unknown | `Running <toolName>` | `Completed <toolName>` |

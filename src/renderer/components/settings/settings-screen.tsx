@@ -243,7 +243,7 @@ const providerKindLabels: Record<LlmProviderKind, string> = {
   'openai-codex': 'ChatGPT / Codex 订阅',
   codex: 'Codex / Responses',
   'openai-compatible': 'OpenAI 兼容',
-  'pi-provider': 'Pi Provider',
+  'pi-provider': '内置 AgentSession Provider',
   anthropic: 'Anthropic',
   google: 'Google / Gemini',
   mistral: 'Mistral',
@@ -1694,7 +1694,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                 <div className="settings-add-panel">
                   <div className="settings-add-panel-heading">
                     <div className="settings-section-title">{selectedDraftProviderDefinition.label}</div>
-                    <div className="settings-form-help">先保存接入名称和认证信息。官方 provider 默认使用 Pi AgentSession，自定义接口使用 OpenAI-compatible 模式。</div>
+                    <div className="settings-form-help">先保存接入名称和认证信息。官方 provider 默认使用 AgentSession，自定义接口使用 OpenAI-compatible 模式。</div>
                   </div>
 
                   <div className="settings-add-form-grid">
@@ -1732,7 +1732,7 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                       onChange={(event) => updateDraft('baseUrl', event.target.value)}
                       placeholder={selectedDraftProviderDefinition.defaultBaseUrl ?? 'https://your-gateway.example.com/v1'}
                     />
-                    <div className="settings-form-help">官方 provider 可留空使用 Pi 内置地址；自定义兼容接口必须填写。</div>
+                    <div className="settings-form-help">官方 provider 可留空使用内置默认地址；自定义兼容接口必须填写。</div>
                   </label>
 
                   {draft.authType === 'api_key_header' ? (
@@ -1880,13 +1880,13 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                 <div className="settings-add-panel">
                   <div className="settings-add-panel-heading">
                     <div className="settings-section-title">确认接入</div>
-                    <div className="settings-form-help">保存后会写入 OpenAgent 的 Pi 配置，并立即刷新当前运行模型。</div>
+                    <div className="settings-form-help">保存后会写入 OpenAgent 的模型配置，并立即刷新当前运行模型。</div>
                   </div>
 
                   <div className="settings-add-review-card">
                     <div><span>接入名称</span><strong>{draft.name.trim() || selectedDraftProviderDefinition.label}</strong></div>
                     <div><span>提供方</span><strong>{selectedDraftProviderDefinition.label}</strong></div>
-                    <div><span>Base URL</span><strong>{draft.baseUrl.trim() || 'Pi 内置默认'}</strong></div>
+                    <div><span>Base URL</span><strong>{draft.baseUrl.trim() || '内置默认'}</strong></div>
                     <div><span>默认模型</span><strong>{draft.defaultModel || draft.models[0]}</strong></div>
                     <div><span>模型数量</span><strong>{draft.models.length}</strong></div>
                   </div>

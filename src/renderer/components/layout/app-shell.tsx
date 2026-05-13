@@ -30,6 +30,7 @@ interface AppShellProps {
   onSelectThread: (threadId: string) => void;
   onCreateThread: () => Promise<void>;
   onDeleteThread: (threadId: string) => Promise<void>;
+  onCompactThread: (threadId?: string) => Promise<{ ok: boolean; error?: string }>;
   onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
   onCreateScheduledTask: (payload: CreateScheduledTaskInput) => Promise<{ ok: boolean; error?: string }>;
   onDeleteScheduledTask: (taskId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -55,6 +56,7 @@ export function AppShell(props: AppShellProps) {
     onSelectThread,
     onCreateThread,
     onDeleteThread,
+    onCompactThread,
     onResolveApproval,
     onCreateScheduledTask,
     onDeleteScheduledTask,
@@ -129,6 +131,7 @@ export function AppShell(props: AppShellProps) {
                   viewModel={viewModel}
                   onStopRun={onStopRun}
                   onResolveApproval={onResolveApproval}
+                  onCompactThread={onCompactThread}
                 />
               )}
             </div>

@@ -237,6 +237,9 @@ function decideKnowledgeAgent(args: unknown): ToolPolicyDecision {
 
 function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('*') || allowedTools.includes(toolName)) return true;
+  if (allowedTools.includes('list') && (toolName === 'ls' || toolName === 'list_directory')) return true;
+  if (allowedTools.includes('read') && (toolName === 'read' || toolName === 'read_file')) return true;
+  if (allowedTools.includes('search') && ['find', 'grep', 'count_files'].includes(toolName)) return true;
   if (allowedTools.includes('read-only') && READ_ONLY_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('knowledge-write') && KNOWLEDGE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
@@ -250,7 +253,7 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
 function decidePiCodingAgent(args: unknown): ToolPolicyDecision {
   const payload = asRecord(args);
   const task = String(payload.task ?? '').trim();
-  if (!task) return { kind: 'deny', reason: 'pi_coding_agent task is required' };
+  if (!task) return { kind: 'deny', reason: 'coding agent task is required' };
   return { kind: 'allow' };
 }
 

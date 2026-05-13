@@ -221,7 +221,7 @@ function formatActivityTitle(toolName: string, args: unknown, status: 'running' 
   }
   if (toolName === 'pi_coding_agent') {
     const task = textArg(record, 'task') || 'coding task';
-    return failed ? `Failed pi coding agent: ${shorten(task, 80)}` : `${status === 'running' ? 'Running' : 'Completed'} pi coding agent: ${shorten(task, 80)}`;
+    return failed ? `Failed coding agent: ${shorten(task, 80)}` : `${status === 'running' ? 'Running' : 'Completed'} coding agent: ${shorten(task, 80)}`;
   }
   if (toolName.includes('shell') || toolName.includes('exec')) {
     const command = textArg(record, 'command') || textArg(record, 'cmd');

@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
-import type { RuntimeTool } from '../runtime-types.js';
+import type { RuntimeLogEntry, RuntimeTool } from '../runtime-types.js';
 import { ToolExecutor } from '../tool-executor.js';
+import { normalizePiToolParametersWithReport } from './pi-tool-schema.js';
 
 export function toPiToolDefinitionsPlaceholder(tools: RuntimeTool[]) {
   return tools.map((tool) => ({
@@ -10,13 +11,22 @@ export function toPiToolDefinitionsPlaceholder(tools: RuntimeTool[]) {
   }));
 }
 
-export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor): ToolDefinition<any, unknown>[] {
-  return tools.map((tool) => ({
+export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor, options: { onLog?: (entry: RuntimeLogEntry) => void } = {}): ToolDefinition<any, unknown>[] {
+  return tools.map((tool) => {
+    const schema = normalizePiToolParametersWithReport(tool.parameters);
+    if (schema.changed) {
+      options.onLog?.({
+        scope: 'runtime',
+        message: 'tool schema normalized for AgentSession',
+        data: { toolName: tool.name, beforeLength: schema.beforeLength, afterLength: schema.afterLength }
+      });
+    }
+    return {
     name: tool.name,
     label: tool.label ?? tool.name,
     description: tool.description,
     promptSnippet: tool.description,
-    parameters: tool.parameters as any,
+    parameters: schema.parameters as any,
     async execute(toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: (partialResult: { content: Array<{ type: 'text'; text: string }>; details: unknown }) => void) {
       const result = await executor.execute({
         toolName: tool.name,
@@ -31,5 +41,6 @@ export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor
       onUpdate?.(toolResult);
       return toolResult;
     }
-  }));
+  };
+  });
 }

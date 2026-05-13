@@ -4,6 +4,9 @@ import { buildModelPrompt } from './prompt-builder.js';
 import { CancelledError, errorToMessage, isCancelledError } from './errors.js';
 import type { AgentRuntimeAdapter, AgentRuntimeRunInput, AgentRuntimeRunResult, RuntimeMessage } from './runtime-types.js';
 
+// Legacy fallback for local UI/runtime smoke tests. The production OpenAgent
+// runtime path is RuntimeService -> PiRuntimeAdapter -> createAgentSession().
+// Only use this when OPENAGENT_RUNTIME_ENGINE=local-demo is set explicitly.
 export class LocalDemoAgentLoop implements AgentRuntimeAdapter {
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
     try {
@@ -14,9 +17,8 @@ export class LocalDemoAgentLoop implements AgentRuntimeAdapter {
       });
       throwIfAborted(input.abortSignal);
 
-      // Keep the first implementation intentionally tiny: this is the place where
-      // the future Pi adapter will call createAgentSession(). For now it proves the
-      // runtime lifecycle, event path, cancellation, and transcript persistence.
+      // Intentionally tiny: this legacy fallback only proves the runtime lifecycle,
+      // event path, cancellation, and transcript persistence without an LLM call.
       await delay(80, undefined, { signal: input.abortSignal });
       input.onLog?.({
         scope: 'agent-loop',
@@ -86,7 +88,7 @@ function buildLocalDemoReply(input: AgentRuntimeRunInput) {
     `当前 provider/model：${input.providerId} / ${input.model}`,
     `当前可用工具：${toolSummary}`,
     '',
-    '说明：这一步先跑通 runtime-service → agent-loop → event-bus → transcript-store。后续可以在相同 Adapter 契约下替换为 Pi AgentSession。'
+    '说明：这一步先跑通 runtime-service → agent-loop → event-bus → transcript-store。后续可以在相同 Adapter 契约下替换为 AgentSession。'
   ].join('\n');
 }
 

@@ -1,17 +1,51 @@
+import { useState } from 'react';
 import type { ToolCallItem, WorkspaceMeta } from '@shared-types/events';
 
 interface ContextPanelProps {
   workspace: WorkspaceMeta;
   tools: ToolCallItem[];
+  activeThreadId: string | null;
+  onCompactThread: (threadId?: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export function ContextPanel({ workspace, tools }: ContextPanelProps) {
+export function ContextPanel({ workspace, tools, activeThreadId, onCompactThread }: ContextPanelProps) {
+  const [isCompacting, setIsCompacting] = useState(false);
+  const [compactMessage, setCompactMessage] = useState<string | null>(null);
+
+  async function handleCompactThread() {
+    setIsCompacting(true);
+    setCompactMessage(null);
+    try {
+      const result = await onCompactThread(activeThreadId ?? undefined);
+      setCompactMessage(result.ok ? '已提交 AgentSession 压缩。' : result.error || 'AgentSession 压缩失败。');
+    } finally {
+      setIsCompacting(false);
+    }
+  }
+
   return (
     <div className="section-list">
       <div className="section-title">上下文</div>
       <div className="section-card">
         <div className="text-strong">{workspace.name || '未加载工作区'}</div>
         <div className="text-soft mt-8">{workspace.rootPath || '等待加载当前工作区路径'}</div>
+      </div>
+      <div className="section-card">
+        <div className="inspector-inline-meta">
+          <div>
+            <div className="text-strong">AgentSession</div>
+            <div className="body-copy-soft mt-8">压缩当前 thread 的 内部 agent session，不会改写 OpenAgent 可见聊天记录。</div>
+          </div>
+          <button
+            type="button"
+            className="toolbar-button"
+            disabled={isCompacting || !activeThreadId}
+            onClick={() => void handleCompactThread()}
+          >
+            {isCompacting ? '压缩中…' : '压缩当前会话'}
+          </button>
+        </div>
+        {compactMessage ? <div className="body-copy-soft mt-8">{compactMessage}</div> : null}
       </div>
       <div className="section-card">
         <div className="text-strong">最近工具</div>

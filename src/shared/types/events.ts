@@ -93,6 +93,7 @@ export interface RuntimeActivityItem {
   planStepId?: string;
   createdAt: string;
   completedAt?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface PatchArtifact {
@@ -140,6 +141,7 @@ export interface UiEvent {
     | 'tool.completed'
     | 'tool.failed'
     | 'runtime.activity'
+    | 'message.delta'
     | 'message.completed'
     | 'patch.ready'
     | 'approval.required'

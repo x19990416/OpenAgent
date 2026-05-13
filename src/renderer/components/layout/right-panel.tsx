@@ -13,6 +13,7 @@ interface RightPanelProps {
   viewModel: WorkbenchViewModel;
   onStopRun: (runId?: string) => Promise<{ ok: boolean; error?: string }>;
   onResolveApproval: (approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'session' | 'always') => Promise<void>;
+  onCompactThread: (threadId?: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const tabs: Array<{ key: RightInspectorTab; label: string }> = [
@@ -30,7 +31,8 @@ export function RightPanel({
   onTabChange,
   viewModel,
   onStopRun,
-  onResolveApproval
+  onResolveApproval,
+  onCompactThread
 }: RightPanelProps) {
   return (
     <aside className="inspector">
@@ -66,7 +68,14 @@ export function RightPanel({
         {activeTab === 'tasks' && <TasksPanel tasks={viewModel.runtimeTasks} onStopRun={onStopRun} />}
         {activeTab === 'browser' && <BrowserSessionPanel browserSessions={viewModel.browserSessions} />}
         {activeTab === 'patch' && <PatchPanel patch={viewModel.patch} />}
-        {activeTab === 'context' && <ContextPanel workspace={viewModel.workspace} tools={viewModel.tools} />}
+        {activeTab === 'context' && (
+          <ContextPanel
+            workspace={viewModel.workspace}
+            tools={viewModel.tools}
+            activeThreadId={viewModel.activeThreadId}
+            onCompactThread={onCompactThread}
+          />
+        )}
         {activeTab === 'memory' && <AgentMemoryPanel agentBootstrap={viewModel.agentBootstrap} />}
         {activeTab === 'run-log' && <RunLogPanel logs={viewModel.runLog} />}
       </div>

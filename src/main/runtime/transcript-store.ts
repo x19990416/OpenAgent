@@ -18,6 +18,18 @@ function isOpenAgentTranscriptRecord(record: Partial<TranscriptRecord>): record 
   );
 }
 
+export interface TranscriptReadOptions {
+  limit?: number;
+}
+
+export interface TranscriptStats {
+  messageCount: number;
+  userMessageCount: number;
+  assistantMessageCount: number;
+  firstMessageAt: string | null;
+  lastMessageAt: string | null;
+}
+
 export class TranscriptStore {
   constructor(private readonly filePath: string) {}
 
@@ -27,7 +39,24 @@ export class TranscriptStore {
     appendFileSync(this.filePath, `${JSON.stringify(record)}\n`, 'utf8');
   }
 
-  readMessages() {
+  readMessages(options: TranscriptReadOptions = {}) {
+    const messages = this.readAllMessages();
+    const limit = normalizeLimit(options.limit);
+    return limit ? messages.slice(-limit) : messages;
+  }
+
+  getStats(): TranscriptStats {
+    const messages = this.readAllMessages();
+    return {
+      messageCount: messages.length,
+      userMessageCount: messages.filter((message) => message.role === 'user').length,
+      assistantMessageCount: messages.filter((message) => message.role === 'assistant').length,
+      firstMessageAt: messages[0]?.createdAt ?? null,
+      lastMessageAt: messages.at(-1)?.createdAt ?? null
+    };
+  }
+
+  private readAllMessages() {
     this.ensureParent();
     if (!existsSync(this.filePath)) {
       writeFileSync(this.filePath, '', 'utf8');
@@ -50,4 +79,9 @@ export class TranscriptStore {
   private ensureParent() {
     mkdirSync(path.dirname(this.filePath), { recursive: true });
   }
+}
+
+function normalizeLimit(value: number | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.floor(value));
 }

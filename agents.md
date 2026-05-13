@@ -6,11 +6,11 @@
 
 OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent 工作台。
 
-当前仓库处于 UI 原型 + runtime 设计阶段：
+当前仓库处于 UI 原型 + Embedded Pi runtime 落地阶段：
 
 - Renderer 已具备工作台式 UI：会话、消息、任务、审批、Git、上下文、记忆、日志等区域。
-- Main 进程目前主要是 Electron preload / IPC 桥接和 local demo stub。
-- 后续核心方向是接入真实 agent runtime，并优先参考 OpenClaw 的 Embedded Pi AgentSession 方案。
+- Main 进程已接入 `RuntimeService`、`AgentRuntimeAdapter`、Embedded Pi `AgentSession`、OpenAgent tools、streaming/runtime events、transcript 与 compaction。
+- local demo loop 只作为显式 `OPENAGENT_RUNTIME_ENGINE=local-demo` 的调试 fallback，不是默认主路径。
 
 ## 2. 必读文档
 
@@ -18,6 +18,8 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | --- | --- |
 | `README.md` | 了解项目启动方式、目录和当前 UI 原型状态。 |
 | `docs/pi.md` | 设计或实现 Pi runtime、agent loop、tool adapter、session/memory/compaction 时必须阅读。 |
+| `docs/architecture.md` | 梳理或讲解当前系统架构、模块边界、数据流时必须阅读。 |
+| `docs/embedded-pi-roadmap.md` | 规划或推进 Embedded Pi 技术路线、里程碑、遗留问题时必须阅读。 |
 | `docs/subagents.md` | 设计或实现 `shell_agent`、`knowledge_agent`、`pi_coding_agent`、子 agent 路由和生命周期时必须阅读。 |
 | `docs/plan-mode.md` | 设计或实现 Agent Plan Mode、计划审批、分步执行、plan 持久化时必须阅读。 |
 | `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
@@ -34,6 +36,8 @@ src/
 └── shared/types/         # preload / renderer / main 共享类型契约
 
 docs/
+├── architecture.md       # 当前系统架构与模块边界
+├── embedded-pi-roadmap.md # Embedded Pi 技术路线与推进记录
 ├── pi.md                 # Pi Agent 集成开发指导
 ├── plan-mode.md          # Agent Plan Mode 设计与实现计划
 ├── subagents.md          # 子 agent 架构、职责边界和 pi_coding_agent 开发规划
@@ -46,15 +50,10 @@ docs/
 当前职责：
 
 - 创建 Electron 窗口。
-- 注册 IPC handler。
-- 提供 workspace、agent、thread、message、plugin、model 等 demo 数据。
-
-后续职责：
-
-- 接入 `runtime-service`。
-- 承载 OpenAgent Runtime 状态机。
-- 调用 Pi Runtime Adapter。
-- 统一把 runtime 事件转成 UI events。
+- 注册 IPC handler，并通过 preload 暴露稳定 `desktopApi`。
+- 承载 `RuntimeService`、run 状态、transcript、tool registry、tool policy、subagents、knowledge 和模型配置。
+- 默认调用 Embedded Pi Runtime Adapter，并把 runtime 事件转成 UI events。
+- 保留 local demo loop 作为显式调试 fallback。
 
 ### `src/renderer`
 
@@ -194,16 +193,13 @@ pnpm build
 
 ## 11. 当前优先级路线
 
-1. 先保持 UI 原型可运行。
-2. 完成 runtime 文档和边界设计。
-3. 实现最小 `AgentRuntimeAdapter`。
-4. 默认接入 Pi embedded session，并使用 Pi ModelRegistry / AuthStorage。
-5. 接 streaming / tool events / cancellation。
-6. 接 OpenAgent tool policy / approval / patch。
-7. 接子 agent 分层：保留 `shell_agent` 只读 fast path，新增 `pi_coding_agent` 处理写程序/执行/修复/复杂产物。
-8. 接 skills / plugins / MCP。
-9. 接 session 恢复、memory、compaction。
-10. 接 knowledge layer：system wiki、知识检索和沉淀审批。
+1. 保持 UI 原型可运行，并让 UI 只依赖 OpenAgent runtime events。
+2. 继续巩固 Embedded Pi 主路径：`RuntimeService -> AgentRuntimeAdapter -> AgentSession`。
+3. 补齐 streaming、tool events、approval、terminal、compaction 的可观测性。
+4. 固化 OpenAgent tool policy / approval / patch，不暴露 Pi 默认工具绕过治理。
+5. 固化子 agent 分层：`shell_agent` 只读 fast path，`pi_coding_agent` 处理写程序/执行/修复/复杂产物。
+6. 接 skills / plugins / MCP，并保持按需注入。
+7. 接 session 恢复、memory、knowledge layer：system wiki、知识检索和沉淀审批。
 
 ## 12. 不要做的事
 

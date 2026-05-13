@@ -260,6 +260,7 @@ function registerIpc() {
   ipcMain.handle('agents:set-active', () => ({ ok: true }));
   ipcMain.handle('threads:create', () => runtimeService.createThread());
   ipcMain.handle('threads:select', (_event, payload) => runtimeService.selectThread(payload.threadId));
+  ipcMain.handle('threads:compact', (_event, payload) => runtimeService.compactThread(payload?.threadId));
   ipcMain.handle('threads:delete', (_event, payload) => runtimeService.deleteThread(payload.threadId));
   ipcMain.handle('approval:resolve', (_event, payload) => runtimeService.resolveApproval(payload ?? {}));
   ipcMain.handle('attachment:open', async (_event, payload) => {

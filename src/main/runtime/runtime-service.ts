@@ -8,7 +8,7 @@ import { SessionStore } from './session-store.js';
 import { TranscriptStore } from './transcript-store.js';
 import { buildRunContextLogSnapshot, buildRunInput } from './context-builder.js';
 import { createDefaultToolRegistry } from './tool-registry.js';
-import { LocalDemoAgentLoop } from './agent-loop.js';
+import { LocalDemoAgentLoop } from './agent-loop.js'; // legacy explicit fallback only
 import { PiRuntimeAdapter } from './pi/pi-runtime-adapter.js';
 import { PromptValidationError, errorToMessage } from './errors.js';
 import { summarizeRunResult } from './agent-loop-result.js';
@@ -26,6 +26,10 @@ import { PlanService } from './planning/plan-service.js';
 import { PlanExecutor } from './planning/plan-executor.js';
 import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
 
+const MAX_RUN_CONTEXT_MESSAGES = 32;
+const AUTO_COMPACT_TRANSCRIPT_MESSAGES = 96;
+const AUTO_COMPACT_MIN_INTERVAL_MS = 30 * 60 * 1000;
+
 export class RuntimeService {
   private activeThreadId = 'thread-welcome';
   private readonly createdAt = new Date().toISOString();
@@ -40,6 +44,7 @@ export class RuntimeService {
   private readonly subagents: SubagentService;
   private readonly messages: RuntimeMessage[] = [];
   private readonly threads = new Map<string, RuntimeThread>();
+  private readonly lastCompactionByThread = new Map<string, number>();
 
   constructor(
     private options: RuntimeServiceOptions,
@@ -88,7 +93,7 @@ export class RuntimeService {
       this.messages.push({
         id: 'assistant-welcome',
         role: 'assistant',
-        content: '你好，我是 OpenAgent Desktop UI 原型。当前已接入第一版 runtime loop 骨架，后续可以切换到 Pi AgentSession。',
+        content: '你好，我是 OpenAgent Desktop UI 原型。当前已接入第一版 runtime loop 骨架，后续可以切换到 AgentSession。',
         createdAt: this.createdAt
       });
     }
@@ -495,7 +500,7 @@ export class RuntimeService {
         prompt,
         providerId: this.options.providerId,
         model: this.options.model,
-        messages: transcript.readMessages(),
+        messages: transcript.readMessages({ limit: MAX_RUN_CONTEXT_MESSAGES }),
         attachments,
         tools: this.toolRegistry.list(),
         abortSignal,
@@ -536,6 +541,20 @@ export class RuntimeService {
         '正在固化本轮执行约束与计划步骤。'
       );
       const memoryContext = selectRelevantMemoryContext(bootstrap.memory, prompt);
+      const transcriptStats = transcript.getStats();
+      runInput.onLog?.({
+        scope: 'context',
+        message: 'transcript context pruned for run',
+        data: {
+          sessionFile,
+          totalMessages: transcriptStats.messageCount,
+          injectedMessages: runInput.messages.length,
+          maxInjectedMessages: MAX_RUN_CONTEXT_MESSAGES,
+          firstMessageAt: transcriptStats.firstMessageAt,
+          lastMessageAt: transcriptStats.lastMessageAt
+        }
+      });
+
       runInput.systemPrompt = [
         runInput.systemPrompt,
         '',
@@ -656,6 +675,8 @@ export class RuntimeService {
         summary = assistantMessage.content || summary;
         this.messages.push(assistantMessage);
         transcript.appendMessage(assistantMessage);
+        const finalTranscriptStats = transcript.getStats();
+        this.maybeAutoCompactThread({ threadId: thread.threadId, sessionFile, transcriptMessageCount: finalTranscriptStats.messageCount, runId });
         this.eventBus.emit('message.completed', assistantMessage);
         if (activePlan) {
           planExecutor?.completeKindAndStartFirstKind(
@@ -882,6 +903,78 @@ export class RuntimeService {
   }
 
 
+
+
+  private maybeAutoCompactThread(input: { threadId: string; sessionFile: string; transcriptMessageCount: number; runId: string }) {
+    if (!this.adapter.compact) return;
+    if (input.transcriptMessageCount < AUTO_COMPACT_TRANSCRIPT_MESSAGES) return;
+
+    const lastCompactionAt = this.lastCompactionByThread.get(input.threadId) ?? 0;
+    const now = Date.now();
+    if (now - lastCompactionAt < AUTO_COMPACT_MIN_INTERVAL_MS) return;
+    this.lastCompactionByThread.set(input.threadId, now);
+
+    appendRuntimeInfoLog({
+      scope: 'context',
+      message: 'auto pi session compaction scheduled',
+      data: {
+        threadId: input.threadId,
+        runId: input.runId,
+        transcriptMessageCount: input.transcriptMessageCount,
+        threshold: AUTO_COMPACT_TRANSCRIPT_MESSAGES
+      }
+    });
+    this.eventBus.emit('terminal.delta', {
+      runId: input.runId,
+      text: `Auto AgentSession compaction scheduled for ${input.threadId}.`
+    });
+    void this.compactThread(input.threadId);
+  }
+
+  async compactThread(threadId = this.activeThreadId) {
+    const thread = this.threads.get(threadId);
+    if (!thread) {
+      return { ok: false, error: `Thread not found: ${threadId}` };
+    }
+    if (!this.adapter.compact) {
+      return { ok: false, error: 'Current runtime adapter does not support compaction.' };
+    }
+
+    const sessionFile = this.sessionStore.getSessionFile(threadId);
+    const controller = new AbortController();
+    const result = await this.adapter.compact({
+      threadId,
+      agentId: thread.agentId || this.options.agentId,
+      workspaceRoot: this.options.workspaceRoot,
+      sessionFile,
+      providerId: this.options.providerId,
+      model: this.options.model,
+      abortSignal: controller.signal,
+      onLog: (entry) => {
+        appendRuntimeInfoLog(entry);
+        this.eventBus.emit('terminal.delta', {
+          runId: `compact-${threadId}`,
+          text: formatRuntimeInfoLogSummary(entry)
+        });
+      },
+      emitUiEvent: (type, payload) => this.eventBus.emit(type, payload)
+    });
+
+    if (result.ok) {
+      this.eventBus.emit('terminal.delta', {
+        runId: `compact-${threadId}`,
+        text: 'AgentSession compaction completed.'
+      });
+    } else {
+      this.eventBus.emit('terminal.delta', {
+        runId: `compact-${threadId}`,
+        text: `AgentSession compaction failed: ${result.error}`
+      });
+    }
+
+    return result;
+  }
+
   stopRun(runId?: string) {
     const stoppedRunIds = this.runState.stop(runId);
     const rejectedApprovals = this.approvalService.rejectPendingForRun(runId);
@@ -1051,8 +1144,8 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
 
   if (entry.scope === 'agent-loop') {
     if (entry.message.includes('resolve model context')) return '解析模型与 provider 配置';
-    if (entry.message.includes('prepare Pi managers')) return '准备 Pi session 管理器和资源加载器';
-    if (entry.message.includes('create AgentSession')) return '创建 Pi AgentSession，并注入 OpenAgent tools';
+    if (entry.message.includes('prepare agent session managers')) return '准备 agent session 管理器和资源加载器';
+    if (entry.message.includes('create AgentSession')) return '创建 AgentSession，并注入 OpenAgent tools';
     if (entry.message.includes('prompt session')) return '提交用户请求到 AgentSession';
     if (entry.message.includes('prompt resolved')) return '模型与工具循环已结束';
     if (entry.message.includes('raw response body saved')) return '保存模型原始响应日志';
@@ -1112,6 +1205,8 @@ function formatPlanApprovalDescription(plan: AgentPlan) {
 }
 
 function createDefaultAdapter() {
+  // Embedded Pi is the default and production runtime path. The local demo loop
+  // is kept only for explicit UI/runtime smoke tests.
   if (process.env.OPENAGENT_RUNTIME_ENGINE === 'local-demo') {
     return new LocalDemoAgentLoop();
   }
