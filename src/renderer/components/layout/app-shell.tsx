@@ -113,7 +113,10 @@ export function AppShell(props: AppShellProps) {
           <section className={`workspace-main ${inspectorVisible ? 'with-inspector' : 'without-inspector'}`}>
             <div className={`workspace-split ${inspectorVisible ? 'with-inspector' : 'without-inspector'}`}>
               <div className="workspace-chat">
-                <ConversationPane messages={viewModel.messages} />
+                <ConversationPane
+                  messages={viewModel.messages}
+                  threadTitle={viewModel.threads.find((thread) => thread.threadId === viewModel.activeThreadId)?.title}
+                />
 
                 <PromptComposer
                   onSubmitPrompt={onSubmitPrompt}

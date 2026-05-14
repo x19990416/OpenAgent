@@ -12,7 +12,9 @@
     "preview": "vite preview --host 127.0.0.1",
     "build:mac": "bash scripts/build-macos.sh",
     "build:win": "bash scripts/build-windows.sh",
-    "build:all": "bash scripts/build-all.sh"
+    "build:all": "bash scripts/build-all.sh",
+    "package:macos:app": "bash scripts/package-macos-app.sh",
+    "package:windows:installer": "bash scripts/package-windows-installer.sh"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.64.0",
@@ -20,7 +22,6 @@
     "@mariozechner/pi-coding-agent": "0.64.0",
     "@vitejs/plugin-react": "latest",
     "clsx": "latest",
-    "electron": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -33,6 +34,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "concurrently": "latest",
+    "electron": "latest",
     "typescript": "latest",
     "vite": "latest",
     "wait-on": "latest",

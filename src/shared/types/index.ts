@@ -299,6 +299,20 @@ export interface WechatOfficialAccountPluginConfig {
   [key: string]: unknown;
 }
 
+export interface SessionExportInput {
+  format: 'pdf' | 'png';
+  title?: string;
+  html: string;
+  suggestedName?: string;
+}
+
+export interface SessionExportResult {
+  ok: boolean;
+  cancelled?: boolean;
+  path?: string;
+  error?: string;
+}
+
 export interface StateSnapshot {
   activeAgentId: string;
   latestRun?: { status: string; summary?: string | null } | null;
@@ -373,6 +387,7 @@ export interface DesktopApi {
   createThread: () => Promise<any>;
   selectThread: (payload: any) => Promise<any>;
   compactThread?: (payload?: { threadId?: string }) => Promise<any>;
+  exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
   deleteThread: (payload: any) => Promise<any>;
   resolveApproval: (payload: any) => Promise<any>;
   openPromptAttachment: (payload: any) => Promise<any>;

@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: 'src/renderer',
+  base: './',
   plugins: [react()],
   resolve: {
     alias: {

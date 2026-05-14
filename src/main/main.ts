@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { RuntimeService } from './runtime/runtime-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
 import {
@@ -142,6 +143,142 @@ function activateWindowForApproval() {
   }
 }
 
+
+async function exportSessionDocument(payload: { format?: unknown; title?: unknown; html?: unknown; suggestedName?: unknown }) {
+  if (!mainWindow) return { ok: false, error: 'Main window is not ready' };
+
+  const format = payload.format === 'png' ? 'png' : payload.format === 'pdf' ? 'pdf' : null;
+  if (!format) return { ok: false, error: 'Unsupported export format' };
+
+  const html = typeof payload.html === 'string' ? payload.html : '';
+  if (!html.trim()) return { ok: false, error: 'Export content is empty' };
+
+  const title = typeof payload.title === 'string' && payload.title.trim() ? payload.title.trim() : 'OpenAgent 会话';
+  const suggestedName = sanitizeExportFileName(
+    typeof payload.suggestedName === 'string' && payload.suggestedName.trim() ? payload.suggestedName.trim() : title
+  );
+  const extension = format === 'pdf' ? 'pdf' : 'png';
+  const selected = await dialog.showSaveDialog(mainWindow, {
+    title: format === 'pdf' ? '导出会话为 PDF' : '导出会话为图片',
+    defaultPath: `${suggestedName}.${extension}`,
+    filters: [
+      format === 'pdf'
+        ? { name: 'PDF Document', extensions: ['pdf'] }
+        : { name: 'PNG Image', extensions: ['png'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+
+  if (selected.canceled || !selected.filePath) {
+    return { ok: false, cancelled: true };
+  }
+
+  const tempHtmlPath = path.join(app.getPath('temp'), `openagent-session-export-${randomUUID()}.html`);
+  const exportWindow = new BrowserWindow({
+    width: 960,
+    height: 1200,
+    show: false,
+    backgroundColor: '#f5f5f7',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  try {
+    writeFileSync(tempHtmlPath, html, 'utf8');
+    await exportWindow.loadFile(tempHtmlPath);
+    await exportWindow.webContents.executeJavaScript('document.fonts?.ready ? document.fonts.ready.then(() => true) : true');
+    await exportWindow.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+
+    if (format === 'pdf') {
+      const pdf = await exportWindow.webContents.printToPDF({
+        printBackground: true,
+        preferCSSPageSize: true,
+        margins: { top: 0, bottom: 0, left: 0, right: 0 }
+      });
+      writeFileSync(selected.filePath, pdf);
+    } else {
+      const png = await captureSessionPng(exportWindow);
+      writeFileSync(selected.filePath, png);
+    }
+
+    if (!existsSync(selected.filePath) || statSync(selected.filePath).size <= 0) {
+      return { ok: false, error: '导出失败：文件没有成功写入。' };
+    }
+
+    return { ok: true, path: selected.filePath };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    exportWindow.destroy();
+    try {
+      rmSync(tempHtmlPath, { force: true });
+    } catch {
+      // ignore temp cleanup failures
+    }
+  }
+}
+
+
+async function captureSessionPng(exportWindow: BrowserWindow) {
+  const metrics = await exportWindow.webContents.executeJavaScript(`(() => {
+    const page = document.querySelector('.conversation-export-page') || document.body;
+    const rect = page.getBoundingClientRect();
+    const width = Math.ceil(Math.max(rect.width, document.documentElement.scrollWidth, document.body.scrollWidth, 960));
+    const height = Math.ceil(Math.max(rect.height, document.documentElement.scrollHeight, document.body.scrollHeight, 1));
+    return { width: Math.min(width, 1400), height: Math.min(height, 32000) };
+  })()`);
+  const width = normalizeExportDimension(metrics?.width, 960, 1400);
+  const height = normalizeExportDimension(metrics?.height, 1200, 32000);
+
+  exportWindow.setContentSize(width, Math.min(height, 1200));
+  await exportWindow.webContents.executeJavaScript('window.scrollTo(0, 0)');
+  await exportWindow.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+
+  const debuggerClient = exportWindow.webContents.debugger;
+  let attached = false;
+  try {
+    if (!debuggerClient.isAttached()) {
+      debuggerClient.attach('1.3');
+      attached = true;
+    }
+    await debuggerClient.sendCommand('Page.enable');
+    const screenshot = await debuggerClient.sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+      clip: {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        scale: 1
+      }
+    }) as { data?: string };
+
+    if (!screenshot.data) {
+      throw new Error('Page.captureScreenshot returned empty data');
+    }
+
+    return Buffer.from(screenshot.data, 'base64');
+  } finally {
+    if (attached && debuggerClient.isAttached()) {
+      debuggerClient.detach();
+    }
+  }
+}
+
+function normalizeExportDimension(value: unknown, fallback: number, max: number) {
+  const numberValue = typeof value === 'number' && Number.isFinite(value) ? Math.ceil(value) : fallback;
+  return Math.max(1, Math.min(numberValue, max));
+}
+
+function sanitizeExportFileName(value: string) {
+  return value.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'openagent-session';
+}
+
 function buildSnapshot() {
   return runtimeService.getSnapshot();
 }
@@ -261,6 +398,7 @@ function registerIpc() {
   ipcMain.handle('threads:create', () => runtimeService.createThread());
   ipcMain.handle('threads:select', (_event, payload) => runtimeService.selectThread(payload.threadId));
   ipcMain.handle('threads:compact', (_event, payload) => runtimeService.compactThread(payload?.threadId));
+  ipcMain.handle('threads:export', (_event, payload) => exportSessionDocument(payload ?? {}));
   ipcMain.handle('threads:delete', (_event, payload) => runtimeService.deleteThread(payload.threadId));
   ipcMain.handle('approval:resolve', (_event, payload) => runtimeService.resolveApproval(payload ?? {}));
   ipcMain.handle('attachment:open', async (_event, payload) => {

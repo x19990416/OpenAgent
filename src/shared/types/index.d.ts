@@ -291,6 +291,19 @@ export interface StateSnapshot {
         threadId: string;
     } | null;
 }
+export interface SessionExportInput {
+    format: 'pdf' | 'png';
+    title?: string;
+    html: string;
+    suggestedName?: string;
+}
+export interface SessionExportResult {
+    ok: boolean;
+    cancelled?: boolean;
+    path?: string;
+    error?: string;
+}
+
 export interface DesktopApi {
     getWorkspaceMeta: () => Promise<WorkspaceMeta>;
     getActiveAgentBootstrap: () => Promise<any>;
@@ -315,6 +328,10 @@ export interface DesktopApi {
     setActiveAgent: (payload: any) => Promise<any>;
     createThread: () => Promise<any>;
     selectThread: (payload: any) => Promise<any>;
+    compactThread?: (payload?: {
+        threadId?: string;
+    }) => Promise<any>;
+    exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
     deleteThread: (payload: any) => Promise<any>;
     resolveApproval: (payload: any) => Promise<any>;
     openPromptAttachment: (payload: any) => Promise<any>;
