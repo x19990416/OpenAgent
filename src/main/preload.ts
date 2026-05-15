@@ -58,8 +58,19 @@ contextBridge.exposeInMainWorld('desktopApi', {
   discoverPlugins: () => ipcRenderer.invoke('plugins:discover'),
   discoverPluginsInDirectory: (payload: unknown) => ipcRenderer.invoke('plugins:discover', payload),
   loadPlugins: (payload?: unknown) => ipcRenderer.invoke('plugins:load', payload),
+  installLocalPlugin: (payload: unknown) => ipcRenderer.invoke('plugins:install-local', payload),
   choosePluginDirectory: () => ipcRenderer.invoke('plugins:choose-directory'),
   setPluginEnabled: (payload: unknown) => ipcRenderer.invoke('plugins:set-enabled', payload),
+  setPluginCapability: (payload: unknown) => ipcRenderer.invoke('plugins:set-capability', payload),
+  testPlugin: (payload: unknown) => ipcRenderer.invoke('plugins:test', payload),
+  installPluginDependency: (payload: unknown) => ipcRenderer.invoke('plugins:install-dependency', payload),
+  authorizePlugin: (payload: unknown) => ipcRenderer.invoke('plugins:authorize', payload),
+  onPluginAuthorizationEvent: (handler: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => handler(payload);
+    ipcRenderer.on('plugins:authorization-event', listener);
+    return () => ipcRenderer.off('plugins:authorization-event', listener);
+  },
   getPluginConfig: (payload: unknown) => ipcRenderer.invoke('plugins:get-config', payload),
-  savePluginConfig: (payload: unknown) => ipcRenderer.invoke('plugins:save-config', payload)
+  savePluginConfig: (payload: unknown) => ipcRenderer.invoke('plugins:save-config', payload),
+  setPluginSecret: (payload: unknown) => ipcRenderer.invoke('plugins:set-secret', payload)
 });

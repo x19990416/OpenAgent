@@ -77,6 +77,8 @@ export interface RuntimeTool {
   label?: string;
   description: string;
   parameters: unknown;
+  risk?: 'read' | 'external_send' | 'external_write' | 'destructive' | 'secret_access';
+  pluginId?: string;
   execute(args: RuntimeToolExecutionInput): Promise<RuntimeToolExecutionResult>;
 }
 
@@ -185,6 +187,10 @@ export interface RuntimeServiceOptions {
   providerLabel: string;
   model: string;
   emitUiEvent: (event: RuntimeUiEvent) => void;
+  pluginContextResolver?: {
+    getRuntimeTools(): RuntimeTool[];
+    getRelevantSkillSummaries(prompt: string): string[];
+  };
 }
 
 export interface RuntimeUiEvent {

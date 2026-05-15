@@ -57,6 +57,14 @@ export class ToolPolicy {
       return decidePiCodingAgent(args);
     }
 
+    if (tool.name === 'feishu_agent') {
+      return decideFeishuAgent(args, this.summarizeArgs(args));
+    }
+
+    if (tool.risk) {
+      return this.decidePluginTool(tool, args);
+    }
+
     if (READ_ONLY_TOOLS.has(tool.name)) {
       const pathAccess = classifyToolPathAccess({ toolName: tool.name, args, workspaceRoot: this.workspaceRoot });
       if (pathAccess?.isExternal) {
@@ -108,6 +116,36 @@ export class ToolPolicy {
     return {
       kind: 'deny',
       reason: `Tool requires an explicit OpenAgent policy before execution: ${tool.name}`
+    };
+  }
+
+  private decidePluginTool(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+    if (tool.risk === 'read') return { kind: 'allow' };
+
+    const risk = tool.risk === 'destructive' ? 'high' : 'medium';
+    const actionType = tool.risk === 'external_send'
+      ? 'plugin.external_send'
+      : tool.risk === 'external_write'
+        ? 'plugin.external_write'
+        : tool.risk === 'destructive'
+          ? 'plugin.destructive'
+          : 'plugin.secret_access';
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: `请求执行插件工具：${tool.label ?? tool.name}`,
+        risk,
+        description: [
+          `OpenAgent 需要执行插件工具：${tool.name}`,
+          `风险级别：${tool.risk}`,
+          tool.description,
+          '批准后仅用于本次 tool 调用。'
+        ].filter(Boolean).join('\n'),
+        actionType,
+        access: tool.risk === 'external_send' || tool.risk === 'external_write' || tool.risk === 'destructive' ? 'write' : 'read',
+        scope: 'once',
+        payloadPreview: this.summarizeArgs(args)
+      }
     };
   }
 
@@ -233,6 +271,45 @@ function decideKnowledgeAgent(args: unknown): ToolPolicyDecision {
   }
 
   return { kind: 'deny', reason: `Unsupported KnowledgeAgent operation: ${operation || '(missing)'}` };
+}
+
+function decideFeishuAgent(args: unknown, payloadPreview: string): ToolPolicyDecision {
+  const payload = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const operation = String(payload.operation ?? '');
+  const expectedRisk = String(payload.expectedRisk ?? inferFeishuRisk(payload));
+  if (!operation) return { kind: 'deny', reason: 'feishu_agent operation is required' };
+  if (expectedRisk === 'read') return { kind: 'allow' };
+
+  const risk = expectedRisk === 'destructive' ? 'high' : 'medium';
+  const access = expectedRisk === 'external_send' || expectedRisk === 'external_write' || expectedRisk === 'destructive' ? 'write' : 'read';
+  return {
+    kind: 'requires_approval',
+    approval: {
+      title: '请求执行飞书助手任务',
+      risk,
+      description: [
+        'OpenAgent 需要通过飞书插件子 Agent 执行任务。',
+        `operation: ${operation}`,
+        `expectedRisk: ${expectedRisk}`,
+        '批准后仅用于本次 tool 调用。'
+      ].join('\n'),
+      actionType: expectedRisk === 'external_send' ? 'plugin.external_send' : expectedRisk === 'destructive' ? 'plugin.destructive' : 'plugin.external_write',
+      access,
+      scope: 'once',
+      payloadPreview
+    }
+  };
+}
+
+function inferFeishuRisk(payload: Record<string, unknown>) {
+  const operation = String(payload.operation ?? '');
+  if (operation === 'send_text_message' || operation === 'reply_to_current_chat') return 'external_send';
+  if (operation !== 'cli') return 'read';
+  const cliArgs = Array.isArray(payload.cliArgs) ? payload.cliArgs.map(String) : [];
+  const text = cliArgs.join(' ');
+  if (/(send|reply|message)/i.test(text)) return 'external_send';
+  if (/(create|update|delete|remove|cancel|upload|overwrite|publish|approve|reject|transfer)/i.test(text)) return 'external_write';
+  return 'read';
 }
 
 function matchesAllowedTool(toolName: string, allowedTools: string[]) {

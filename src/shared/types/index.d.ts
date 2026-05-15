@@ -190,15 +190,24 @@ export interface PluginRegistrySnapshot {
     schemaVersion?: number;
     pluginsRoot?: string;
     plugins: Array<{
+        id?: string;
         name: string;
         enabled: boolean;
-        status: 'discovered' | 'loaded' | 'disabled' | 'error' | string;
+        status: 'discovered' | 'installed' | 'needs_config' | 'needs_auth' | 'ready' | 'enabled' | 'loaded' | 'disabled' | 'error' | string;
         rootPath?: string;
         manifestPath?: string;
         discoveredAt?: string;
         lastLoadedAt?: string;
         lastError?: string;
+        configured?: boolean;
+        authorized?: boolean;
+        capabilities?: Record<string, boolean>;
+        tools?: Array<{ name: string; description?: string; risk?: string; [key: string]: unknown }>;
+        policy?: Array<{ toolName: string; risk: string; requiresApproval: boolean; description?: string; [key: string]: unknown }>;
+        source?: 'builtin' | 'local' | string;
         manifest: {
+            id?: string;
+            name?: string;
             version?: string;
             description?: string;
             interface?: {
@@ -208,28 +217,16 @@ export interface PluginRegistrySnapshot {
                 brandColor?: string;
                 [key: string]: unknown;
             };
-            skills?: Array<{
-                name: string;
-                description?: string;
-                [key: string]: unknown;
-            }>;
-            mcpServers?: Array<{
-                name: string;
-                command?: string;
-                [key: string]: unknown;
-            }>;
+            skills?: Array<{ name: string; description?: string; [key: string]: unknown }>;
+            mcpServers?: Array<{ name: string; command?: string; [key: string]: unknown }>;
+            capabilities?: string[];
+            configSchema?: { properties?: Record<string, { type?: string; default?: unknown; enum?: unknown[]; [key: string]: unknown }>; required?: string[]; [key: string]: unknown };
+            secretSchema?: { properties?: Record<string, { type?: string; [key: string]: unknown }>; [key: string]: unknown };
+      runtimeDependencies?: Array<{ id: string; type: string; packageName: string; binary?: string; version?: string; description?: string; [key: string]: unknown }>;
             [key: string]: unknown;
         };
-        skills?: Array<{
-            name: string;
-            description?: string;
-            [key: string]: unknown;
-        }>;
-        mcpServers?: Array<{
-            name: string;
-            command?: string;
-            [key: string]: unknown;
-        }>;
+        skills?: Array<{ name: string; description?: string; [key: string]: unknown }>;
+        mcpServers?: Array<{ name: string; command?: string; [key: string]: unknown }>;
         error?: string;
         [key: string]: unknown;
     }>;
@@ -350,9 +347,16 @@ export interface DesktopApi {
     discoverPlugins?: () => Promise<any>;
     discoverPluginsInDirectory?: (payload: any) => Promise<any>;
     loadPlugins?: (payload?: any) => Promise<any>;
+    installLocalPlugin?: (payload: any) => Promise<any>;
     getPluginRegistry?: () => Promise<PluginRegistrySnapshot>;
     choosePluginDirectory?: () => Promise<any>;
     setPluginEnabled?: (payload: any) => Promise<any>;
-    getPluginConfig?: (payload: any) => Promise<any>;
+  setPluginCapability?: (payload: any) => Promise<any>;
+  testPlugin?: (payload: any) => Promise<any>;
+  installPluginDependency?: (payload: any) => Promise<any>;
+  authorizePlugin?: (payload: any) => Promise<any>;
+  onPluginAuthorizationEvent?: (handler: (event: { pluginId?: string; authUrl?: string; message?: string }) => void) => () => void;
+  getPluginConfig?: (payload: any) => Promise<any>;
     savePluginConfig?: (payload: any) => Promise<any>;
+  setPluginSecret?: (payload: any) => Promise<any>;
 }

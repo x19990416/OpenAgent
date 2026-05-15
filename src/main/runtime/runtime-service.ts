@@ -25,6 +25,7 @@ import { getOpenAgentHome } from './knowledge/knowledge-paths.js';
 import { PlanService } from './planning/plan-service.js';
 import { PlanExecutor } from './planning/plan-executor.js';
 import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
+import { resolvePluginContext } from './plugin-resolver.js';
 
 const MAX_RUN_CONTEXT_MESSAGES = 32;
 const AUTO_COMPACT_TRANSCRIPT_MESSAGES = 96;
@@ -491,6 +492,11 @@ export class RuntimeService {
         this.emitPlan('plan.updated', activePlan, activePlan.approvalRequired ? '用户已确认计划，开始执行。' : 'LLM classifier 判定无需人工确认，自动执行计划。');
       }
 
+      const pluginContext = await resolvePluginContext({
+        prompt,
+        resolver: this.options.pluginContextResolver
+      });
+
       const runInput = buildRunInput({
         runId,
         threadId: thread.threadId,
@@ -502,7 +508,7 @@ export class RuntimeService {
         model: this.options.model,
         messages: transcript.readMessages({ limit: MAX_RUN_CONTEXT_MESSAGES }),
         attachments,
-        tools: this.toolRegistry.list(),
+        tools: [...this.toolRegistry.list(), ...pluginContext.tools],
         abortSignal,
         onLog: (entry) => {
           appendRuntimeInfoLog(entry);
@@ -569,6 +575,9 @@ export class RuntimeService {
         '',
         'Relevant Knowledge Base context:',
         knowledgeContext || '(no relevant knowledge context found)',
+        '',
+        'Relevant plugin context:',
+        pluginContext.skills || '(no relevant plugin context found)',
         '',
         ...(activePlan
           ? [

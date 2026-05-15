@@ -1,10 +1,10 @@
 # OpenAgent Plugin System 设计
 
-> 目标：为 OpenAgent 定义一套可扩展、可审计、可替换的插件系统标准。飞书插件会是第一批验证场景之一，但插件标准不能被飞书的协议或 OpenClaw 的插件 SDK 反向绑定。
+> 目标：为 OpenAgent 定义一套可扩展、可审计、可替换的插件系统，让飞书、Slack、企业微信、GitHub、Notion、MCP、本地 CLI 等外部能力以受控方式进入 OpenAgent，而不是绕过 OpenAgent runtime、approval、日志和 UI event。
 
 ## 1. 结论
 
-OpenAgent 插件不是 agent runtime 的替代品，也不是直接接管 Pi / LLM loop 的外部包。插件的职责是以受控方式给 OpenAgent 增加能力：
+OpenAgent 插件不是 agent runtime 的替代品，也不是直接接管 Pi / LLM loop 的外部包。插件只负责给 OpenAgent 增加能力：
 
 ```text
 Plugin = Channel + Tools + Skills + Knowledge + Remote UI + Settings + Policy
@@ -12,12 +12,12 @@ Plugin = Channel + Tools + Skills + Knowledge + Remote UI + Settings + Policy
 
 核心原则：
 
-- **Runtime 主权在 OpenAgent**：插件不能直接调用 Pi、不能自行执行 agent loop，所有用户请求必须进入 `RuntimeService`。
-- **工具统一治理**：插件工具必须注册成 OpenAgent `RuntimeTool`，再进入 `ToolRegistry`、`ToolPolicy`、`ToolExecutor`、run log 和 UI event。
-- **能力按需启用**：插件被发现不代表启用，启用不代表每轮 prompt 注入，只有当前任务相关的 skill/tool 摘要才进入上下文。
-- **配置与密钥分离**：普通配置可以进 settings，secret 只进入安全存储，不能进入 prompt、transcript、UI event 明文或 LLM 日志。
-- **外部 UI 是投影**：飞书卡片、Slack 消息等远程 UI 只能投影 OpenAgent runtime 状态，不能成为事实源。
-- **第一版克制实现**：先定义 manifest、注册表、能力接口、配置和策略；暂不做完整插件市场、远程代码热加载或独立插件沙箱。
+1. **Runtime 主权在 OpenAgent**：插件不能直接调用 Pi、不能自行执行 agent loop，所有用户请求必须进入 `RuntimeService`。
+2. **工具统一治理**：插件工具必须注册成 OpenAgent `RuntimeTool`，再进入 `ToolRegistry`、`ToolPolicy`、`ToolExecutor`、run log 和 UI event。
+3. **能力按需启用**：插件被发现不代表启用，启用不代表每轮 prompt 注入；只有当前任务相关的 skill/tool 摘要才进入上下文。
+4. **配置与密钥分离**：普通配置可以进 settings；secret 只进入安全存储，不能进入 prompt、transcript、UI event 明文或 LLM 日志。
+5. **外部 UI 是投影**：飞书卡片、Slack thread 等远程 UI 只能投影 OpenAgent runtime 状态，不能成为事实源。
+6. **第一版克制实现**：先支持内置插件和本地开发插件；暂不做完整插件市场、远程代码热加载或任意第三方代码沙箱。
 
 ## 2. 非目标
 
@@ -27,8 +27,9 @@ Plugin = Channel + Tools + Skills + Knowledge + Remote UI + Settings + Policy
 - 不实现插件市场、在线安装、版本升级和签名校验。
 - 不允许插件绕过 OpenAgent 直接访问 Pi SDK。
 - 不允许插件私自执行 shell、文件写入、外部发送或破坏性操作。
-- 不把插件的全部 skill、文档或工具 schema 全量塞进系统 prompt。
-- 不让 renderer 直接 import 插件实现或外部 SDK。
+- 不把插件全部 skill、文档或工具 schema 全量塞进系统 prompt。
+- 不让 renderer 直接 import 插件实现、外部 SDK 或 CLI 封装。
+- 不把飞书协议、OpenClaw 插件 SDK 或某个 CLI 的参数形态反向绑定为 OpenAgent 插件标准。
 
 ## 3. 总体架构
 
@@ -39,7 +40,7 @@ flowchart LR
   Runtime["RuntimeService"]
   Registry["PluginRegistry"]
   Resolver["PluginResolver"]
-  Tools["ToolRegistry / ToolPolicy"]
+  Tools["ToolRegistry / ToolPolicy / ToolExecutor"]
   Events["UI Event Stream"]
 
   subgraph Plugin["Plugin Package"]
@@ -48,7 +49,9 @@ flowchart LR
     Channel["Channel"]
     PluginTools["Tools"]
     Skills["Skills"]
+    Knowledge["Knowledge"]
     RemoteUI["Remote UI"]
+    Settings["Settings"]
     Policy["Policy"]
   end
 
@@ -61,7 +64,9 @@ flowchart LR
   Entry --> Channel
   Entry --> PluginTools
   Entry --> Skills
+  Entry --> Knowledge
   Entry --> RemoteUI
+  Entry --> Settings
   Entry --> Policy
   PluginTools --> Tools
   Channel --> Runtime
@@ -74,10 +79,14 @@ flowchart LR
 | 层 | 职责 | 不应该做的事 |
 | --- | --- | --- |
 | `PluginRegistry` | 发现插件、读取 manifest、加载已启用插件、保存注册结果 | 直接调用 LLM 或执行工具 |
+| `PluginLoader` | 校验 manifest、加载插件入口、调用 `register(ctx)` | 让未授权插件执行任意副作用 |
 | `PluginContext` | 给插件暴露受控注册和 runtime API | 暴露 Electron、Pi、Node 任意能力 |
+| `PluginConfigStore` | 保存普通配置、启用状态、能力开关 | 保存 secret 明文 |
+| `PluginSecretStore` | 保存 app secret、token、OAuth refresh token | 把 secret 写入日志或 prompt |
 | `PluginResolver` | 为当前 run 解析 enabled/relevant skills、tools、knowledge、remote UI | 全量注入所有插件内容 |
 | `RuntimeService` | 接收用户或 channel prompt，创建 run，统一触发 runtime | 感知某个插件内部协议 |
 | `ToolRegistry` | 汇总 core tools 与 plugin tools | 绕过 policy 执行工具 |
+| `ToolExecutor` | 包装工具执行、审批、AbortSignal、日志和 UI event | 让插件自己执行高风险动作 |
 | `Remote UI Renderer` | 把 OpenAgent UI event 同步到外部平台 | 决定 runtime 状态或修改 transcript |
 
 ## 4. 插件目录与 manifest
@@ -128,6 +137,10 @@ plugins/
         "type": "array",
         "items": { "type": "string" },
         "default": []
+      },
+      "requireApprovalForExternalSend": {
+        "type": "boolean",
+        "default": true
       }
     },
     "additionalProperties": false
@@ -147,7 +160,7 @@ plugins/
 
 manifest 只描述插件元数据、能力、入口和配置 schema；不要在 manifest 中保存 secret 值。
 
-## 5. 能力类型
+## 5. 能力模型
 
 ```ts
 export type PluginCapability =
@@ -221,299 +234,128 @@ export interface OpenAgentPluginContext {
 约束：
 
 - `ctx.runtime.submitPrompt()` 是 channel 进入 agent loop 的唯一入口。
-- `ctx.registerTool()` 只注册工具定义，不代表工具每轮都暴露给模型。
-- `ctx.secrets` 返回的 secret 只能用于当前插件调用外部 API，不能写入 prompt、transcript 或 UI event。
-- `ctx.events.subscribe()` 只能订阅 OpenAgent 标准 UI event，不直接访问 runtime 内部状态对象。
+- `ctx.secrets` 不允许返回到 renderer、prompt、transcript 或 UI event。
+- `ctx.registerTool()` 注册的是 OpenAgent tool，不是 Pi tool。
+- 插件可以声明 settings schema，但最终表单和保存由 OpenAgent 管理。
 
-## 7. Channel 标准
+## 7. 用户集成插件流程
 
-Channel 用于把外部消息入口统一成 OpenAgent prompt。
+用户集成插件应该是产品化流程，而不是手动改 JSON：
 
-```ts
-export interface OpenAgentChannel {
-  id: string;
-  type: string;
-  displayName: string;
-
-  start(): Promise<void>;
-  stop(): Promise<void>;
-
-  normalizeEvent(event: unknown): Promise<ChannelMessage | null>;
-}
+```mermaid
+flowchart TD
+  A["打开 Settings / Plugins"] --> B["发现插件"]
+  B --> C["查看插件详情"]
+  C --> D["安装 / 添加本地插件"]
+  D --> E["填写普通配置"]
+  E --> F["填写密钥 / OAuth 授权"]
+  F --> G["权限与风险确认"]
+  G --> H["连接测试"]
+  H --> I{"测试成功?"}
+  I -- "是" --> J["启用插件能力"]
+  I -- "否" --> K["显示可修复错误"]
+  K --> E
+  J --> L["聊天 / 工具 / 外部 channel 中使用"]
+  L --> M["日志、权限、配置管理"]
 ```
 
-统一消息结构：
-
-```ts
-export interface ChannelMessage {
-  channelId: string;
-  channelType: string;
-  externalThreadId: string;
-  externalMessageId: string;
-  sender: {
-    id: string;
-    displayName?: string;
-  };
-  text: string;
-  attachments?: ChannelAttachment[];
-  raw?: unknown;
-}
-```
-
-Channel 调用 runtime 时：
-
-```ts
-export interface PluginPromptInput {
-  agentId?: string;
-  threadId?: string;
-  prompt: string;
-  source: {
-    type: 'plugin_channel';
-    pluginId: string;
-    channelId: string;
-    externalThreadId: string;
-    externalMessageId: string;
-    senderId: string;
-  };
-  attachments?: ChannelAttachment[];
-}
-```
-
-设计要求：
-
-- `externalThreadId` 应稳定映射到 OpenAgent `threadId`。
-- 外部平台消息不要直接写 OpenAgent transcript，必须由 `RuntimeService` 统一落盘。
-- 群聊、外部用户、机器人提及等策略由 plugin policy 判断，不能只靠 prompt 提醒。
-
-## 8. Tool 标准
-
-插件工具必须适配为 OpenAgent 当前的 `RuntimeTool` 形态：
-
-```ts
-export interface RuntimeTool {
-  name: string;
-  label?: string;
-  description: string;
-  parameters: unknown;
-  execute(args: RuntimeToolExecuteArgs): Promise<unknown>;
-}
-```
-
-工具设计要求：
-
-- 必须支持 `AbortSignal`。
-- 必须返回结构化结果，避免只返回不可解析的大段文本。
-- 必须由 `ToolExecutor` 包装执行，发出 tool start/update/end/fail event。
-- 所有外部写入、外发消息、删除、批量修改必须被 policy 标记风险级别。
-- 插件工具名需要带命名空间，避免污染核心工具，例如：
+### 7.1 插件中心页面
 
 ```text
-feishu_send_message
-feishu_reply_message
-feishu_get_messages
-feishu_get_doc
-feishu_update_doc
-feishu_search_messages
+Settings
+└── Plugins
+    ├── 已安装
+    ├── 可用插件
+    ├── 本地开发插件
+    └── 插件运行日志
 ```
 
-## 9. Skill 标准
+插件卡片展示：
 
-插件可以提供 skill，但 skill 需要分阶段进入上下文：
+- 名称、描述、版本、来源。
+- 状态：未安装 / 未配置 / 待授权 / 可启用 / 已启用 / 有错误 / 已禁用。
+- 能力：Channel、Tools、Skills、Knowledge、Remote UI。
+- 风险等级：只读、外部发送、外部写入、需要审批。
+- 最近错误和最近运行时间。
+
+### 7.2 插件详情页
 
 ```text
-discovered -> enabled -> relevant -> loaded
+插件详情
+├── 基本信息
+├── 能力列表
+├── 配置项
+├── 密钥 / 授权
+├── 权限策略
+├── 连接测试
+└── 日志
 ```
+
+启用前必须完成：
+
+1. manifest 校验通过。
+2. 普通配置通过 schema 校验。
+3. 必要 secret 已存在或 OAuth 授权完成。
+4. 权限策略已确认。
+5. 连接测试通过或用户显式选择“先启用但标记为未验证”。
+
+### 7.3 插件状态机
 
 ```ts
-export interface PluginSkill {
-  id: string;
-  pluginId: string;
-  name: string;
-  description: string;
-  capability?: string;
-  triggers?: string[];
-  content: string;
-}
+export type PluginInstallState =
+  | 'discovered'
+  | 'installed'
+  | 'needs_config'
+  | 'needs_auth'
+  | 'ready'
+  | 'enabled'
+  | 'disabled'
+  | 'error';
 ```
 
-约束：
+| 状态 | UI 显示 | 说明 |
+| --- | --- | --- |
+| `discovered` | 可安装 | 已扫描到 manifest，但未加入用户配置 |
+| `installed` | 已安装，待配置 | 已记录到插件配置，但未完成配置 |
+| `needs_config` | 需要配置 | 普通配置缺失或 schema 不通过 |
+| `needs_auth` | 需要授权 | secret 缺失、OAuth 未完成或 token 过期 |
+| `ready` | 可启用 | 已配置、已授权、测试通过 |
+| `enabled` | 运行中 | 能力进入 resolver，可被当前 run 使用 |
+| `disabled` | 已禁用 | 保留配置与 secret，但不参与运行 |
+| `error` | 配置异常 | 加载、注册、测试或运行出现错误 |
 
-- `discovered`：插件被发现，OpenAgent 知道它有这个 skill。
-- `enabled`：用户或配置启用了该 skill。
-- `relevant`：本轮任务与 skill 相关，可以进入候选集。
-- `loaded`：经过 context budget 和安全过滤后，真正注入 prompt。
+## 8. 配置、密钥与本地数据布局
 
-第一版可以用插件描述、用户显式启用、当前 channel 来源和工具需求判断 relevance；后续再引入 LLM-based skill router。
-
-## 10. Knowledge Provider 标准
-
-插件可以注册外部知识 provider，但必须服从 `KnowledgeService` 抽象：
-
-```ts
-export interface PluginKnowledgeProvider {
-  id: string;
-  pluginId: string;
-  displayName: string;
-  capabilities: Array<'search' | 'query' | 'capture' | 'ingest' | 'provenance'>;
-}
-```
-
-约束：
-
-- knowledge provider 不直接暴露给 renderer。
-- runtime 只能通过 `KnowledgeService` 或 knowledge tools 调用。
-- 外部知识结果进入 prompt 前必须做摘要、来源和长度控制。
-- 写入系统知识库或长期记忆必须走审批或可见写回策略。
-
-## 11. Remote UI 标准
-
-Remote UI 用于把 OpenAgent runtime 状态同步到外部平台，例如飞书 interactive card。
-
-```ts
-export interface RemoteUiRenderer {
-  id: string;
-  pluginId: string;
-  channelType: string;
-  canRender(event: UiEvent, context: RemoteUiContext): boolean;
-  render(event: UiEvent, context: RemoteUiContext): Promise<void>;
-}
-```
-
-Remote UI 可消费的事件包括：
+普通配置：
 
 ```text
-run.started
-message.delta
-message.completed
-runtime.activity
-tool.started
-tool.updated
-tool.completed
-tool.failed
-approval.required
-approval.resolved
-run.completed
-run.failed
+~/.openagent/settings/plugins/<pluginId>.json
 ```
 
-约束：
+示例：
 
-- Remote UI 只能展示或请求用户动作，不能私自修改 run 状态。
-- 审批按钮点击后必须回到 OpenAgent `ApprovalService`，不能直接继续工具执行。
-- 外部卡片 ID、消息 ID 与 OpenAgent `runId/threadId` 的映射应持久化，便于重试和恢复。
-
-## 12. Settings / Config / Secret 标准
-
-配置分三类：
-
-| 类型 | 存储 | 示例 | 可否进 prompt |
-| --- | --- | --- | --- |
-| public config | `~/.openagent/settings/plugins/<pluginId>.json` | enabled、allowedChatIds、enabledTools | 可摘要，但不默认注入 |
-| secret | 系统 keychain 或 OpenAgent secret store | appSecret、accessToken、webhook secret | 绝对不允许 |
-| runtime state | `~/.openagent/state/plugins/<pluginId>/` | token cache、message-thread mapping | 不允许直接注入 |
-
-要求：
-
-- `appSecret`、access token、refresh token、verification token、encrypt key 不得进入 LLM 请求体。
-- token cache 需要记录过期时间，刷新失败需要写 plugin log。
-- 设置页只显示 secret 是否已配置，不显示明文。
-
-## 13. Policy / Approval 标准
-
-插件必须声明工具和 channel 行为风险：
-
-```ts
-export type PluginRiskLevel =
-  | 'read'
-  | 'write'
-  | 'external_send'
-  | 'destructive';
-```
-
-```ts
-export interface PluginPolicy {
-  pluginId: string;
-  toolPolicies?: Record<string, PluginToolPolicy>;
-  channelPolicies?: Record<string, PluginChannelPolicy>;
-}
-
-export interface PluginToolPolicy {
-  risk: PluginRiskLevel;
-  requiresApproval?: boolean;
-  description?: string;
+```json
+{
+  "enabled": true,
+  "capabilities": {
+    "channel": true,
+    "tools": true,
+    "remoteUi": false
+  },
+  "allowedChatIds": ["oc_xxx"],
+  "requireApprovalForExternalSend": true
 }
 ```
 
-默认建议：
-
-| 风险级别 | 默认行为 |
-| --- | --- |
-| `read` | 可允许，但仍需受 channel/user/workspace 限制 |
-| `write` | 默认需要审批或明确启用 |
-| `external_send` | 默认需要 channel allowlist，必要时审批 |
-| `destructive` | 必须审批，不允许静默执行 |
-
-飞书示例：
-
-| 工具 | 风险 |
-| --- | --- |
-| `feishu_get_doc` | `read` |
-| `feishu_search_messages` | `read` |
-| `feishu_send_message` | `external_send` |
-| `feishu_update_doc` | `write` |
-| `feishu_delete_message` | `destructive` |
-
-## 14. 生命周期
-
-插件生命周期：
+密钥逻辑路径：
 
 ```text
-discover -> validate -> load -> register -> enable -> resolve -> execute -> stop
+~/.openagent/secrets/<pluginId>/
 ```
 
-| 阶段 | 说明 |
-| --- | --- |
-| `discover` | 扫描内置插件目录和用户插件目录，读取 `plugin.json` |
-| `validate` | 校验 schemaVersion、id、main、capabilities、config schema |
-| `load` | 加载入口模块，但不执行外部副作用 |
-| `register` | 调用 `register(ctx)` 收集 channel/tool/skill/policy |
-| `enable` | 根据用户配置启用能力 |
-| `resolve` | 每个 run 根据上下文筛选相关能力 |
-| `execute` | 工具和 channel 行为经 OpenAgent runtime 执行 |
-| `stop` | 应用退出或禁用插件时停止 channel/listener |
+实际实现优先映射到系统安全存储，例如 macOS Keychain。secret 不应写入普通 JSON、transcript、prompt、UI event 或 LLM request/response log。
 
-第一版可以只支持内置插件和本地开发插件，不支持远程安装。
-
-## 15. 文件与目录建议
-
-OpenAgent core 侧建议：
-
-```text
-src/main/plugins/
-├── plugin-types.ts
-├── plugin-manifest.ts
-├── plugin-registry.ts
-├── plugin-loader.ts
-├── plugin-config-store.ts
-├── plugin-secret-store.ts
-├── plugin-context.ts
-├── plugin-resolver.ts
-└── plugin-policy.ts
-```
-
-`src/main/runtime/plugin-resolver.ts` 后续可以变成对 `src/main/plugins/plugin-resolver.ts` 的薄封装，负责给当前 run 输出：
-
-```ts
-export interface ResolvedPluginContext {
-  skills: string;
-  tools: RuntimeTool[];
-  knowledgeProviders: PluginKnowledgeProvider[];
-  remoteUiRenderers: RemoteUiRenderer[];
-  policies: PluginPolicy[];
-}
-```
-
-本地数据目录建议：
+插件状态与日志：
 
 ```text
 ~/.openagent/
@@ -530,12 +372,172 @@ export interface ResolvedPluginContext {
     └── <pluginId>/        # 逻辑路径；实际可映射到 keychain
 ```
 
-## 16. 与 Pi Runtime 的边界
+## 9. 权限与审批模型
+
+插件必须声明工具和 channel 行为风险：
+
+```ts
+export type PluginRiskLevel =
+  | 'read'
+  | 'external_send'
+  | 'external_write'
+  | 'destructive'
+  | 'secret_access';
+
+export interface PluginToolPolicy {
+  toolName: string;
+  risk: PluginRiskLevel;
+  requiresApproval: boolean;
+  allowlist?: string[];
+  description: string;
+}
+```
+
+推荐默认策略：
+
+| 风险 | 默认策略 |
+| --- | --- |
+| `read` | 可允许，但仍受 channel/user/workspace 限制 |
+| `external_send` | 默认需要 channel allowlist，必要时审批 |
+| `external_write` | 默认审批 |
+| `destructive` | 默认禁止，除非用户显式开启且逐次审批 |
+| `secret_access` | 插件内部可用，不可传给模型或 UI |
+
+用户启用插件前，需要看到明确权限：
+
+```text
+该插件将获得以下能力：
+
+✅ 读取飞书消息
+✅ 向指定飞书会话发送回复
+✅ 读取飞书文档
+⚠️ 修改多维表格记录：需要每次审批
+⚠️ 主动发送群消息：默认关闭
+```
+
+## 10. Runtime 解析与执行流程
+
+插件启用后，不代表每轮 prompt 都注入插件。每次 run 由 `PluginResolver` 按上下文筛选：
+
+```mermaid
+flowchart LR
+  A["用户输入 / 外部 channel"] --> B["RuntimeService"]
+  B --> C["PluginResolver"]
+  C --> D["筛选相关插件能力"]
+  D --> E["合并 Tools / Skills / Policy"]
+  E --> F["PiRuntimeAdapter"]
+  F --> G["Agent 选择工具"]
+  G --> H["OpenAgent ToolExecutor 执行"]
+  H --> I["UI event / run log / plugin log"]
+```
+
+`ResolvedPluginContext`：
+
+```ts
+export interface ResolvedPluginContext {
+  skills: PluginSkillSummary[];
+  tools: RuntimeTool[];
+  knowledgeProviders: PluginKnowledgeProvider[];
+  remoteUiRenderers: RemoteUiRenderer[];
+  policies: PluginPolicy[];
+}
+```
+
+解析规则第一版可以简单：
+
+1. 插件必须 `enabled`。
+2. 对应 capability 必须打开。
+3. channel 来源匹配时，优先启用该 channel 插件相关能力。
+4. 用户 prompt 明确提到插件能力时启用相关 tools/skills。
+5. 写操作、外部发送、destructive 行为仍由 `ToolPolicy` 决定是否审批。
+
+后续可以把 relevance 判断接入 LLM router，但不要退回纯关键词作为唯一机制。
+
+## 11. Channel 设计
+
+Channel 是外部消息进入 OpenAgent 的入口，例如飞书私聊、Slack thread、Webhook。
+
+```ts
+export interface OpenAgentChannel {
+  id: string;
+  type: string;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+export interface PluginPromptInput {
+  prompt: string;
+  source: {
+    type: 'plugin_channel';
+    pluginId: string;
+    channelId: string;
+    externalThreadId?: string;
+    externalUserId?: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+```
+
+要求：
+
+- channel 不直接调用模型，只调用 `ctx.runtime.submitPrompt()`。
+- external thread 必须映射到 OpenAgent threadId。
+- channel metadata 可进入 transcript，但必须脱敏。
+- channel 应写入 plugin log，方便排查外部消息是否到达。
+
+## 12. Tools 设计
+
+插件工具必须是 OpenAgent `RuntimeTool`：
+
+```ts
+export interface RuntimeTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  risk?: PluginRiskLevel;
+  execute(input: unknown, ctx: RuntimeToolContext): Promise<RuntimeToolResult>;
+}
+```
+
+执行约束：
+
+- 必须支持 `AbortSignal`。
+- 必须由 `ToolExecutor` 包装执行。
+- 必须发出 `tool.started`、`tool.updated`、`tool.completed`、`tool.failed`。
+- 外部发送、外部写入、破坏性操作必须走 approval。
+- 工具结果必须做体积控制和脱敏，再返回给 agent。
+
+## 13. Remote UI 设计
+
+Remote UI 用于把 OpenAgent runtime 状态同步到外部平台，例如飞书交互卡片。
+
+原则：
+
+- Remote UI 是投影，不是事实源。
+- 状态源仍是 OpenAgent run state、transcript、approval state 和 UI event。
+- 外部按钮回调必须回到 OpenAgent approval/runtime API，不允许外部平台直接修改 run。
+
+事件示例：
+
+```text
+run.started
+message.delta
+tool.started
+tool.updated
+tool.completed
+tool.failed
+approval.requested
+approval.resolved
+run.completed
+run.failed
+```
+
+## 14. 与 Pi Runtime 的边界
 
 插件与 Pi 的关系：
 
 ```text
-Plugin Tool -> OpenAgent RuntimeTool -> Pi ToolDefinition
+Plugin Tool -> OpenAgent RuntimeTool -> ToolRegistry -> ToolExecutor -> Pi ToolDefinition
 ```
 
 禁止：
@@ -543,63 +545,95 @@ Plugin Tool -> OpenAgent RuntimeTool -> Pi ToolDefinition
 - 插件直接调用 `createAgentSession()`。
 - 插件直接构造 Pi tool 绕过 OpenAgent `ToolPolicy`。
 - 插件把外部 SDK 类型泄漏到 renderer 或 `src/shared/types`。
+- 插件把 secret、完整外部文档或大体量工具 schema 全量塞给模型。
 
-允许：
-
-- 插件注册 OpenAgent `RuntimeTool`。
-- Runtime resolver 按需把插件工具转成 Pi tool。
-- 插件通过 `ctx.runtime.submitPrompt()` 创建 OpenAgent run。
-
-## 17. 飞书插件参考实现边界
-
-飞书插件应作为该标准的第一个复杂验证场景，而不是标准本身。
-
-推荐能力拆分：
+## 15. OpenAgent core 目录建议
 
 ```text
-plugins/feishu/src/
-├── index.ts
-├── config.ts
-├── auth/
-│   ├── token-store.ts
-│   └── feishu-auth.ts
-├── channel/
-│   ├── feishu-channel.ts
-│   ├── webhook-server.ts
-│   ├── event-normalizer.ts
-│   └── thread-mapper.ts
-├── tools/
-│   ├── im-tools.ts
-│   ├── doc-tools.ts
-│   ├── calendar-tools.ts
-│   └── bitable-tools.ts
-├── remote-ui/
-│   ├── card-renderer.ts
-│   ├── streaming-card.ts
-│   └── approval-card.ts
-└── policy/
-    ├── feishu-policy.ts
-    └── permission-check.ts
+src/main/plugins/
+├── plugin-types.ts
+├── plugin-manifest.ts
+├── plugin-registry.ts
+├── plugin-loader.ts
+├── plugin-config-store.ts
+├── plugin-secret-store.ts
+├── plugin-context.ts
+├── plugin-resolver.ts
+├── plugin-policy.ts
+└── plugin-test-runner.ts
 ```
 
-第一版 MVP：
+Renderer 侧建议：
 
-1. 读取飞书插件配置和 secret。
-2. 接收飞书私聊消息。
-3. `chatId/messageId` 映射到 OpenAgent `threadId`。
-4. 通过 `ctx.runtime.submitPrompt()` 进入 OpenAgent run。
-5. run 完成后发送文本回复。
-6. 写入 plugin log 和 runtime log。
+```text
+src/renderer/features/plugins/
+├── plugins-screen.tsx
+├── plugin-list.tsx
+├── plugin-detail.tsx
+├── plugin-config-form.tsx
+├── plugin-secret-form.tsx
+├── plugin-permission-panel.tsx
+├── plugin-connection-test.tsx
+└── plugin-log-viewer.tsx
+```
 
-后续再做：
+IPC 建议：
 
-- 群聊 allowlist。
-- interactive card streaming。
-- approval card。
-- IM / Docs / Calendar / Bitable tools。
-- 飞书 skill relevance。
+```text
+plugins:list
+plugins:get
+plugins:install-local
+plugins:update-config
+plugins:set-secret
+plugins:test
+plugins:enable
+plugins:disable
+plugins:get-logs
+```
 
-可借鉴 `@larksuite/openclaw-lark` 的消息归一化、OpenAPI 封装、交互卡片和权限模型；但不要复用它的 OpenClaw plugin SDK 注册协议，也不要让 OpenClaw ChannelPlugin 类型进入 OpenAgent core。
+## 16. 生命周期
+
+```text
+discover -> validate -> install -> load -> register -> configure -> authorize -> test -> enable -> resolve -> execute -> stop
+```
+
+| 阶段 | 说明 |
+| --- | --- |
+| `discover` | 扫描内置插件目录和用户插件目录，读取 `plugin.json` |
+| `validate` | 校验 schemaVersion、id、main、capabilities、config schema |
+| `install` | 将插件加入用户配置；本地插件保存路径引用 |
+| `load` | 加载入口模块，但尽量避免外部副作用 |
+| `register` | 调用 `register(ctx)` 收集 channel/tool/skill/policy |
+| `configure` | 用户填写普通配置 |
+| `authorize` | 用户填写 secret 或完成 OAuth |
+| `test` | 连接测试与权限测试 |
+| `enable` | 根据用户配置启用能力 |
+| `resolve` | 每个 run 根据上下文筛选相关能力 |
+| `execute` | 工具和 channel 行为经 OpenAgent runtime 执行 |
+| `stop` | 应用退出或禁用插件时停止 channel/listener |
+
+## 17. 测试与错误处理
+
+连接测试建议包含：
+
+1. manifest 校验。
+2. config schema 校验。
+3. secret 是否存在。
+4. 外部 API / CLI 是否可用。
+5. webhook/channel 是否可访问。
+6. allowlist 是否生效。
+7. 只读工具 smoke test。
+8. 写入 plugin log。
+
+错误展示必须可修复：
+
+```text
+连接失败：appSecret 无效
+建议：
+1. 检查开放平台应用密钥
+2. 确认应用已发布
+3. 确认机器人权限已开启
+```
 
 ## 18. 实施路线
 
@@ -616,39 +650,44 @@ plugins/feishu/src/
 - [ ] 支持启用/禁用插件配置。
 - [ ] 将注册出的 tools/skills/policies 暂存到 registry。
 
-### M3：Runtime resolver
+### M3：设置页插件中心
+
+- [ ] 新增 Plugins 设置页。
+- [ ] 支持查看插件详情、配置、权限、测试结果、日志。
+- [ ] 支持普通配置和 secret 分离保存。
+
+### M4：Runtime resolver
 
 - [ ] 将 enabled plugin tools 合并到 `ToolRegistry`。
 - [ ] 将 enabled/relevant skills 汇总为短摘要。
 - [ ] 将 plugin policy 合并到 `ToolPolicy`。
 
-### M4：Channel runtime path
+### M5：Channel runtime path
 
 - [ ] 支持插件 channel 调用 `RuntimeService.submitPrompt()`。
 - [ ] 增加 external channel metadata。
 - [ ] 支持 channel thread mapping。
 
-### M5：Remote UI
+### M6：Remote UI
 
 - [ ] remote UI renderer 订阅 UI event。
 - [ ] 支持 run/card mapping。
 - [ ] 支持 approval round-trip。
 
-### M6：Feishu MVP
+### M7：Feishu CLI MVP
 
-- [ ] 实现 `plugins/feishu`。
-- [ ] 打通私聊消息 -> OpenAgent run -> 飞书回复。
-- [ ] 补充飞书插件说明文档。
+- [ ] 实现 `plugins/feishu-cli`。
+- [ ] 打通飞书私聊消息 -> OpenAgent run -> 飞书回复。
+- [ ] 实现基础 IM tools。
+- [ ] 补充飞书 CLI 集成文档。
 
 ## 19. 快速判断原则
 
-后续遇到插件相关设计争议时，按下面规则判断：
-
 | 问题 | 判断 |
 | --- | --- |
-| 插件是否可以直接调用 Pi？ | 不可以，必须走 OpenAgent runtime |
-| 插件工具是否可以绕过审批？ | 不可以，必须走 ToolPolicy |
-| 插件 skill 是否每轮都进 prompt？ | 不可以，必须 enabled + relevant + loaded |
+| 插件能不能直接调 Pi？ | 不能，必须进入 OpenAgent runtime |
+| 插件 tool 能不能直接执行？ | 不能，必须注册为 OpenAgent `RuntimeTool` 并由 `ToolExecutor` 执行 |
 | 飞书卡片是否是事实源？ | 不是，只是 remote UI 投影 |
-| secret 是否可以写入 transcript/log？ | 不可以 |
-| 是否现在就做插件市场？ | 不做，先做本地/内置插件标准 |
+| secret 能不能进 config JSON？ | 不能，必须进入 secret store |
+| 插件启用后是否每轮都注入 prompt？ | 不能，必须由 resolver 按需注入摘要 |
+| 第一版是否做插件市场？ | 不做，先支持内置和本地开发插件 |

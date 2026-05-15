@@ -2623,7 +2623,7 @@ function KnowledgePanel() {
                   <span className="settings-provider-default-badge">{selectedSource.status ?? 'unknown'}</span>
                 </div>
                 <div className="settings-provider-model-meta-line"><code>{selectedSource.rawTextPath ?? selectedSource.id}</code></div>
-                <div className="settings-info-grid">
+                <div className="settings-info-grid settings-plugin-meta-grid">
                   <div className="settings-info-row"><div className="settings-info-label">Score</div><div className="settings-info-value">{selectedQuality?.score ?? '-'}</div></div>
                   <div className="settings-info-row"><div className="settings-info-label">Grade</div><div className="settings-info-value">{selectedQuality?.grade ?? '-'}</div></div>
                   <div className="settings-info-row"><div className="settings-info-label">Articles</div><div className="settings-info-value">{String(selectedSource.articleIds?.length ?? 0)}</div></div>
@@ -2728,170 +2728,141 @@ function asRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 }
 
+type PluginItem = PluginRegistrySnapshot['plugins'][number];
+
+function getPluginId(plugin: PluginItem) {
+  return String(plugin.id || plugin.name);
+}
+
+function pluginDisplayName(plugin: PluginItem) {
+  return String(plugin.manifest.interface?.displayName || plugin.manifest.name || plugin.name);
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    discovered: '已发现',
+    installed: '待配置',
+    needs_config: '需要配置',
+    needs_auth: '需要授权',
+    ready: '可启用',
+    enabled: '已启用',
+    loaded: '已加载',
+    disabled: '已禁用',
+    error: '错误'
+  };
+  return labels[status] || status;
+}
+
+function statusBadgeClass(status: string) {
+  if (status === 'loaded' || status === 'ready' || status === 'enabled') return 'completed';
+  if (status === 'error') return 'failed';
+  if (status === 'disabled') return 'info';
+  return 'warn';
+}
+
+function pluginFieldLabel(key: string) {
+  const labels: Record<string, string> = {
+    cliPath: 'CLI 路径',
+    enableDirectMessageChannel: '启用私聊入口',
+    enableGroupChannel: '启用群聊入口',
+    allowedChatIds: '允许会话 ID',
+    replyMode: '回复方式',
+    requireApprovalForExternalSend: '外发消息需审批',
+    appId: 'App ID',
+    appSecret: 'App Secret',
+    verificationToken: 'Verification Token',
+    encryptKey: 'Encrypt Key',
+    accessToken: 'Access Token',
+    refreshToken: 'Refresh Token'
+  };
+  return labels[key] || key;
+}
+
+function pluginFieldHint(key: string) {
+  const hints: Record<string, string> = {
+    cliPath: '本机可执行的飞书 CLI 命令或绝对路径。',
+    enableDirectMessageChannel: '允许飞书私聊消息进入 OpenAgent run。',
+    enableGroupChannel: '允许群聊消息进入 OpenAgent；建议配合 allowlist。',
+    allowedChatIds: '多个 chatId 用逗号分隔；为空时由工具审批兜底。',
+    replyMode: '文本回复更稳定，卡片回复用于后续 remote UI。',
+    requireApprovalForExternalSend: '开启后，Agent 外发飞书消息需要 OpenAgent 审批。'
+  };
+  return hints[key] || '';
+}
+
 function PluginPanel() {
   const [registry, setRegistry] = useState<PluginRegistrySnapshot>(emptyPluginRegistry);
-  const [selectedPluginName, setSelectedPluginName] = useState('');
+  const [selectedPluginId, setSelectedPluginId] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [selectedPluginsRoot, setSelectedPluginsRoot] = useState('');
-  const [wechatConfig, setWechatConfig] = useState<WechatOfficialAccountPluginConfig>(defaultWechatPluginConfig);
-  const [wechatStyleJson, setWechatStyleJson] = useState<string>(JSON.stringify(defaultWechatStyleConfig, null, 2));
-  const [wechatConfigFeedback, setWechatConfigFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [wechatConfigLoadedAt, setWechatConfigLoadedAt] = useState<string | null>(null);
+  const [configDraft, setConfigDraft] = useState<Record<string, unknown>>({});
+  const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
+  const [secretStatus, setSecretStatus] = useState<Record<string, { configured?: boolean; maskedValue?: string }>>({});
+  const [testResult, setTestResult] = useState<{ ok: boolean; checks?: Array<{ name: string; ok: boolean; message: string }>; error?: string } | null>(null);
+  const [installingDependencyId, setInstallingDependencyId] = useState<string | null>(null);
+  const [authorizingAll, setAuthorizingAll] = useState(false);
+  const [authorizationUrl, setAuthorizationUrl] = useState('');
 
   const selectedPlugin = useMemo(() => {
-    return registry.plugins.find((plugin) => plugin.name === selectedPluginName) ?? registry.plugins[0] ?? null;
-  }, [registry.plugins, selectedPluginName]);
+    return registry.plugins.find((plugin) => getPluginId(plugin) === selectedPluginId) ?? registry.plugins[0] ?? null;
+  }, [registry.plugins, selectedPluginId]);
 
-  useEffect(() => {
-    const desktopApi = window.desktopApi;
-
-    if (selectedPlugin?.name !== 'wechat-official-account') {
-      setWechatConfig(defaultWechatPluginConfig);
-      setWechatStyleJson(JSON.stringify(defaultWechatStyleConfig, null, 2));
-      setWechatConfigLoadedAt(null);
-      setWechatConfigFeedback(null);
-      return;
-    }
-
-    if (!desktopApi?.getPluginConfig) {
-      setWechatConfigFeedback({ type: 'error', text: '当前环境未挂载插件配置接口，请先重启桌面应用。' });
-      return;
-    }
-
-    let cancelled = false;
-
-    void desktopApi
-      .getPluginConfig({ pluginName: selectedPlugin.name })
-      .then((result) => {
-        if (cancelled) return;
-
-        if (!result.ok || !result.config) {
-          setWechatConfig(defaultWechatPluginConfig);
-          setWechatConfigLoadedAt(null);
-          setWechatConfigFeedback({
-            type: 'error',
-            text: `插件配置加载失败：${result.error ?? '未知错误'}`
-          });
-          return;
-        }
-
-        setWechatConfig(result.config.wechat ?? defaultWechatPluginConfig);
-        setWechatStyleJson(JSON.stringify(result.config.wechat?.style ?? defaultWechatStyleConfig, null, 2));
-        setWechatConfigLoadedAt(result.config.updatedAt);
-        setWechatConfigFeedback(null);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setWechatConfig(defaultWechatPluginConfig);
-        setWechatStyleJson(JSON.stringify(defaultWechatStyleConfig, null, 2));
-        setWechatConfigLoadedAt(null);
-        setWechatConfigFeedback({
-          type: 'error',
-          text: `插件配置加载失败：${error instanceof Error ? error.message : '未知错误'}`
-        });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedPlugin?.name]);
+  const pluginStats = useMemo(() => {
+    const total = registry.plugins.length;
+    const enabled = registry.plugins.filter((plugin) => plugin.enabled).length;
+    const loaded = registry.plugins.filter((plugin) => plugin.status === 'loaded').length;
+    const errors = registry.plugins.filter((plugin) => plugin.status === 'error').length;
+    return { total, enabled, loaded, errors };
+  }, [registry.plugins]);
 
   const applyRegistry = (nextRegistry: PluginRegistrySnapshot) => {
-    setRegistry(nextRegistry);
-    setSelectedPluginName((prev) => {
-      if (prev && nextRegistry.plugins.some((plugin) => plugin.name === prev)) {
-        return prev;
-      }
-      return nextRegistry.plugins[0]?.name ?? '';
+    setRegistry(nextRegistry ?? emptyPluginRegistry);
+    setSelectedPluginId((prev) => {
+      if (prev && nextRegistry?.plugins?.some((plugin) => getPluginId(plugin) === prev)) return prev;
+      return nextRegistry?.plugins?.[0] ? getPluginId(nextRegistry.plugins[0]) : '';
     });
   };
 
-  const refreshRegistry = async (mode: 'discover' | 'load' | 'read' = 'read') => {
+  const refreshRegistry = async (mode: 'read' | 'discover' | 'load' = 'read') => {
     const desktopApi = window.desktopApi;
-
     if (!desktopApi?.getPluginRegistry) {
       setFeedback({ type: 'error', text: '当前环境未挂载插件注册接口，请先重启桌面应用。' });
       return;
     }
 
     try {
-      if (mode === 'discover' && desktopApi.discoverPlugins) {
-        if (!selectedPluginsRoot) {
-          setFeedback({ type: 'error', text: '请先选择插件目录。' });
-          return;
-        }
-
-        const result = desktopApi.discoverPluginsInDirectory
+      if (mode === 'discover') {
+        const result = selectedPluginsRoot && desktopApi.discoverPluginsInDirectory
           ? await desktopApi.discoverPluginsInDirectory({ pluginsRoot: selectedPluginsRoot })
-          : await desktopApi.discoverPlugins();
+          : desktopApi.discoverPlugins
+            ? await desktopApi.discoverPlugins()
+            : { ok: false, error: '插件发现接口不可用', registry };
         if (!result.ok) {
           setFeedback({ type: 'error', text: `插件发现失败：${result.error ?? '未知错误'}` });
-          applyRegistry(result.registry);
-          return;
+        } else {
+          setFeedback({ type: 'success', text: `已发现 ${result.discoveredCount ?? result.registry?.plugins?.length ?? 0} 个插件。` });
         }
-        applyRegistry(result.registry);
-        setFeedback({
-          type: 'success',
-          text: `已在 ${selectedPluginsRoot} 发现 ${result.discoveredCount ?? result.registry.plugins.length} 个插件`
-        });
+        applyRegistry(result.registry ?? emptyPluginRegistry);
         return;
       }
 
-      if (mode === 'load' && desktopApi.loadPlugins) {
-        const result = await desktopApi.loadPlugins();
-        if (!result.ok) {
-          setFeedback({ type: 'error', text: `插件加载失败：${result.error ?? '未知错误'}` });
-          applyRegistry(result.registry);
-          return;
-        }
-        applyRegistry(result.registry);
-        setFeedback({
-          type: 'success',
-          text: `已加载 ${result.loadedCount ?? result.registry.plugins.filter((plugin) => plugin.status === 'loaded').length} 个插件`
-        });
+      if (mode === 'load') {
+        const result = desktopApi.loadPlugins ? await desktopApi.loadPlugins() : { ok: false, error: '插件加载接口不可用', registry };
+        if (!result.ok) setFeedback({ type: 'error', text: `插件加载失败：${result.error ?? '未知错误'}` });
+        else setFeedback({ type: 'success', text: `已加载 ${result.loadedCount ?? 0} 个插件。` });
+        applyRegistry(result.registry ?? emptyPluginRegistry);
         return;
       }
 
-      const nextRegistry = await desktopApi.getPluginRegistry();
-      applyRegistry(nextRegistry ?? emptyPluginRegistry);
+      const snapshot = (await desktopApi.getPluginRegistry()) ?? emptyPluginRegistry;
+      if ((snapshot.plugins?.length ?? 0) === 0 && desktopApi.discoverPlugins) {
+        const result = await desktopApi.discoverPlugins();
+        applyRegistry(result.registry ?? snapshot);
+      } else {
+        applyRegistry(snapshot);
+      }
     } catch (error) {
-      setFeedback({
-        type: 'error',
-        text: `插件操作失败：${error instanceof Error ? error.message : '未知错误'}`
-      });
-    }
-  };
-
-  const handleChoosePluginsRoot = async () => {
-    const desktopApi = window.desktopApi;
-
-    if (!desktopApi?.choosePluginDirectory) {
-      setFeedback({ type: 'error', text: '当前环境未挂载目录选择接口，请先重启桌面应用。' });
-      return;
-    }
-
-    try {
-      const result = await desktopApi.choosePluginDirectory();
-      if (!result.ok) {
-        if (!result.canceled) {
-          setFeedback({ type: 'error', text: `选择目录失败：${result.error ?? '未知错误'}` });
-        }
-        return;
-      }
-
-      const directoryPath = result.directoryPath?.trim() || '';
-      if (!directoryPath) {
-        setFeedback({ type: 'error', text: '未读取到有效的插件目录路径。' });
-        return;
-      }
-
-      setSelectedPluginsRoot(directoryPath);
-      setFeedback({ type: 'success', text: `已选择目录：${directoryPath}。点击“发现”可开始扫描。` });
-    } catch (error) {
-      setFeedback({
-        type: 'error',
-        text: `选择目录失败：${error instanceof Error ? error.message : '未知错误'}`
-      });
+      setFeedback({ type: 'error', text: `插件操作失败：${error instanceof Error ? error.message : '未知错误'}` });
     }
   };
 
@@ -2899,462 +2870,380 @@ function PluginPanel() {
     void refreshRegistry('read');
   }, []);
 
-  const togglePluginEnabled = async (pluginName: string, enabled: boolean) => {
+  useEffect(() => {
     const desktopApi = window.desktopApi;
-
-    if (!desktopApi?.setPluginEnabled) {
-      setFeedback({ type: 'error', text: '当前环境未挂载插件启用接口，请先重启桌面应用。' });
+    if (!selectedPlugin || !desktopApi?.getPluginConfig) {
+      setConfigDraft({});
+      setSecretDraft({});
+      setSecretStatus({});
+      setAuthorizationUrl('');
       return;
     }
+    let cancelled = false;
+    void desktopApi.getPluginConfig({ pluginId: getPluginId(selectedPlugin) }).then((result) => {
+      if (cancelled) return;
+      if (!result?.ok) {
+        setFeedback({ type: 'error', text: `配置加载失败：${result?.error ?? '未知错误'}` });
+        return;
+      }
+      setConfigDraft(result.config ?? {});
+      setSecretStatus(result.secrets ?? {});
+      setSecretDraft({});
+      setTestResult(null);
+      setAuthorizationUrl('');
+    }).catch((error) => {
+      if (!cancelled) setFeedback({ type: 'error', text: `配置加载失败：${error instanceof Error ? error.message : '未知错误'}` });
+    });
+    return () => { cancelled = true; };
+  }, [selectedPluginId]);
 
+  useEffect(() => {
+    const unsubscribe = window.desktopApi?.onPluginAuthorizationEvent?.((event) => {
+      const pluginId = typeof event?.pluginId === 'string' ? event.pluginId : '';
+      const authUrl = typeof event?.authUrl === 'string' ? event.authUrl : '';
+      if (!authUrl) return;
+      if (selectedPluginId && pluginId && pluginId !== selectedPluginId) return;
+      setAuthorizationUrl(authUrl);
+      setFeedback({ type: 'success', text: event.message || '已打开默认浏览器，请完成飞书授权。' });
+    });
+    return () => unsubscribe?.();
+  }, [selectedPluginId]);
+
+  const choosePluginsRoot = async () => {
+    const result = await window.desktopApi?.choosePluginDirectory?.();
+    if (!result?.ok) {
+      if (!result?.canceled) setFeedback({ type: 'error', text: `选择目录失败：${result?.error ?? '未知错误'}` });
+      return;
+    }
+    setSelectedPluginsRoot(result.directoryPath || '');
+    setFeedback({ type: 'success', text: `已选择本地插件目录：${result.directoryPath}` });
+  };
+
+  const setPluginEnabled = async (plugin: PluginItem, enabled: boolean) => {
+    const result = await window.desktopApi?.setPluginEnabled?.({ pluginId: getPluginId(plugin), enabled });
+    if (!result?.ok) {
+      setFeedback({ type: 'error', text: `状态更新失败：${result?.error ?? '未知错误'}` });
+      if (result?.registry) applyRegistry(result.registry);
+      return;
+    }
+    const loadResult = enabled ? await window.desktopApi?.loadPlugins?.({ pluginIds: [getPluginId(plugin)] }) : null;
+    applyRegistry(loadResult?.registry ?? result.registry);
+    setFeedback({ type: 'success', text: enabled ? `已启用 ${pluginDisplayName(plugin)}` : `已禁用 ${pluginDisplayName(plugin)}` });
+  };
+
+  const saveConfig = async () => {
+    if (!selectedPlugin) return;
+    const result = await window.desktopApi?.savePluginConfig?.({ pluginId: getPluginId(selectedPlugin), config: configDraft });
+    if (!result?.ok) {
+      setFeedback({ type: 'error', text: `保存配置失败：${result?.error ?? '未知错误'}` });
+      return;
+    }
+    setConfigDraft(result.config ?? configDraft);
+    if (result.registry) applyRegistry(result.registry);
+    setFeedback({ type: 'success', text: '插件配置已保存。' });
+  };
+
+  const saveSecret = async (key: string) => {
+    if (!selectedPlugin) return;
+    const result = await window.desktopApi?.setPluginSecret?.({ pluginId: getPluginId(selectedPlugin), key, value: secretDraft[key] || '' });
+    if (!result?.ok) {
+      setFeedback({ type: 'error', text: `保存密钥失败：${result?.error ?? '未知错误'}` });
+      return;
+    }
+    setSecretStatus(result.secrets ?? {});
+    setSecretDraft((prev) => ({ ...prev, [key]: '' }));
+    if (result.registry) applyRegistry(result.registry);
+    setFeedback({ type: 'success', text: `${key} 已保存到插件 secret store。` });
+  };
+
+  const saveAllSecrets = async () => {
+    if (!selectedPlugin || !secretProperties) return;
+    const entries = Object.keys(secretProperties).filter((key) => (secretDraft[key] || '').trim());
+    if (entries.length === 0) {
+      setFeedback({ type: 'error', text: '请先输入要保存的密钥。' });
+      return;
+    }
+    let latestRegistry: PluginRegistrySnapshot | null = null;
+    let latestSecrets = secretStatus;
+    for (const key of entries) {
+      const result = await window.desktopApi?.setPluginSecret?.({ pluginId: getPluginId(selectedPlugin), key, value: secretDraft[key] || '' });
+      if (!result?.ok) {
+        setFeedback({ type: 'error', text: `保存 ${pluginFieldLabel(key)} 失败：${result?.error ?? '未知错误'}` });
+        return;
+      }
+      latestSecrets = result.secrets ?? latestSecrets;
+      latestRegistry = result.registry ?? latestRegistry;
+    }
+    setSecretStatus(latestSecrets);
+    setSecretDraft({});
+    if (latestRegistry) applyRegistry(latestRegistry);
+    setFeedback({ type: 'success', text: '密钥已保存。' });
+  };
+
+  const setCapability = async (capability: string, enabled: boolean) => {
+    if (!selectedPlugin) return;
+    const result = await window.desktopApi?.setPluginCapability?.({ pluginId: getPluginId(selectedPlugin), capability, enabled });
+    if (!result?.ok) {
+      setFeedback({ type: 'error', text: `能力开关失败：${result?.error ?? '未知错误'}` });
+      return;
+    }
+    applyRegistry(result.registry);
+    setFeedback({ type: 'success', text: `${capability} 已${enabled ? '启用' : '关闭'}。` });
+  };
+
+  const installDependency = async (dependencyId: string) => {
+    if (!selectedPlugin) return;
+    setInstallingDependencyId(dependencyId);
+    setFeedback({ type: 'success', text: '正在安装插件依赖，请稍候…' });
     try {
-      const result = await desktopApi.setPluginEnabled({ pluginName, enabled });
-      if (!result.ok) {
-        setFeedback({ type: 'error', text: `更新插件状态失败：${result.error ?? '未知错误'}` });
-        applyRegistry(result.registry);
+      const result = await window.desktopApi?.installPluginDependency?.({ pluginId: getPluginId(selectedPlugin), dependencyId });
+      if (!result?.ok) {
+        setFeedback({ type: 'error', text: `依赖安装失败：${result?.error ?? '未知错误'}` });
         return;
       }
-      applyRegistry(result.registry);
-
-      if (enabled) {
-        const loadResult = await desktopApi.loadPlugins({ pluginNames: [pluginName] });
-        if (!loadResult.ok) {
-          applyRegistry(loadResult.registry);
-          setFeedback({
-            type: 'error',
-            text: `已启用 ${pluginName}，但自动加载失败：${loadResult.error ?? '未知错误'}`
-          });
-          return;
-        }
-
-        applyRegistry(loadResult.registry);
-        setFeedback({ type: 'success', text: `已启用并自动加载 ${pluginName}` });
-        return;
-      }
-
-      setFeedback({
-        type: 'success',
-        text: enabled ? `已启用 ${pluginName}` : `已禁用 ${pluginName}`
-      });
-    } catch (error) {
-      setFeedback({
-        type: 'error',
-        text: `更新插件状态失败：${error instanceof Error ? error.message : '未知错误'}`
-      });
+      if (result.registry) applyRegistry(result.registry);
+      setFeedback({ type: 'success', text: `依赖已安装：${result.binaryPath ?? dependencyId}` });
+      await testPlugin();
+    } finally {
+      setInstallingDependencyId(null);
     }
   };
 
-  const loadPlugin = async (pluginName: string) => {
-    const desktopApi = window.desktopApi;
+  const testPlugin = async () => {
+    if (!selectedPlugin) return;
+    const result = await window.desktopApi?.testPlugin?.({ pluginId: getPluginId(selectedPlugin) });
+    setTestResult(result ?? null);
+    if (result?.registry) applyRegistry(result.registry);
+    setFeedback(result?.ok ? { type: 'success', text: '插件连接测试通过。' } : { type: 'error', text: `插件连接测试失败：${result?.error ?? '请查看检查项'}` });
+  };
 
-    if (!desktopApi?.loadPlugins) {
-      setFeedback({ type: 'error', text: '当前环境未挂载插件加载接口，请先重启桌面应用。' });
-      return;
-    }
-
+  const authorizeAllCapabilities = async () => {
+    if (!selectedPlugin) return;
+    setAuthorizingAll(true);
+    setAuthorizationUrl('');
+    setFeedback({ type: 'success', text: '正在发起飞书全能力授权…' });
     try {
-      const result = await desktopApi.loadPlugins({ pluginNames: [pluginName] });
-      if (!result.ok) {
-        setFeedback({ type: 'error', text: `加载插件失败：${result.error ?? '未知错误'}` });
-        applyRegistry(result.registry);
+      const result = await window.desktopApi?.authorizePlugin?.({ pluginId: getPluginId(selectedPlugin), domains: 'all' });
+      if (!result?.ok) {
+        if (result?.registry) applyRegistry(result.registry);
+        if (result?.authUrl) setAuthorizationUrl(result.authUrl);
+        setFeedback({ type: 'error', text: `授权失败：${result?.error ?? '未知错误'}` });
         return;
       }
-      applyRegistry(result.registry);
-      setFeedback({ type: 'success', text: `已加载插件 ${pluginName}` });
-    } catch (error) {
-      setFeedback({
-        type: 'error',
-        text: `加载插件失败：${error instanceof Error ? error.message : '未知错误'}`
-      });
+      if (result.registry) applyRegistry(result.registry);
+      if (result.authUrl) setAuthorizationUrl(result.authUrl);
+      setFeedback({ type: 'success', text: result.message || '飞书授权已完成。' });
+    } finally {
+      setAuthorizingAll(false);
     }
   };
 
-  const saveWechatPluginConfig = async () => {
-    const desktopApi = window.desktopApi;
-
-    if (selectedPlugin?.name !== 'wechat-official-account') {
-      return;
-    }
-
-    if (!desktopApi?.savePluginConfig) {
-      setWechatConfigFeedback({ type: 'error', text: '当前环境未挂载插件配置保存接口，请先重启桌面应用。' });
-      return;
-    }
-
-    try {
-      let parsedStyle: Record<string, unknown> | undefined;
-      const trimmedStyleJson = wechatStyleJson.trim();
-      if (trimmedStyleJson) {
-        parsedStyle = parseStyleJson(trimmedStyleJson);
-      }
-
-      const result = await desktopApi.savePluginConfig({
-        pluginName: selectedPlugin.name,
-        config: {
-          schemaVersion: 1,
-          pluginName: selectedPlugin.name,
-          updatedAt: wechatConfigLoadedAt,
-          wechat: {
-            appId: wechatConfig.appId.trim(),
-            appSecret: wechatConfig.appSecret.trim(),
-            apiBase: wechatConfig.apiBase.trim() || defaultWechatPluginConfig.apiBase,
-            style: parsedStyle
-          }
-        }
-      });
-
-      if (!result.ok || !result.config) {
-        setWechatConfigFeedback({
-          type: 'error',
-          text: `保存插件配置失败：${result.error ?? '未知错误'}`
-        });
-        return;
-      }
-
-      setWechatConfig(result.config.wechat ?? defaultWechatPluginConfig);
-      setWechatConfigLoadedAt(result.config.updatedAt);
-      setWechatConfigFeedback({
-        type: 'success',
-        text: `已保存微信配置到本地。`
-      });
-    } catch (error) {
-      setWechatConfigFeedback({
-        type: 'error',
-        text: `保存插件配置失败：${error instanceof Error ? error.message : '未知错误'}`
-      });
-    }
-  };
-
-  const selectedManifest = selectedPlugin?.manifest;
-  const selectedSkillCount = selectedPlugin?.skills.length ?? 0;
-  const selectedMcpCount = selectedPlugin?.mcpServers.length ?? 0;
+  const runtimeDependencies = (selectedPlugin?.manifest.runtimeDependencies ?? []) as Array<{ id: string; packageName: string; binary?: string; version?: string; description?: string }>;
+  const configProperties = asRecord(selectedPlugin?.manifest.configSchema).properties as Record<string, { type?: string; enum?: unknown[]; default?: unknown }> | undefined;
+  const secretProperties = asRecord(selectedPlugin?.manifest.secretSchema).properties as Record<string, { type?: string }> | undefined;
 
   return (
-    <div className="settings-provider-layout">
-      <section className="settings-card settings-provider-list-card">
-        <div className="settings-section-header">
-          <div>
-            <div className="settings-section-title">插件发现</div>
-            <div className="settings-section-description">点击图标选择插件目录，然后扫描其中的 <code>.openagent-plugin/plugin.json</code>。</div>
-          </div>
-
-          <div className="inline-actions">
-            <button
-              className="toolbar-button settings-icon-button"
-              type="button"
-              onClick={() => void handleChoosePluginsRoot()}
-              title="选择插件目录"
-              aria-label="选择插件目录"
-            >
-              <FolderOpen size={14} />
-            </button>
-            <button
-              className="toolbar-button settings-icon-button"
-              type="button"
-              onClick={() => void refreshRegistry('discover')}
-              title="发现插件"
-              aria-label="发现插件"
-              disabled={!selectedPluginsRoot}
-            >
-              <RefreshCw size={14} />
-            </button>
-            <button
-              className="toolbar-button settings-icon-button is-accent"
-              type="button"
-              onClick={() => void refreshRegistry('load')}
-              title="加载启用插件"
-              aria-label="加载启用插件"
-            >
-              <WandSparkles size={14} />
-            </button>
-          </div>
+    <div className="settings-plugin-workspace">
+      <section className="settings-card settings-plugin-hero-card">
+        <div>
+          <div className="settings-section-title">插件中心</div>
+          <div className="settings-section-description">按 OpenAgent Plugin System 管理 channel、tools、skills、knowledge、remote UI 和 policy；插件只通过 RuntimeService 与 ToolExecutor 进入 agent loop。</div>
         </div>
-
-        {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
-
-        <div className="settings-provider-note">
-          <div className="settings-provider-note-copy">
-            当前插件目录：<span className="text-strong">{selectedPluginsRoot || '未选择'}</span>。先选目录，再点“发现”扫描插件。
-          </div>
-        </div>
-
-        <div className="settings-provider-list">
-          {registry.plugins.length === 0 ? (
-            <div className="settings-provider-empty">
-              <div className="settings-provider-empty-title">还没有发现插件</div>
-              <div className="settings-provider-empty-copy">点击“发现”后，先选择目录，再扫描其中的插件。</div>
-            </div>
-          ) : (
-            registry.plugins.map((plugin) => {
-              const isActive = plugin.name === selectedPlugin?.name;
-
-              return (
-                <button
-                  key={plugin.name}
-                  className={`settings-provider-item ${isActive ? 'active' : ''}`}
-                  type="button"
-                  onClick={() => setSelectedPluginName(plugin.name)}
-                >
-                  <div className="settings-provider-item-leading">
-                    <PluginAvatar />
-                  </div>
-
-                  <div className="settings-provider-item-header settings-provider-item-header-compact">
-                    <div className="settings-provider-item-name">{plugin.manifest.interface?.displayName ?? plugin.name}</div>
-                    <div className="settings-plugin-status-group">
-                      <span
-                        className={`status-badge ${plugin.status === 'loaded' ? 'completed' : plugin.status === 'error' ? 'failed' : plugin.status === 'disabled' ? 'info' : 'warn'}`}
-                      >
-                        {plugin.status === 'loaded' ? '已加载' : plugin.status === 'disabled' ? '已禁用' : plugin.status === 'error' ? '错误' : '已发现'}
-                      </span>
-                      <span className={`settings-provider-status-dot ${plugin.enabled ? 'is-online' : 'is-offline'}`} />
-                    </div>
-                  </div>
-
-                  <div className="settings-provider-item-footer settings-provider-item-footer-compact">
-                    <span className="settings-provider-muted">
-                      {plugin.skills.length} 个 skill · {plugin.mcpServers.length} 个 MCP · {plugin.manifest.interface?.category ?? '未分类'}
-                    </span>
-                  </div>
-                </button>
-              );
-            })
-          )}
+        <div className="settings-plugin-stat-grid">
+          <div><strong>{pluginStats.total}</strong><span>插件</span></div>
+          <div><strong>{pluginStats.enabled}</strong><span>启用</span></div>
+          <div><strong>{pluginStats.loaded}</strong><span>加载</span></div>
+          <div><strong>{pluginStats.errors}</strong><span>错误</span></div>
         </div>
       </section>
 
-      <div className="settings-provider-detail">
-        {selectedPlugin ? (
-          <section className="settings-provider-console">
-            <div className="settings-provider-console-header">
+      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+
+      <div className="settings-plugin-grid">
+        <section className="settings-card settings-plugin-catalog-card">
+          <div className="settings-section-header">
+            <div>
+              <div className="settings-section-title">插件目录</div>
+              <div className="settings-section-description">内置插件自动显示；本地插件可通过选择目录发现。</div>
+            </div>
+            <div className="inline-actions">
+              <button className="toolbar-button settings-icon-button" type="button" onClick={() => void choosePluginsRoot()} title="选择本地插件目录"><FolderOpen size={14} /></button>
+              <button className="toolbar-button settings-icon-button" type="button" onClick={() => void refreshRegistry('discover')} title="发现插件"><RefreshCw size={14} /></button>
+              <button className="toolbar-button settings-icon-button is-accent" type="button" onClick={() => void refreshRegistry('load')} title="加载启用插件"><WandSparkles size={14} /></button>
+            </div>
+          </div>
+          <div className="settings-provider-note"><div className="settings-provider-note-copy">本地插件目录：<span className="text-strong">{selectedPluginsRoot || registry.pluginsRoot || '未选择'}</span></div></div>
+          <div className="settings-plugin-list">
+            {registry.plugins.length === 0 ? (
+              <div className="settings-plugin-empty-card">
+                <div className="settings-plugin-empty-icon"><Puzzle size={22} /></div>
+                <div className="settings-provider-empty-title">暂无插件</div>
+                <div className="settings-provider-empty-copy">点击“发现”会先加载内置插件；也可以选择本地目录扫描 plugin.json。</div>
+                <button className="primary-button" type="button" onClick={() => void refreshRegistry('discover')}>发现插件</button>
+              </div>
+            ) : registry.plugins.map((plugin) => {
+              const active = selectedPlugin && getPluginId(plugin) === getPluginId(selectedPlugin);
+              return (
+                <button key={getPluginId(plugin)} className={`settings-plugin-card ${active ? 'active' : ''}`} type="button" onClick={() => setSelectedPluginId(getPluginId(plugin))}>
+                  <div className="settings-plugin-card-top">
+                    <div className="settings-provider-item-leading"><PluginAvatar /></div>
+                    <span className={`status-badge ${statusBadgeClass(plugin.status)}`}>{statusLabel(plugin.status)}</span>
+                  </div>
+                  <div className="settings-plugin-card-title">{pluginDisplayName(plugin)}</div>
+                  <div className="settings-plugin-card-copy">{plugin.manifest.interface?.description || plugin.manifest.description || '未提供描述'}</div>
+                  <div className="settings-plugin-card-footer">
+                    <span>{plugin.source === 'builtin' ? '内置' : '本地'}</span>
+                    <span>{plugin.manifest.capabilities?.length ?? 0} capabilities</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="settings-card settings-plugin-detail-card">
+          {selectedPlugin ? (
+            <>
+              <div className="settings-plugin-detail-header">
                 <div>
-                  <div className="settings-provider-console-title">{selectedPlugin.manifest.interface?.displayName ?? selectedPlugin.name}</div>
+                  <div className="settings-provider-console-title">{pluginDisplayName(selectedPlugin)}</div>
                   <div className="settings-provider-console-subtitle">{selectedPlugin.manifest.description ?? '未提供描述'}</div>
-                  <div className="settings-provider-console-subtitle">{selectedPlugin.rootPath}</div>
-                  <div className="settings-provider-console-subtitle">插件根目录：{registry.pluginsRoot || '未选择'}</div>
                 </div>
                 <div className="inline-actions">
-                  <button
-                    className="toolbar-button"
-                    type="button"
-                    onClick={() => void togglePluginEnabled(selectedPlugin.name, !selectedPlugin.enabled)}
-                    title={selectedPlugin.enabled ? '禁用插件' : '启用插件'}
-                    aria-label={selectedPlugin.enabled ? '禁用插件' : '启用插件'}
-                  >
-                    {selectedPlugin.enabled ? '禁用' : '启用'}
-                  </button>
-                <button
-                  className="toolbar-button settings-icon-button"
-                  type="button"
-                  onClick={() => void loadPlugin(selectedPlugin.name)}
-                    disabled={!selectedPlugin.enabled}
-                    title="加载插件"
-                    aria-label="加载插件"
-                  >
-                    <WandSparkles size={14} />
-                  </button>
+                  <button className="toolbar-button" type="button" onClick={() => void testPlugin()}>测试连接</button>
+                  <button className="primary-button" type="button" onClick={() => void setPluginEnabled(selectedPlugin, !selectedPlugin.enabled)}>{selectedPlugin.enabled ? '禁用' : '启用'}</button>
                 </div>
               </div>
 
-            <div className="settings-provider-secret-block">
-              <div className="settings-provider-console-label">插件状态</div>
-              <div className="settings-info-grid">
-                <div className="settings-info-row">
-                  <div className="settings-info-label">manifest</div>
-                  <div className="settings-info-value">{selectedPlugin.manifestPath}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">状态</div>
-                  <div className="settings-info-value">{selectedPlugin.status}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">启用状态</div>
-                  <div className="settings-info-value">{selectedPlugin.enabled ? '已启用' : '已禁用'}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">发现时间</div>
-                  <div className="settings-info-value">{selectedPlugin.discoveredAt}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">最后加载</div>
-                  <div className="settings-info-value">{selectedPlugin.lastLoadedAt ?? '未加载'}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">错误</div>
-                  <div className="settings-info-value">{selectedPlugin.lastError ?? '无'}</div>
-                </div>
-              </div>
-            </div>
-
-            {selectedPlugin.name === 'wechat-official-account' ? (
-              <div className="settings-provider-secret-block">
-                <div className="settings-provider-console-label">微信配置</div>
-                <div className="settings-form-field">
-                  <div className="settings-form-help">配置会保存到 <code>~/.openagent/settings/plugin-configs/wechat-official-account.json</code>。</div>
-                </div>
-                {wechatConfigFeedback ? (
-                  <div className={`settings-inline-feedback ${wechatConfigFeedback.type === 'success' ? 'success' : 'error'}`}>
-                    {wechatConfigFeedback.text}
-                  </div>
-                ) : null}
-                <div className="settings-form-field">
-                  <span className="settings-form-label">AppID</span>
-                  <input
-                    className="settings-text-input"
-                    value={wechatConfig.appId}
-                    onChange={(event) => setWechatConfig((prev) => ({ ...prev, appId: event.target.value }))}
-                    onBlur={() => void saveWechatPluginConfig()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        void saveWechatPluginConfig();
-                      }
-                    }}
-                    placeholder="请输入微信公众号 AppID"
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="settings-form-field">
-                  <span className="settings-form-label">AppSecret</span>
-                  <input
-                    className="settings-text-input"
-                    type="password"
-                    value={wechatConfig.appSecret}
-                    onChange={(event) => setWechatConfig((prev) => ({ ...prev, appSecret: event.target.value }))}
-                    onBlur={() => void saveWechatPluginConfig()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        void saveWechatPluginConfig();
-                      }
-                    }}
-                    placeholder="请输入微信公众号 AppSecret"
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="settings-form-field">
-                  <span className="settings-form-label">API Base</span>
-                  <input
-                    className="settings-text-input"
-                    value={wechatConfig.apiBase}
-                    onChange={(event) => setWechatConfig((prev) => ({ ...prev, apiBase: event.target.value }))}
-                    onBlur={() => void saveWechatPluginConfig()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        void saveWechatPluginConfig();
-                      }
-                    }}
-                    placeholder="https://api.weixin.qq.com"
-                    autoComplete="off"
-                  />
-                </div>
-                <div className="settings-form-field">
-                  <span className="settings-form-label">风格 JSON</span>
-                  <div className="settings-form-help">
-                    这里保存到 <code>~/.openagent/settings/plugin-configs/wechat-official-account.json</code> 的 <code>wechat.style</code> 字段。默认样例参考 markdown-weixin 的视觉风格，直接按 <code>h1</code>、<code>h2</code>、<code>p</code>、<code>blockquote</code>、<code>code</code>、<code>table</code> 这些键修改即可；支持 <code>//</code> 或 <code>/* */</code> 注释，保存时会自动去掉。
-                  </div>
-                  <textarea
-                    className="settings-textarea"
-                    value={wechatStyleJson}
-                    onChange={(event) => setWechatStyleJson(event.target.value)}
-                    onBlur={() => void saveWechatPluginConfig()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && event.metaKey) {
-                        event.preventDefault();
-                        void saveWechatPluginConfig();
-                      }
-                    }}
-                    placeholder={`{
-  // 主题基础色
-  "primary": "#000000",
-
-  // 一级标题
-  "h1": {
-    "margin": "24px 0 16px",
-    "fontSize": "28px",
-    "lineHeight": "1.2"
-  },
-
-  // 正文
-  "p": {
-    "fontSize": "15px",
-    "lineHeight": "1.6",
-    "color": "#333333"
-  }
-}`}
-                    rows={12}
-                    spellCheck={false}
-                  />
-                </div>
-                <div className="settings-model-input-row">
-                  <button className="toolbar-button" type="button" onClick={() => void saveWechatPluginConfig()}>
-                    保存配置
-                  </button>
-                  <span className="settings-provider-muted">
-                    {wechatConfigLoadedAt ? `最后加载：${wechatConfigLoadedAt}` : '尚未加载本地配置'}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="settings-provider-model-block">
-              <div className="settings-provider-model-toolbar">
-                <div className="settings-provider-console-label">能力摘要</div>
+              <div className="settings-plugin-flow">
+                {['发现', '配置', '授权', '测试', selectedPlugin.enabled ? '已启用' : '启用'].map((step, index) => (
+                  <div key={step} className={`settings-plugin-flow-step ${index === 0 || (index === 1 && selectedPlugin.configured) || (index === 2 && selectedPlugin.authorized) || (index === 3 && selectedPlugin.status !== 'error') || (index === 4 && selectedPlugin.enabled) ? 'done' : ''}`}>{step}</div>
+                ))}
               </div>
 
               <div className="settings-info-grid">
-                <div className="settings-info-row">
-                  <div className="settings-info-label">Skill 数量</div>
-                  <div className="settings-info-value">{selectedSkillCount}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">MCP 数量</div>
-                  <div className="settings-info-value">{selectedMcpCount}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">分类</div>
-                  <div className="settings-info-value">{selectedManifest?.interface?.category ?? '未分类'}</div>
-                </div>
-                <div className="settings-info-row">
-                  <div className="settings-info-label">品牌色</div>
-                  <div className="settings-info-value">{selectedManifest?.interface?.brandColor ?? '默认'}</div>
+                <div className="settings-info-row"><div className="settings-info-label">Plugin ID</div><div className="settings-info-value">{getPluginId(selectedPlugin)}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">状态</div><div className="settings-info-value">{statusLabel(selectedPlugin.status)}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">Manifest</div><div className="settings-info-value">{selectedPlugin.manifestPath || 'builtin'}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">错误</div><div className="settings-info-value">{selectedPlugin.lastError || '无'}</div></div>
+              </div>
+
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">能力开关</div>
+                <div className="settings-plugin-capability-grid">
+                  {(selectedPlugin.manifest.capabilities ?? []).map((capability) => (
+                    <label key={capability} className="settings-plugin-capability">
+                      <input type="checkbox" checked={selectedPlugin.capabilities?.[capability] !== false} onChange={(event) => void setCapability(capability, event.target.checked)} />
+                      <span>{capability}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
 
-              {selectedPlugin.skills.length > 0 ? (
-                <div className="settings-form-field">
-                  <span className="settings-form-label">Skills</span>
-                  <div className="settings-model-chip-list">
-                    {selectedPlugin.skills.map((skill) => (
-                      <span key={`${selectedPlugin.name}-${skill.name}`} className="settings-model-chip">
-                        <span className="settings-model-chip-label">{skill.name}</span>
-                      </span>
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">普通配置</div>
+                {configProperties ? Object.entries(configProperties).map(([key, schema]) => (
+                  <label key={key} className={`settings-form-field settings-plugin-field ${schema.type === 'boolean' ? 'is-boolean' : ''}`}>
+                    <span className="settings-form-label">{pluginFieldLabel(key)}{pluginFieldHint(key) ? <small>{pluginFieldHint(key)}</small> : null}</span>
+                    {schema.type === 'boolean' ? (
+                      <input type="checkbox" checked={Boolean(configDraft[key])} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.checked }))} />
+                    ) : schema.enum ? (
+                      <select className="settings-select" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))}>
+                        {schema.enum.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}
+                      </select>
+                    ) : schema.type === 'array' ? (
+                      <input className="settings-text-input" value={Array.isArray(configDraft[key]) ? (configDraft[key] as unknown[]).join(', ') : ''} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) }))} placeholder="逗号分隔" />
+                    ) : (
+                      <input className="settings-text-input" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))} />
+                    )}
+                  </label>
+                )) : <div className="settings-provider-muted">该插件没有声明配置项。</div>}
+                <button className="toolbar-button" type="button" onClick={() => void saveConfig()}>保存配置</button>
+              </div>
+
+              {runtimeDependencies.length > 0 ? (
+                <div className="settings-plugin-section">
+                  <div className="settings-provider-console-label">运行依赖</div>
+                  <div className="settings-plugin-dependency-list">
+                    {runtimeDependencies.map((dependency) => (
+                      <div key={dependency.id} className="settings-plugin-dependency-item">
+                        <div>
+                          <strong>{dependency.binary || dependency.id}</strong>
+                          <span>{dependency.packageName}{dependency.version ? `@${dependency.version}` : ''}</span>
+                          {dependency.description ? <small>{dependency.description}</small> : null}
+                        </div>
+                        <button className="toolbar-button settings-plugin-dependency-button" type="button" disabled={installingDependencyId === dependency.id} onClick={() => void installDependency(dependency.id)}>
+                          {installingDependencyId === dependency.id ? '安装中…' : '安装'}
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
               ) : null}
 
-              {selectedPlugin.mcpServers.length > 0 ? (
-                <div className="settings-form-field">
-                  <span className="settings-form-label">MCP Servers</span>
-                  <div className="settings-model-chip-list">
-                    {selectedPlugin.mcpServers.map((server) => (
-                      <span key={`${selectedPlugin.name}-${server.name}`} className="settings-model-chip">
-                        <span className="settings-model-chip-label">{server.name}</span>
-                      </span>
+              <div className="settings-plugin-section">
+                <div className="settings-plugin-section-heading">
+                  <div className="settings-provider-console-label">密钥 / 授权</div>
+                  {secretProperties ? (
+                    <div className="settings-plugin-section-heading-actions">
+                      <button className="toolbar-button settings-plugin-save-button" type="button" onClick={() => void saveAllSecrets()}>保存密钥</button>
+                      {getPluginId(selectedPlugin) === 'openagent-plugin-feishu-cli' ? (
+                        <>
+                          <button className="toolbar-button settings-plugin-auth-button" type="button" disabled={authorizingAll} onClick={() => void authorizeAllCapabilities()}>
+                            {authorizingAll ? '授权中…' : '授权所有能力'}
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                {secretProperties ? (
+                  <>
+                    {authorizationUrl ? (
+                      <div className="settings-plugin-auth-url">
+                        <span>授权链接</span>
+                        <a href={authorizationUrl} target="_blank" rel="noreferrer">{authorizationUrl}</a>
+                      </div>
+                    ) : null}
+                    <div className="settings-plugin-secret-grid">
+                      {Object.keys(secretProperties).map((key) => (
+                        <label key={key} className="settings-form-field settings-plugin-field">
+                          <span className="settings-form-label">{pluginFieldLabel(key)} {secretStatus[key]?.configured ? <span className="settings-plugin-secret-state is-set">已配置</span> : <span className="settings-plugin-secret-state">未配置</span>}</span>
+                          <input className="settings-text-input" type="password" value={secretDraft[key] ?? ''} onChange={(event) => setSecretDraft((prev) => ({ ...prev, [key]: event.target.value }))} placeholder={secretStatus[key]?.maskedValue || '输入后保存'} autoComplete="off" />
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                ) : <div className="settings-provider-muted">该插件没有声明密钥项。</div>}
+              </div>
+
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">Tools / Policy</div>
+                <div className="settings-model-chip-list">
+                  {(selectedPlugin.tools ?? []).map((tool) => <span key={tool.name} className="settings-model-chip"><span className="settings-model-chip-label">{tool.name}</span><span className="settings-provider-muted">{tool.risk ?? 'read'}</span></span>)}
+                </div>
+              </div>
+
+              {testResult ? (
+                <div className="settings-plugin-section">
+                  <div className="settings-provider-console-label">测试结果</div>
+                  <div className="settings-info-grid">
+                    {testResult.checks?.map((check) => (
+                      <div key={check.name} className="settings-info-row"><div className="settings-info-label">{check.ok ? '✅' : '⚠️'} {check.name}</div><div className="settings-info-value">{check.message}</div></div>
                     ))}
                   </div>
                 </div>
               ) : null}
+            </>
+          ) : (
+            <div className="settings-plugin-detail-empty">
+              <div className="settings-plugin-empty-icon"><Puzzle size={28} /></div>
+              <div className="settings-provider-empty-title">选择一个插件</div>
+              <div className="settings-provider-empty-copy">左侧选择插件后，可以按“配置 → 授权 → 测试 → 启用”的流程完成接入。</div>
+              <button className="toolbar-button" type="button" onClick={() => void refreshRegistry('discover')}>重新发现</button>
             </div>
-          </section>
-        ) : (
-          <section className="settings-provider-empty">
-            <div className="settings-provider-empty-title">还没有选中插件</div>
-            <div className="settings-provider-empty-copy">先点击“发现”扫描项目里的插件，随后可以启用并加载。</div>
-          </section>
-        )}
+          )}
+        </section>
       </div>
     </div>
   );

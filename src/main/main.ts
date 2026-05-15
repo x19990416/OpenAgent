@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { RuntimeService } from './runtime/runtime-service.js';
+import { PluginService } from './plugins/plugin-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
 import {
   buildPiProviderCatalog,
@@ -32,6 +33,8 @@ const activePiModelConfig = getOpenAgentPiModelConfig();
 const activeAgentId = 'main';
 const defaultWorkspaceRoot = resolveDefaultAgentWorkspaceRoot(activeAgentId);
 
+const pluginService = new PluginService();
+
 const workspace = {
   name: 'OpenAgent',
   rootPath: process.env.OPENAGENT_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
@@ -51,11 +54,20 @@ const runtimeService = new RuntimeService({
   providerLabel: workspace.providerLabel,
   model: workspace.model,
   emitUiEvent: (event) => {
+    pluginService.dispatchUiEvent(event);
     mainWindow?.webContents.send('ui:event', event);
     if (event.type === 'approval.required') {
       activateWindowForApproval();
     }
-  }
+  },
+  pluginContextResolver: pluginService
+});
+
+pluginService.setRuntimeSubmitHandler(async (input) => {
+  const payload = input && typeof input === 'object' ? input as { prompt?: unknown; awaitCompletion?: unknown } : {};
+  const prompt = String(payload.prompt || '');
+  if (!prompt.trim()) return { ok: false, error: 'Plugin prompt is empty' };
+  return runtimeService.submitPrompt({ prompt, awaitCompletion: payload.awaitCompletion !== false });
 });
 
 const SCHEDULED_THREAD_TITLE_PREFIX = '⏰ ';
@@ -325,6 +337,7 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  await pluginService.initialize();
   registerIpc();
   await createWindow();
 
@@ -559,11 +572,23 @@ function registerIpc() {
     };
   });
   ipcMain.handle('skills:list', () => []);
-  ipcMain.handle('plugins:get-registry', () => ({ plugins: [] }));
-  ipcMain.handle('plugins:discover', () => ({ ok: true, registry: { plugins: [] } }));
-  ipcMain.handle('plugins:load', () => ({ ok: true, registry: { plugins: [] }, loadedCount: 0 }));
-  ipcMain.handle('plugins:choose-directory', () => ({ ok: false, error: 'Not implemented in UI prototype' }));
-  ipcMain.handle('plugins:set-enabled', () => ({ ok: true, registry: { plugins: [] } }));
-  ipcMain.handle('plugins:get-config', () => ({ ok: true, config: { appId: '', appSecret: '', updatedAt: new Date().toISOString() } }));
-  ipcMain.handle('plugins:save-config', (_event, payload) => ({ ok: true, config: { ...payload.config, updatedAt: new Date().toISOString() } }));
+  ipcMain.handle('plugins:get-registry', () => pluginService.getRegistry());
+  ipcMain.handle('plugins:discover', async (_event, payload) => pluginService.discover({ pluginsRoot: typeof payload?.pluginsRoot === 'string' ? payload.pluginsRoot : undefined }));
+  ipcMain.handle('plugins:install-local', async (_event, payload) => pluginService.installLocal(String(payload?.path || '')));
+  ipcMain.handle('plugins:load', async (_event, payload) => pluginService.load({ pluginIds: Array.isArray(payload?.pluginIds) ? payload.pluginIds : undefined, pluginNames: Array.isArray(payload?.pluginNames) ? payload.pluginNames : undefined }));
+  ipcMain.handle('plugins:choose-directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, { properties: ['openDirectory'] });
+    if (result.canceled) return { ok: false, canceled: true };
+    return { ok: true, directoryPath: result.filePaths[0] };
+  });
+  ipcMain.handle('plugins:set-enabled', async (_event, payload) => pluginService.setEnabled(payload ?? {}));
+  ipcMain.handle('plugins:set-capability', async (_event, payload) => pluginService.setCapability(payload ?? {}));
+  ipcMain.handle('plugins:test', async (_event, payload) => pluginService.testPlugin(payload ?? {}));
+  ipcMain.handle('plugins:install-dependency', async (_event, payload) => pluginService.installDependency(payload ?? {}));
+  ipcMain.handle('plugins:authorize', async (event, payload) => pluginService.authorize(payload ?? {}, {
+    onAuthorizationUrl: (progress) => event.sender.send('plugins:authorization-event', progress)
+  }));
+  ipcMain.handle('plugins:get-config', async (_event, payload) => pluginService.getConfig(payload ?? {}));
+  ipcMain.handle('plugins:save-config', async (_event, payload) => pluginService.saveConfig(payload ?? {}));
+  ipcMain.handle('plugins:set-secret', async (_event, payload) => pluginService.setSecret(payload ?? {}));
 }

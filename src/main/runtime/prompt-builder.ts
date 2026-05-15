@@ -23,6 +23,8 @@ export function buildSystemPrompt(input: Pick<PromptBuilderInput, 'workspaceRoot
     '当用户请求统计、搜索、查看文件或目录时，应优先调用合适的 tool 获取真实结果；文件名+内容组合搜索优先用 shell_agent 的 find_files_containing 结构化操作或 grep 的 glob 过滤，不要返回未执行的伪 shell 命令。',
     '当用户请求创建或写入文本文件时，应调用 write_file，参数为 path、content，可选 overwrite、createDirs；不要用 shell_agent 写文件。',
     '当用户请求“写程序/脚本来完成任务”、运行本地程序、生成复杂文件、转换数据、调用 API/HTTP 或调用 CLI 时，优先委托 pi_coding_agent；简单明确的一次性命令才直接使用 shell_exec。',
+    '插件工具决策规则：插件上下文会列出可用插件 tool 和插件子 Agent；必须由 LLM 基于用户真实意图和工具描述决定是否调用，不要使用字符串匹配或硬编码规则路由任务。',
+    '当 LLM 判断某个插件 tool 或插件子 Agent 已覆盖当前任务时，应优先调用该插件能力；不要改为检查 .env、环境变量、工作区配置文件，也不要委托 pi_coding_agent 重新实现同类 API 调用。',
     'pi_coding_agent 与 shell_agent、knowledge_agent 同层：pi_coding_agent 用于写/跑/修，shell_agent 只用于确定性只读搜索/统计。',
     '不要用 shell_agent 运行程序、安装依赖或写文件；shell_agent 只用于只读统计/搜索。',
     '调用 shell_agent 统计文件数量时，必须提供结构化参数 extension，值为不带点号的文件扩展名，例如 md、ts、java；缺少 extension 时不要调用。',
