@@ -99,24 +99,15 @@ type SettingRow =
 const navItems: Array<{
   key: SettingsTab;
   label: string;
-  icon: typeof Settings2;
+  icon: typeof Bot;
 }> = [
-  { key: 'general', label: '常规', icon: Settings2 },
-  { key: 'appearance', label: '外观', icon: Palette },
   { key: 'models', label: '模型', icon: Bot },
   { key: 'plugins', label: '插件', icon: Puzzle },
   { key: 'skills', label: 'Skills', icon: WandSparkles },
-  { key: 'knowledge', label: '知识库', icon: Database },
-  { key: 'config', label: '配置', icon: SlidersHorizontal },
-  { key: 'personalization', label: '个性化', icon: Sparkles },
-  { key: 'mcp', label: 'MCP 服务器', icon: CircleUserRound },
-  { key: 'git', label: 'Git', icon: GitBranch },
-  { key: 'environment', label: '环境', icon: Monitor },
-  { key: 'workspace', label: '工作树', icon: FolderGit2 },
-  { key: 'computer', label: '电脑使用', icon: Monitor },
-  { key: 'archived', label: '已归档聊天', icon: Archive },
-  { key: 'usage', label: '使用情况', icon: Gauge }
+  { key: 'knowledge', label: '知识库', icon: Database }
 ];
+
+const visibleSettingsTabs = new Set<SettingsTab>(navItems.map((item) => item.key));
 
 const pageTitles: Record<SettingsTab, string> = {
   general: '常规',
@@ -3759,8 +3750,9 @@ function PluginPanel() {
 }
 
 export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBack }: SettingsScreenProps) {
-  const rows = pageRows[activeTab];
-  const title = pageTitles[activeTab];
+  const currentTab: SettingsTab = visibleSettingsTabs.has(activeTab) ? activeTab : 'models';
+  const rows = pageRows[currentTab];
+  const title = pageTitles[currentTab];
 
   return (
     <div className="settings-screen">
@@ -3773,7 +3765,7 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.key;
+            const isActive = currentTab === item.key;
 
             return (
               <button
@@ -3791,15 +3783,15 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
         <main className="settings-content">
           <div className="settings-content-inner">
-            {activeTab === 'plugins' || activeTab === 'skills' ? null : <h1 className="settings-page-title">{title}</h1>}
+            {currentTab === 'plugins' || currentTab === 'skills' ? null : <h1 className="settings-page-title">{title}</h1>}
 
-            {activeTab === 'models' ? (
+            {currentTab === 'models' ? (
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
-            ) : activeTab === 'plugins' ? (
+            ) : currentTab === 'plugins' ? (
               <PluginPanel />
-            ) : activeTab === 'skills' ? (
+            ) : currentTab === 'skills' ? (
               <SkillPanel />
-            ) : activeTab === 'knowledge' ? (
+            ) : currentTab === 'knowledge' ? (
               <KnowledgePanel />
             ) : (
               <section className="settings-card">

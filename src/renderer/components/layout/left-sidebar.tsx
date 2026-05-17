@@ -1,4 +1,4 @@
-import { CircleUserRound, Clock3, LogOut, Bot, ChevronDown, ChevronUp, PencilLine, Plug2, Plus, Search, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { CircleUserRound, Clock3, LogOut, Bot, ChevronDown, ChevronUp, Plus, Puzzle, Settings, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkspaceMeta } from '@shared-types/events';
 import type { LeftSidebarTab, MainAgentBootstrapSnapshot, SettingsTab, ThreadListItem } from '@/types/workbench';
@@ -17,12 +17,8 @@ interface LeftSidebarProps {
   onOpenSettings: (tab: SettingsTab) => void;
 }
 
-const navItems: Array<{ key: LeftSidebarTab; label: string; icon: typeof PencilLine }> = [
-  { key: 'threads', label: '新建聊天', icon: PencilLine },
-  { key: 'search', label: '搜索', icon: Search },
-  { key: 'files', label: '插件', icon: Plug2 },
-  { key: 'schedules', label: '定时任务', icon: Clock3 },
-  { key: 'tasks', label: '自动化', icon: Clock3 }
+const navItems: Array<{ key: LeftSidebarTab; label: string; icon: typeof Clock3 }> = [
+  { key: 'schedules', label: '定时任务', icon: Clock3 }
 ];
 
 const MAX_VISIBLE_RUNS = 5;
@@ -41,7 +37,8 @@ export function LeftSidebar({
 }: LeftSidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const agentDisplayName = resolveMainAgentDisplayName(agentBootstrap);
-  const [settingsPosition, setSettingsPosition] = useState<{ left: number; bottom: number } | null>(null);
+  const [settingsPosition, setSettingsPosition] = useState<{ left: number; bottom: number; width: number } | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const [showAllThreads, setShowAllThreads] = useState(false);
@@ -58,13 +55,19 @@ export function LeftSidebar({
 
     const updateSettingsPosition = () => {
       const button = settingsButtonRef.current;
+      const sidebar = sidebarRef.current;
       if (!button) return;
 
       const rect = button.getBoundingClientRect();
-      const menuWidth = 264;
-      const left = Math.max(16, Math.min(rect.left, window.innerWidth - menuWidth - 16));
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      const menuWidth = rect.width;
+      const minLeft = sidebarRect ? sidebarRect.left : 16;
+      const maxLeft = sidebarRect
+        ? sidebarRect.right - menuWidth
+        : window.innerWidth - menuWidth - 16;
+      const left = Math.max(minLeft, Math.min(rect.left, maxLeft));
       const bottom = Math.max(12, window.innerHeight - rect.top + 12);
-      setSettingsPosition({ left, bottom });
+      setSettingsPosition({ left, bottom, width: menuWidth });
     };
 
     const closeOnOutsideClick = (event: MouseEvent | TouchEvent) => {
@@ -98,15 +101,19 @@ export function LeftSidebar({
   }, [settingsOpen]);
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <button className="sidebar-cta w-full" type="button" onClick={() => void onCreateThread()}>
-          <Sparkles size={16} />
-          新建聊天
-        </button>
-      </div>
-
+    <aside ref={sidebarRef} className="sidebar">
       <div className="sidebar-nav">
+        <button
+          type="button"
+          className="sidebar-nav-item"
+          onClick={() => onOpenSettings('plugins')}
+        >
+          <span className="row row-gap-12">
+            <Puzzle size={18} />
+            插件
+          </span>
+        </button>
+
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.key || (item.key === 'threads' && activeTab === 'threads');
@@ -117,8 +124,8 @@ export function LeftSidebar({
               className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
               onClick={() => onTabChange(item.key)}
             >
-              <span className="row row-gap-10">
-                <Icon size={16} />
+              <span className="row row-gap-12">
+                <Icon size={18} />
                 {item.label}
               </span>
             </button>
@@ -231,7 +238,8 @@ export function LeftSidebar({
           className="settings-popover panel panel-strong"
           style={{
             left: `${settingsPosition.left}px`,
-            bottom: `${settingsPosition.bottom}px`
+            bottom: `${settingsPosition.bottom}px`,
+            width: `${settingsPosition.width}px`
           }}
           role="menu"
           aria-label="设置菜单"
@@ -261,7 +269,7 @@ export function LeftSidebar({
             role="menuitem"
             onClick={() => {
               setSettingsOpen(false);
-              onOpenSettings('general');
+              onOpenSettings('models');
             }}
           >
             <span className="row row-gap-10">

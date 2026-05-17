@@ -8,6 +8,9 @@ export interface RuntimeMessage {
   content: string;
   createdAt: string;
   attachments?: RuntimeAttachment[];
+  skillId?: string | null;
+  skillName?: string | null;
+  skillDisplayName?: string | null;
   toolCallId?: string;
 }
 
@@ -253,5 +256,7 @@ export interface PromptSubmissionInput {
   prompt: string;
   attachments?: RuntimeAttachment[];
   skillId?: string | null;
+  skillName?: string | null;
+  skillDisplayName?: string | null;
   awaitCompletion?: boolean;
 }

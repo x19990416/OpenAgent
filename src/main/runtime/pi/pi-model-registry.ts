@@ -130,7 +130,7 @@ export function setOpenAgentPiModelConfig(input: { providerId: string; modelId: 
 export function saveOpenAgentPiProviderApiKey(input: { providerId: string; apiKey: string }) {
   const authStorage = createOpenAgentAuthStorage();
   authStorage.set(input.providerId, { type: 'api_key', key: input.apiKey });
-  return { ok: true, authPath: 'pi-default-auth' };
+  return { ok: true, authPath: getOpenAgentPiAuthPath() };
 }
 
 export function clearOpenAgentPiProviderApiKey(input: { providerId: string }) {
@@ -380,7 +380,7 @@ export async function buildPiProviderCatalog(input?: { activeProviderId?: string
         invocationMode: isBuiltInProvider ? 'pi-agent-session' : resolveCatalogInvocationMode(providerConfig?.api),
         baseUrl: providerConfig?.baseUrl,
         defaultModel,
-        enabled: configured || providerId === activeProviderId,
+        enabled: configured,
         auth: {
           type: 'api_key',
           configured,
@@ -417,7 +417,7 @@ function writeOpenAgentPiModelConfig(config: OpenAgentPiModelConfig) {
 }
 
 function createOpenAgentAuthStorage() {
-  return AuthStorage.create();
+  return AuthStorage.create(getOpenAgentPiAuthPath());
 }
 
 function createOpenAgentModelRegistry(authStorage: ReturnType<typeof AuthStorage.create>) {
@@ -462,6 +462,10 @@ function getOpenAgentSettingsDir() {
 
 function getOpenAgentPiModelsPath() {
   return path.join(getOpenAgentSettingsDir(), 'pi-models.json');
+}
+
+function getOpenAgentPiAuthPath() {
+  return path.join(getOpenAgentSettingsDir(), 'pi-auth.json');
 }
 
 function readOpenAgentPiModelsJson(): PiModelsJson {

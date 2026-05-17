@@ -14,6 +14,7 @@
     "build:win": "bash scripts/build-windows.sh",
     "build:all": "bash scripts/build-all.sh",
     "package:macos:app": "bash scripts/package-macos-app.sh",
+    "package:macos:dmg": "bash scripts/package-macos-dmg.sh",
     "package:windows:installer": "bash scripts/package-windows-installer.sh",
     "smoke:skills": "node scripts/smoke-skill-system.mjs",
     "build:main": "tsc -b tsconfig.electron.json --force",
@@ -26,15 +27,7 @@
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.64.0",
     "@mariozechner/pi-ai": "0.64.0",
-    "@mariozechner/pi-coding-agent": "0.64.0",
-    "@vitejs/plugin-react": "latest",
-    "clsx": "latest",
-    "lucide-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "react-markdown": "latest",
-    "remark-gfm": "latest",
-    "tailwind-merge": "latest"
+    "@mariozechner/pi-coding-agent": "0.64.0"
   },
   "devDependencies": {
     "@types/node": "latest",
@@ -45,7 +38,15 @@
     "typescript": "latest",
     "vite": "latest",
     "wait-on": "latest",
-    "electron-builder": "latest"
+    "electron-builder": "latest",
+    "@vitejs/plugin-react": "latest",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "remark-gfm": "latest",
+    "tailwind-merge": "latest"
   },
   "bin": {
     "openagent-skill": "scripts/openagent-skill.mjs"

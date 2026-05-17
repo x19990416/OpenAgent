@@ -27,7 +27,7 @@ export function WorkbenchScreen() {
   const [rightTab, setRightTab] = useState<RightInspectorTab>('plan');
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [inspectorVisible, setInspectorVisible] = useState(true);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('models');
 
   useEffect(() => {
     if (viewModel.runStatus === 'waiting_approval') {

@@ -10,6 +10,7 @@ import { DEFAULT_TRUST, SOURCE_PRIORITY } from './skill-types.js';
 import type { PluginSkillPackage, ResolvedSkillContext, SkillCatalogItem, SkillResolutionInput, SkillSettings } from './skill-types.js';
 import { isSafeRealpath } from './skill-utils.js';
 import { installLocalSkill } from './skill-installer.js';
+import { ensureOpenAgentSystemSkills } from './system-skill-bootstrap.js';
 
 export type { PluginSkillPackage, ResolvedSkillContext, SkillCatalogItem, SkillResolutionInput, SkillRisk, SkillSource } from './skill-types.js';
 
@@ -20,6 +21,7 @@ export class SkillService {
 
   constructor(private readonly options: { agentId: string; workspaceRoot: string; appRoot?: string; openAgentRoot?: string }) {
     const openAgentRoot = options.openAgentRoot ?? process.env.OPENAGENT_HOME ?? path.join(process.env.HOME ?? '', '.openagent');
+    ensureOpenAgentSystemSkills(openAgentRoot, options.appRoot);
     this.settingsPath = path.join(openAgentRoot, 'settings', 'skills.json');
     this.stateDir = path.join(openAgentRoot, 'state');
     mkdirSync(path.dirname(this.settingsPath), { recursive: true });
@@ -114,6 +116,7 @@ export class SkillService {
       agentId: this.options.agentId,
       workspaceRoot: this.options.workspaceRoot,
       appRoot: this.options.appRoot,
+      openAgentRoot: this.options.openAgentRoot,
       stateDir: this.stateDir,
       pluginSkills: this.pluginSkills
     });

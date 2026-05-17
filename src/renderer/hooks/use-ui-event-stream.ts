@@ -169,7 +169,10 @@ export function useUiEventStream() {
             role: 'user',
             content: prompt,
             createdAt,
-            attachments: payload.attachments ?? []
+            attachments: payload.attachments ?? [],
+            skillId: payload.skillId ?? null,
+            skillName: payload.skillName ?? null,
+            skillDisplayName: payload.skillDisplayName ?? payload.skillName ?? null
           }
         ],
         runLog: [...prev.runLog, { id: `log-${createdAt}`, level: 'info', text: `Prompt submitted: ${prompt}`, createdAt }]
@@ -512,7 +515,10 @@ function applyStateSnapshot(
       role: message.role,
       content: normalizeMessageContent(message.content),
       createdAt: message.createdAt,
-      attachments: message.attachments ?? []
+      attachments: message.attachments ?? [],
+      skillId: message.skillId ?? null,
+      skillName: message.skillName ?? null,
+      skillDisplayName: message.skillDisplayName ?? message.skillName ?? null
     })),
     activeThreadId: snapshot.activeThread?.threadId ?? null
   };

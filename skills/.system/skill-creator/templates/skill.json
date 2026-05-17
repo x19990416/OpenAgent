@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "openagent.skill.v1",
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "displayName": "{{displayName}}",
+  "description": "{{description}}",
+  "risk": "read",
+  "tags": ["{{tag}}"],
+  "allowedTools": ["skill_load", "skill_resource"],
+  "scripts": [],
+  "resources": []
+}

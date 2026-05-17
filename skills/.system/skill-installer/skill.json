@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "openagent.skill.v1",
+  "name": "skill-installer",
+  "version": "0.1.0",
+  "displayName": "Skill Installer",
+  "description": "Install OpenAgent-compatible skills from local directories or Git repositories into user, agent, or workspace skill roots.",
+  "risk": "network",
+  "tags": ["skill", "install", "git"],
+  "allowedTools": ["skill_load", "skill_resource", "skill_script"],
+  "scripts": [
+    {
+      "path": "scripts/install_openagent_skill.mjs",
+      "runtime": "node",
+      "description": "Install one or more OpenAgent-compatible skill folders from a local directory or Git URL.",
+      "risk": "network",
+      "timeoutMs": 120000,
+      "network": true,
+      "writes": true
+    }
+  ],
+  "resources": [
+    {
+      "path": "references/install-targets.md",
+      "type": "reference",
+      "description": "OpenAgent skill destination roots and installation safety rules."
+    }
+  ]
+}

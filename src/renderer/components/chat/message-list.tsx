@@ -1,4 +1,4 @@
-import { Bot, File, FileImage, FileText, FolderOpen, User } from 'lucide-react';
+import { Bot, File, FileImage, FileText, FolderOpen, Package, User } from 'lucide-react';
 import type { MouseEvent } from 'react';
 import type { PromptAttachmentDescriptor } from '@shared-types/index';
 import type { MessageItem } from '@shared-types/events';
@@ -19,6 +19,7 @@ export function MessageList({ messages }: { messages: MessageItem[] }) {
       {messages.map((message) => {
         const isUser = message.role === 'user';
         const Icon = isUser ? User : Bot;
+        const selectedSkillLabel = message.skillDisplayName || message.skillName || null;
 
         return (
           <article key={message.id} className={`message-card ${message.role}`}>
@@ -40,6 +41,13 @@ export function MessageList({ messages }: { messages: MessageItem[] }) {
                 </div>
               ) : null}
             </div>
+            {isUser && selectedSkillLabel ? (
+              <div className="message-meta-line" title={`已指定 Skill：${selectedSkillLabel}`}>
+                <Package size={13} />
+                <span>已指定 Skill：</span>
+                <strong>{selectedSkillLabel}</strong>
+              </div>
+            ) : null}
           </article>
         );
       })}

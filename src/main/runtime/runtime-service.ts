@@ -366,6 +366,8 @@ export class RuntimeService {
     const runId = `run-${randomUUID()}`;
     const now = new Date().toISOString();
     const attachments = this.materializePromptAttachments(payload.attachments ?? [], runId);
+    this.syncPluginSkills();
+    const selectedSkill = this.resolveSelectedSkill(payload.skillId ?? null);
     const thread = this.getActiveThread();
     const controller = this.runState.start({
       runId,
@@ -384,7 +386,10 @@ export class RuntimeService {
       role: 'user',
       content: prompt,
       createdAt: now,
-      attachments
+      attachments,
+      skillId: selectedSkill?.id ?? payload.skillId ?? null,
+      skillName: selectedSkill?.name ?? payload.skillName ?? null,
+      skillDisplayName: selectedSkill?.displayName ?? payload.skillDisplayName ?? payload.skillName ?? null
     };
     this.messages.push(userMessage);
     this.touchThreadForPrompt(thread, prompt, now);

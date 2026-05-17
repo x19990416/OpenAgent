@@ -28,6 +28,9 @@ Environment:
 
 Output:
   release/*Setup*.exe
+
+TODO(auto-update): keep this installer script as the stable baseline; add update feed
+metadata and publish configuration in a later auto-update task.
 EOF
 }
 
@@ -107,4 +110,19 @@ fi
 
 echo
 echo "Windows installer artifact(s):"
-printf '  %s\n' "${INSTALLERS[@]}"
+for artifact in "${INSTALLERS[@]}"; do
+  du -sh "$artifact"
+done
+
+UNPACKED=()
+while IFS= read -r artifact; do
+  UNPACKED+=("$artifact")
+done < <(find release -maxdepth 2 -type d -name 'win*-unpacked' | sort)
+
+if [[ "${#UNPACKED[@]}" -gt 0 ]]; then
+  echo
+  echo "Windows unpacked artifact(s):"
+  for artifact in "${UNPACKED[@]}"; do
+    du -sh "$artifact"
+  done
+fi

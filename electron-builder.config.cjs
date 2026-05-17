@@ -8,7 +8,12 @@ module.exports = {
   },
   files: [
     'dist/**/*',
+    'skills/**/*',
     'package.json',
+    // Electron is already bundled by electron-builder into the .app Frameworks.
+    // Do not package the npm electron binary again under app.asar(.unpacked).
+    '!node_modules/electron{,/**/*}',
+    '!node_modules/.pnpm/electron@*/node_modules/electron{,/**/*}',
   ],
   extraMetadata: {
     main: 'dist/main/main.js',

@@ -62,11 +62,14 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
     activeProvider?.models.find((model) => model.id === workspace.model || model.name === workspace.model)?.id ??
     activeProvider?.defaultModel ??
     '';
-  const normalizedPrompt = value.replace(/^\s+/, '');
-  const isSkillPickerOpen = normalizedPrompt.startsWith('$');
-  const skillQuery = isSkillPickerOpen ? normalizedPrompt.slice(1).trim().toLowerCase() : '';
+  const isSkillPickerOpen = value.startsWith('$');
+  const skillQuery = isSkillPickerOpen ? value.slice(1).trim().toLowerCase() : '';
+  const usableSkills = useMemo(
+    () => skillCatalog.filter((skill) => skill.enabled && skill.state !== 'failed'),
+    [skillCatalog]
+  );
   const filteredSkills = useMemo(() => {
-    const next = skillCatalog.filter((skill) => {
+    const next = usableSkills.filter((skill) => {
       if (!skillQuery) {
         return true;
       }
@@ -78,7 +81,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
     });
 
     return next.slice(0, 8);
-  }, [skillCatalog, skillQuery]);
+  }, [usableSkills, skillQuery]);
   const selectedSkill = useMemo(
     () => skillCatalog.find((skill) => skill.id === selectedSkillId) ?? null,
     [skillCatalog, selectedSkillId]
@@ -141,17 +144,23 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
       attachmentNames: attachments.map((attachment) => attachment.name)
     });
 
+    const submittedAttachments = attachments;
     setIsSubmitting(true);
+    setValue('');
+    setAttachments([]);
+    setSelectedSkillId('');
 
     try {
       const result = await onSubmitPrompt({
         prompt,
-        attachments,
-        skillId: selectedSkillId || undefined
+        attachments: submittedAttachments,
+        skillId: selectedSkillId || undefined,
+        skillName: selectedSkill?.name || undefined,
+        skillDisplayName: selectedSkill?.displayName || selectedSkill?.name || undefined
       });
-      if (result.ok) {
-        setValue('');
-        setAttachments([]);
+      if (!result.ok) {
+        setValue(prompt);
+        setAttachments(submittedAttachments);
       }
     } finally {
       setIsSubmitting(false);
@@ -431,7 +440,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
                   </button>
                 ))
               ) : (
-                <div className="composer-skill-empty">没有匹配到可用技能</div>
+                <div className="composer-skill-empty">没有匹配到可用 Skill</div>
               )}
             </div>
           </div>

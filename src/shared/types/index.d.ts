@@ -81,6 +81,8 @@ export interface PromptSubmission {
     prompt: string;
     attachments?: PromptAttachmentDescriptor[];
     skillId?: string | null;
+    skillName?: string | null;
+    skillDisplayName?: string | null;
 }
 export interface PromptSubmissionResult {
     ok: boolean;

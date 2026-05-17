@@ -10,7 +10,7 @@ import type {
 } from '@shared-types/events';
 import type { ScheduledTaskItem } from '@shared-types/index';
 
-export type LeftSidebarTab = 'files' | 'search' | 'threads' | 'schedules' | 'tasks';
+export type LeftSidebarTab = 'threads' | 'schedules';
 export type RightInspectorTab = 'plan' | 'tasks' | 'patch' | 'approval' | 'browser' | 'context' | 'memory' | 'run-log';
 export type SettingsTab =
   | 'general'

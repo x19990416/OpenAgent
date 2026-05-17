@@ -18,6 +18,9 @@ export interface MessageItem {
   content: string;
   createdAt: string;
   attachments?: PromptAttachmentDescriptor[];
+  skillId?: string | null;
+  skillName?: string | null;
+  skillDisplayName?: string | null;
 }
 
 export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' | 'blocked';

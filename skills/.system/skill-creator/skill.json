@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "openagent.skill.v1",
+  "name": "skill-creator",
+  "version": "0.1.0",
+  "displayName": "Skill Creator",
+  "description": "Create or update OpenAgent skills with SKILL.md, skill.json, resources, and governed scripts.",
+  "risk": "write",
+  "tags": ["skill", "authoring", "scaffolding"],
+  "allowedTools": ["skill_load", "skill_resource", "skill_script"],
+  "scripts": [
+    {
+      "path": "scripts/init_skill.mjs",
+      "runtime": "node",
+      "description": "Scaffold a minimal OpenAgent skill package at a requested output directory.",
+      "risk": "write",
+      "timeoutMs": 30000,
+      "network": false,
+      "writes": true
+    }
+  ],
+  "resources": [
+    {
+      "path": "templates/SKILL.md",
+      "type": "template",
+      "description": "Starter SKILL.md template for OpenAgent skills."
+    },
+    {
+      "path": "templates/skill.json",
+      "type": "template",
+      "description": "Starter skill.json metadata template."
+    },
+    {
+      "path": "references/openagent-skill-design.md",
+      "type": "reference",
+      "description": "Checklist for OpenAgent skill design and safety."
+    }
+  ]
+}
