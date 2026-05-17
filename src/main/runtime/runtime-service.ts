@@ -21,11 +21,13 @@ import { createPiCodingAgentTool } from './subagents/pi-coding-agent-tool.js';
 import { ApprovalService, type RuntimeApprovalRequest } from './approval-service.js';
 import { KnowledgeService } from './knowledge/knowledge-service.js';
 import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
+import { KnowledgeContextRouter } from './knowledge/knowledge-context-router.js';
 import { getOpenAgentHome } from './knowledge/knowledge-paths.js';
 import { PlanService } from './planning/plan-service.js';
 import { PlanExecutor } from './planning/plan-executor.js';
 import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
 import { resolvePluginContext } from './plugin-resolver.js';
+import { SkillService, type SkillCatalogItem } from './skills/skill-service.js';
 
 const MAX_RUN_CONTEXT_MESSAGES = 32;
 const AUTO_COMPACT_TRANSCRIPT_MESSAGES = 96;
@@ -40,7 +42,9 @@ export class RuntimeService {
   private readonly sessionStore: SessionStore;
   private readonly soulManager: SoulManager;
   private readonly knowledgeService: KnowledgeService;
+  private readonly knowledgeContextRouter: KnowledgeContextRouter;
   private readonly planService: PlanService;
+  private readonly skillService: SkillService;
   private readonly toolRegistry: ReturnType<typeof createDefaultToolRegistry>;
   private readonly subagents: SubagentService;
   private readonly messages: RuntimeMessage[] = [];
@@ -54,7 +58,9 @@ export class RuntimeService {
     this.eventBus = new RuntimeEventBus(options.emitUiEvent);
     this.sessionStore = new SessionStore(options.agentId);
     this.knowledgeService = new KnowledgeService(options.agentId);
+    this.knowledgeContextRouter = new KnowledgeContextRouter();
     this.planService = new PlanService(options.agentId);
+    this.skillService = new SkillService({ agentId: options.agentId, workspaceRoot: options.workspaceRoot });
     this.soulManager = new SoulManager({
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
@@ -65,6 +71,9 @@ export class RuntimeService {
     this.toolRegistry = createDefaultToolRegistry(options.workspaceRoot);
     this.subagents = new SubagentService(this.knowledgeService);
     for (const tool of createKnowledgeTools(this.knowledgeService)) {
+      this.toolRegistry.register(tool);
+    }
+    for (const tool of this.skillService.createTools()) {
       this.toolRegistry.register(tool);
     }
     this.toolRegistry.register(createShellAgentTool(this.subagents, options.workspaceRoot));
@@ -100,8 +109,52 @@ export class RuntimeService {
     }
   }
 
+  private syncPluginSkills() {
+    this.skillService.setPluginSkills(this.options.pluginContextResolver?.getSkillPackages?.() ?? []);
+  }
+
   getAgentBootstrapSnapshot() {
     return this.soulManager.getBootstrapSnapshot();
+  }
+
+  listSkills() {
+    this.syncPluginSkills();
+    return this.skillService.listSkills();
+  }
+
+  refreshSkills() {
+    this.syncPluginSkills();
+    return this.skillService.refreshSkills();
+  }
+
+  getSkill(nameOrId: string) {
+    this.syncPluginSkills();
+    return this.skillService.getSkill(nameOrId);
+  }
+
+  setSkillEnabled(input: { skillName?: string; skillId?: string; enabled?: boolean }) {
+    this.syncPluginSkills();
+    return this.skillService.setEnabled(input.skillName || input.skillId || '', Boolean(input.enabled));
+  }
+
+  testSkill(input: { skillName?: string; skillId?: string }) {
+    this.syncPluginSkills();
+    return this.skillService.testSkill(input.skillName || input.skillId || '');
+  }
+
+  installLocalSkill(input: { sourceDir?: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) {
+    this.syncPluginSkills();
+    return this.skillService.installLocal({
+      sourceDir: String(input.sourceDir || ''),
+      target: input.target,
+      overwrite: Boolean(input.overwrite)
+    });
+  }
+
+  private resolveSelectedSkill(selectedSkillId?: string | null) {
+    const value = String(selectedSkillId || '').trim();
+    if (!value) return null;
+    return this.skillService.getSkill(value);
   }
 
   listSoulProposals(status?: 'pending_approval' | 'approved' | 'rejected' | 'applied') {
@@ -187,7 +240,9 @@ export class RuntimeService {
               ? '已设为始终允许，同类操作后续将自动通过。'
               : result.scope === 'session'
                 ? '已设为本会话允许，同类操作本会话内将自动通过。'
-                : '外部路径访问已批准，agent 将继续执行。'
+                : result.request.actionType?.startsWith('skill.script')
+                  ? 'Skill 脚本执行已批准，本次调用将继续执行。'
+                  : '外部路径访问已批准，agent 将继续执行。'
             : '外部路径访问已拒绝。'
       });
     }
@@ -372,6 +427,7 @@ export class RuntimeService {
       sessionFile,
       abortSignal: controller.signal,
       attachments,
+      selectedSkillId: payload.skillId ?? null,
       plan: draftPlan
     });
 
@@ -431,11 +487,13 @@ export class RuntimeService {
     sessionFile: string;
     abortSignal: AbortSignal;
     attachments: RuntimeAttachment[];
+    selectedSkillId?: string | null;
     plan?: AgentPlan | null;
   }) {
     const { prompt, runId, thread, transcript, sessionFile, abortSignal, attachments } = input;
     let activePlan = input.plan ?? null;
     let planExecutor: PlanExecutor | null = null;
+    const startedAt = Date.now();
     const loopSteps: Array<{ id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }> = [
       { id: `${runId}-context`, title: '构建运行上下文', status: 'completed' },
       { id: `${runId}-loop-start`, title: '启动 agent loop', status: 'in_progress' },
@@ -457,6 +515,11 @@ export class RuntimeService {
     };
 
     try {
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'executePromptRun entered',
+        data: { runId, threadId: thread.threadId, elapsedMs: Date.now() - startedAt, hasPlan: Boolean(activePlan) }
+      });
       if (activePlan) {
         if (activePlan.approvalRequired) {
           this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户确认 Agent Plan。' });
@@ -492,11 +555,51 @@ export class RuntimeService {
         this.emitPlan('plan.updated', activePlan, activePlan.approvalRequired ? '用户已确认计划，开始执行。' : 'LLM classifier 判定无需人工确认，自动执行计划。');
       }
 
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'resolvePluginContext start',
+        data: { runId, threadId: thread.threadId, elapsedMs: Date.now() - startedAt, promptLength: prompt.length }
+      });
       const pluginContext = await resolvePluginContext({
         prompt,
         resolver: this.options.pluginContextResolver
       });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'resolvePluginContext completed',
+        data: {
+          runId,
+          threadId: thread.threadId,
+          elapsedMs: Date.now() - startedAt,
+          toolCount: pluginContext.tools.length,
+          skillSummaryCount: pluginContext.skills ? pluginContext.skills.split('\n').filter(Boolean).length : 0
+        }
+      });
+      this.syncPluginSkills();
+      const selectedSkill = this.resolveSelectedSkill(input.selectedSkillId ?? null);
+      const skillContext = this.skillService.resolveForPrompt({
+        prompt,
+        attachments,
+        selectedSkillId: input.selectedSkillId ?? null
+      });
+      this.eventBus.emit('skill.resolved', {
+        runId,
+        threadId: thread.threadId,
+        skills: skillContext.summaries.map((skill) => ({ name: skill.name, source: skill.source, risk: skill.risk, description: skill.description }))
+      });
 
+      const runMessages = transcript.readMessages({ limit: MAX_RUN_CONTEXT_MESSAGES });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'prepare runInput start',
+        data: {
+          runId,
+          threadId: thread.threadId,
+          elapsedMs: Date.now() - startedAt,
+          toolCount: [...this.toolRegistry.list(), ...pluginContext.tools].length,
+          transcriptMessageCount: runMessages.length
+        }
+      });
       const runInput = buildRunInput({
         runId,
         threadId: thread.threadId,
@@ -506,7 +609,7 @@ export class RuntimeService {
         prompt,
         providerId: this.options.providerId,
         model: this.options.model,
-        messages: transcript.readMessages({ limit: MAX_RUN_CONTEXT_MESSAGES }),
+        messages: runMessages,
         attachments,
         tools: [...this.toolRegistry.list(), ...pluginContext.tools],
         abortSignal,
@@ -536,10 +639,36 @@ export class RuntimeService {
           this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户审批外部路径访问。' });
           return this.requestToolApproval(request);
         },
-        getPlanContext: () => (activePlan ? toPlanExecutionContext(activePlan) : null)
+        getPlanContext: () => toPlanExecutionContext(activePlan, selectedSkill) ?? toSelectedSkillExecutionContext(selectedSkill)
+      });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'prepare runInput completed',
+        data: {
+          runId,
+          threadId: thread.threadId,
+          elapsedMs: Date.now() - startedAt,
+          messageCount: runMessages.length,
+          toolCount: runInput.tools.length
+        }
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
-      const knowledgeContext = await this.buildKnowledgeContext(prompt);
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledge context lookup start',
+        data: { runId, threadId: thread.threadId, elapsedMs: Date.now() - startedAt, promptLength: prompt.length }
+      });
+      const knowledgeContext = await this.buildKnowledgeContext(prompt, abortSignal);
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledge context lookup completed',
+        data: {
+          runId,
+          threadId: thread.threadId,
+          elapsedMs: Date.now() - startedAt,
+          knowledgeContextLength: knowledgeContext.length
+        }
+      });
       planExecutor?.completeAndStart(
         'plan-step-inspect',
         '已完成运行上下文、长期记忆和知识库上下文检查。',
@@ -576,6 +705,16 @@ export class RuntimeService {
         'Relevant Knowledge Base context:',
         knowledgeContext || '(no relevant knowledge context found)',
         '',
+        'Relevant skill context:',
+        skillContext.promptBlock,
+        '',
+        ...(selectedSkill
+          ? [
+              'Selected skill routing rule:',
+              formatSelectedSkillRoutingRule(selectedSkill),
+              ''
+            ]
+          : []),
         'Relevant plugin context:',
         pluginContext.skills || '(no relevant plugin context found)',
         '',
@@ -891,9 +1030,46 @@ export class RuntimeService {
     };
   }
 
-  private async buildKnowledgeContext(prompt: string) {
+  private async buildKnowledgeContext(prompt: string, abortSignal?: AbortSignal) {
     try {
-      const results = await this.knowledgeService.search({ scope: 'system', query: prompt, limit: 3 });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledge context router start',
+        data: { promptLength: prompt.length }
+      });
+      const decision = await this.knowledgeContextRouter.classify({ prompt, abortSignal }).catch((error) => {
+        appendRuntimeInfoLog({
+          scope: 'context',
+          message: 'knowledge context router failed',
+          data: { promptLength: prompt.length, error: errorToMessage(error) }
+        });
+        return null;
+      });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledge context router completed',
+        data: {
+          promptLength: prompt.length,
+          needsKnowledge: Boolean(decision?.needsKnowledge),
+          reason: decision?.reason || '(no router decision)',
+          queryLength: decision?.query?.length ?? 0,
+          limit: decision?.limit ?? 0
+        }
+      });
+      if (!decision?.needsKnowledge) return '';
+      const query = decision.query?.trim() || prompt;
+      const limit = decision.limit ?? 3;
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledgeService.search start',
+        data: { promptLength: prompt.length, queryLength: query.length, limit, routerReason: decision.reason }
+      });
+      const results = await this.knowledgeService.search({ scope: 'system', query, limit });
+      appendRuntimeInfoLog({
+        scope: 'context',
+        message: 'knowledgeService.search completed',
+        data: { promptLength: prompt.length, queryLength: query.length, resultCount: results.length }
+      });
       if (results.length === 0) return '';
       return results
         .map((result, index) => {
@@ -1171,7 +1347,8 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
   return null;
 }
 
-function toPlanExecutionContext(plan: AgentPlan): PlanExecutionContext | null {
+function toPlanExecutionContext(plan: AgentPlan | null, selectedSkill?: SkillCatalogItem | null): PlanExecutionContext | null {
+  if (!plan) return null;
   const currentStep = plan.steps.find((step) => step.status === 'in_progress') ?? plan.steps.find((step) => step.status === 'pending');
   if (!currentStep) return null;
   return {
@@ -1179,8 +1356,41 @@ function toPlanExecutionContext(plan: AgentPlan): PlanExecutionContext | null {
     stepId: currentStep.id,
     mode: plan.mode,
     allowedTools: currentStep.allowedTools,
-    riskLevel: currentStep.riskLevel
+    riskLevel: currentStep.riskLevel,
+    selectedSkillName: selectedSkill?.name,
+    selectedSkillHasScripts: Boolean(selectedSkill?.scripts.length)
   };
+}
+
+function toSelectedSkillExecutionContext(selectedSkill?: SkillCatalogItem | null): PlanExecutionContext | null {
+  if (!selectedSkill) return null;
+  return {
+    planId: `selected-skill:${selectedSkill.name}`,
+    stepId: 'selected-skill-routing',
+    mode: 'executing',
+    riskLevel: selectedSkill.risk === 'destructive' ? 'high' : selectedSkill.risk === 'read' ? 'low' : 'medium',
+    selectedSkillName: selectedSkill.name,
+    selectedSkillHasScripts: selectedSkill.scripts.length > 0
+  };
+}
+
+function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {
+  const scripts = skill.scripts.length > 0
+    ? skill.scripts.map((script) => `- ${script.path} runtime=${script.runtime || 'unknown'} risk=${script.risk || 'read'} network=${script.network === true} writes=${script.writes === true}${script.description ? ` :: ${script.description}` : ''}`).join('\n')
+    : '- (no declared scripts)';
+  const resources = skill.resources.filter((resource) => resource.kind !== 'script').slice(0, 12).map((resource) => `- ${resource.kind}: ${resource.path}${resource.description ? ` :: ${resource.description}` : ''}`).join('\n') || '- (no declared resources)';
+  return [
+    `The user explicitly selected skill ${skill.name} (${skill.id}). Treat this as the primary execution path for this run.`,
+    'Do not delegate to pi_coding_agent to reimplement the selected skill when a declared skill script/resource can satisfy the task.',
+    'If detailed instructions are needed, call skill_load with this exact skillName first.',
+    'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path.',
+    'If deterministic computation is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args.',
+    'Only avoid skill_script when no declared script is relevant or the user explicitly asks for code changes outside the selected skill.',
+    'Declared scripts:',
+    scripts,
+    'Declared resources:',
+    resources
+  ].join('\n');
 }
 
 function formatPlanForPrompt(plan: AgentPlan) {

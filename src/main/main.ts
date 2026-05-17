@@ -571,7 +571,17 @@ function registerIpc() {
       catalog: await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model })
     };
   });
-  ipcMain.handle('skills:list', () => []);
+  ipcMain.handle('skills:list', () => runtimeService.listSkills());
+  ipcMain.handle('skills:refresh', () => runtimeService.refreshSkills());
+  ipcMain.handle('skills:get', (_event, payload) => runtimeService.getSkill(String(payload?.skillName || payload?.skillId || payload || '')));
+  ipcMain.handle('skills:set-enabled', (_event, payload) => runtimeService.setSkillEnabled(payload ?? {}));
+  ipcMain.handle('skills:test', (_event, payload) => runtimeService.testSkill(payload ?? {}));
+  ipcMain.handle('skills:choose-directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, { properties: ['openDirectory'] });
+    if (result.canceled) return { ok: false, canceled: true };
+    return { ok: true, directoryPath: result.filePaths[0] };
+  });
+  ipcMain.handle('skills:install-local', (_event, payload) => runtimeService.installLocalSkill(payload ?? {}));
   ipcMain.handle('plugins:get-registry', () => pluginService.getRegistry());
   ipcMain.handle('plugins:discover', async (_event, payload) => pluginService.discover({ pluginsRoot: typeof payload?.pluginsRoot === 'string' ? payload.pluginsRoot : undefined }));
   ipcMain.handle('plugins:install-local', async (_event, payload) => pluginService.installLocal(String(payload?.path || '')));

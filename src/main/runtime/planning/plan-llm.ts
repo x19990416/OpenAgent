@@ -1,4 +1,5 @@
 import { buildPiProviderCatalog } from '../pi/pi-model-registry.js';
+import { appendLlmResponseLog } from '../runtime-info-logger.js';
 
 export interface LlmPlanStepDraft {
   title: string;
@@ -42,7 +43,7 @@ const ALLOWED_TOOL_HINTS = [
 export class PlanLlmGenerator {
   async classifyIntent(input: { prompt: string; fallbackRiskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanningIntentDecision | null> {
     const schema = '{"shouldPlan":true,"approvalRequired":true,"riskLevel":"low|medium|high","reason":"string"}';
-    const text = await generateText([
+    const text = await generateText('classify-intent', [
       'Decide whether this OpenAgent user request needs Agent Plan Mode.',
       'Return strict JSON only. No Markdown. No code fence.',
       'Agent Plan Mode is useful for multi-step tasks, file writes, multi-file output, code changes, data deletion, risky operations, git operations, long-running work, or tasks that need a visible structured execution plan.',
@@ -69,7 +70,7 @@ export class PlanLlmGenerator {
 
   async generate(input: { prompt: string; riskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanDraft | null> {
     const schema = '{"summary":"string","approvalReason":"string","steps":[{"title":"string","description":"string","allowedTools":["read-only"],"riskLevel":"low|medium|high","requiresApproval":false}]}';
-    const text = await generateText([
+    const text = await generateText('generate-plan', [
       'You create concise execution plans for OpenAgent Plan Mode.',
       'Return strict JSON only. No Markdown. No code fence.',
       'The plan should contain 2-6 business execution steps for the user goal, not generic runtime plumbing.',
@@ -116,9 +117,28 @@ export class PlanLlmGenerator {
   }
 }
 
-async function generateText(prompt: string): Promise<string | null> {
+async function generateText(operation: 'classify-intent' | 'generate-plan', prompt: string): Promise<string | null> {
   const endpoint = await resolveChatEndpoint();
   if (!endpoint) return null;
+  const requestBody = {
+    model: endpoint.model,
+    temperature: 0.1,
+    messages: [
+      { role: 'system', content: 'You are the OpenAgent structured planning module. Return JSON only.' },
+      { role: 'user', content: prompt }
+    ]
+  };
+  appendLlmResponseLog({
+    scope: 'plan-loop',
+    message: `Plan LLM request body (${operation})`,
+    data: {
+      operation,
+      baseUrl: endpoint.baseUrl,
+      model: endpoint.model,
+      promptLength: prompt.length,
+      requestBody
+    }
+  });
   const response = await fetch(`${endpoint.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -126,18 +146,25 @@ async function generateText(prompt: string): Promise<string | null> {
       Authorization: `Bearer ${endpoint.apiKey}`,
       ...(endpoint.extraHeaders ?? {})
     },
-    body: JSON.stringify({
+    body: JSON.stringify(requestBody)
+  });
+  const rawText = await response.text().catch(() => '');
+  appendLlmResponseLog({
+    scope: 'plan-loop',
+    message: `Plan LLM raw response body (${operation})`,
+    data: {
+      operation,
+      baseUrl: endpoint.baseUrl,
       model: endpoint.model,
-      temperature: 0.1,
-      messages: [
-        { role: 'system', content: 'You are the OpenAgent structured planning module. Return JSON only.' },
-        { role: 'user', content: prompt }
-      ]
-    })
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      rawText
+    }
   });
   if (!response.ok) return null;
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content?.trim() || null;
+  const data = parseJsonFromResponse(rawText) as { choices?: Array<{ message?: { content?: string } }> } | null;
+  return data?.choices?.[0]?.message?.content?.trim() || null;
 }
 
 async function resolveChatEndpoint(): Promise<{ baseUrl: string; model: string; apiKey: string; extraHeaders?: Record<string, string> } | null> {
@@ -162,6 +189,14 @@ function parseJson(text: string) {
   if (start < 0 || end <= start) return null;
   try {
     return JSON.parse(source.slice(start, end + 1)) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonFromResponse(text: string) {
+  try {
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }

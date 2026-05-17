@@ -6,15 +6,22 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:electron": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron .\"",
-    "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
-    "typecheck": "tsc -b --pretty false",
+    "dev:electron": "concurrently -k \"vite --host 127.0.0.1\" \"tsc -b tsconfig.electron.json --force --watch --preserveWatchOutput\" \"wait-on tcp:5173 dist/main/main.js && electron .\"",
+    "build": "pnpm typecheck && vite build && pnpm build:main",
+    "typecheck": "tsc -p tsconfig.renderer.json --pretty false && tsc -p tsconfig.electron.json --pretty false --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "build:mac": "bash scripts/build-macos.sh",
     "build:win": "bash scripts/build-windows.sh",
     "build:all": "bash scripts/build-all.sh",
     "package:macos:app": "bash scripts/package-macos-app.sh",
-    "package:windows:installer": "bash scripts/package-windows-installer.sh"
+    "package:windows:installer": "bash scripts/package-windows-installer.sh",
+    "smoke:skills": "node scripts/smoke-skill-system.mjs",
+    "build:main": "tsc -b tsconfig.electron.json --force",
+    "e2e:skill-selected": "node scripts/e2e-skill-selected.mjs",
+    "smoke:skill-install": "node scripts/smoke-skill-install.mjs",
+    "skill:install": "node scripts/openagent-skill.mjs install",
+    "smoke:skill-cli": "node scripts/smoke-skill-cli.mjs",
+    "smoke:plugin-skills": "node scripts/smoke-plugin-skills.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.64.0",
@@ -39,5 +46,8 @@
     "vite": "latest",
     "wait-on": "latest",
     "electron-builder": "latest"
+  },
+  "bin": {
+    "openagent-skill": "scripts/openagent-skill.mjs"
   }
 }

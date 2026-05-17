@@ -446,6 +446,29 @@ export function useUiEventStream() {
 }
 
 
+
+function makeSkillActivity(event: UiEvent, status: RuntimeActivityItem['status'], title: string, detail?: string, meta?: Record<string, unknown>): RuntimeActivityItem {
+  const payload = asRecord(event.payload);
+  return {
+    id: `${event.type}-${String(payload.skillName || 'skill')}-${String(payload.scriptPath || payload.mode || event.id)}`,
+    runId: typeof payload.runId === 'string' ? payload.runId : undefined,
+    threadId: typeof payload.threadId === 'string' ? payload.threadId : undefined,
+    kind: 'skill',
+    status,
+    title,
+    detail,
+    toolName: typeof payload.scriptPath === 'string' ? 'skill_script' : event.type,
+    target: typeof payload.skillName === 'string' ? payload.skillName : undefined,
+    createdAt: event.createdAt,
+    completedAt: status === 'running' ? undefined : event.createdAt,
+    meta: { ...payload, ...meta }
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean) {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     if (predicate(items[index])) return index;
@@ -600,6 +623,78 @@ function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewMode
       return {
         ...prev,
         runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12)
+      };
+    }
+    case 'skill.resolved': {
+      const payload = asRecord(event.payload);
+      const skills = Array.isArray(payload.skills) ? payload.skills : [];
+      const names = skills.map((skill) => asRecord(skill).name).filter(Boolean).map(String);
+      const activity = makeSkillActivity(
+        event,
+        'completed',
+        names.length > 0 ? `Resolved skills: ${names.join(', ')}` : 'Resolved skills: none',
+        names.length > 0 ? `${names.length} relevant skill(s) available for this run.` : 'No relevant skill context found.',
+        { skills }
+      );
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12),
+        runLog: [...prev.runLog, makeLog(event, 'info', activity.title)]
+      };
+    }
+    case 'skill.loaded': {
+      const payload = asRecord(event.payload);
+      const skillName = String(payload.skillName || 'skill');
+      const mode = String(payload.mode || 'summary');
+      const activity = makeSkillActivity(event, 'completed', `Loaded skill: ${skillName}`, `mode=${mode}`);
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12),
+        runLog: [...prev.runLog, makeLog(event, 'info', activity.title)]
+      };
+    }
+    case 'skill.script.started': {
+      const payload = asRecord(event.payload);
+      const skillName = String(payload.skillName || 'skill');
+      const scriptPath = String(payload.scriptPath || 'script');
+      const auditLogPath = typeof payload.auditLogPath === 'string' ? `audit=${payload.auditLogPath}` : '';
+      const activity = makeSkillActivity(event, 'running', `Running skill script: ${skillName}`, [scriptPath, auditLogPath].filter(Boolean).join(' · '));
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12),
+        runLog: [...prev.runLog, makeLog(event, 'info', activity.title)]
+      };
+    }
+    case 'skill.script.updated': {
+      const payload = asRecord(event.payload);
+      const skillName = String(payload.skillName || 'skill');
+      const scriptPath = String(payload.scriptPath || 'script');
+      const auditLogPath = typeof payload.auditLogPath === 'string' ? `audit=${payload.auditLogPath}` : '';
+      const activity = makeSkillActivity(event, 'running', `Running skill script: ${skillName}`, [scriptPath, auditLogPath].filter(Boolean).join(' · '));
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12)
+      };
+    }
+    case 'skill.script.completed':
+    case 'skill.script.failed': {
+      const payload = asRecord(event.payload);
+      const skillName = String(payload.skillName || 'skill');
+      const scriptPath = String(payload.scriptPath || 'script');
+      const failed = event.type === 'skill.script.failed';
+      const exitCode = payload.exitCode === undefined ? '' : `exitCode=${String(payload.exitCode)}`;
+      const duration = payload.durationMs === undefined ? '' : `duration=${String(payload.durationMs)}ms`;
+      const auditLogPath = typeof payload.auditLogPath === 'string' ? `audit=${payload.auditLogPath}` : '';
+      const activity = makeSkillActivity(
+        event,
+        failed ? 'failed' : 'completed',
+        `${failed ? 'Failed' : 'Completed'} skill script: ${skillName}`,
+        [scriptPath, exitCode, duration, auditLogPath].filter(Boolean).join(' · ')
+      );
+      return {
+        ...prev,
+        runtimeActivities: upsertRuntimeActivity(prev.runtimeActivities, activity).slice(-12),
+        runLog: [...prev.runLog, makeLog(event, failed ? 'error' : 'info', activity.title)]
       };
     }
     case 'message.delta': {

@@ -1,0 +1,17 @@
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = mkdtempSync(path.join(tmpdir(), 'openagent-skill-cli-'));
+const source = path.join(root, 'claude-style-skill');
+const home = path.join(root, '.openagent');
+mkdirSync(path.join(source, 'scripts'), { recursive: true });
+writeFileSync(path.join(source, 'SKILL.md'), '---\nname: claude-style-skill\ndescription: Claude style skill package.\n---\n\n# Claude Style Skill\n', 'utf8');
+writeFileSync(path.join(source, 'scripts/run.sh'), 'echo ok\n', 'utf8');
+const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts/openagent-skill.mjs'), 'install', source, '--target', 'agent', '--agent', 'main', '--home', home], { encoding: 'utf8' });
+if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+const target = path.join(home, 'agents/main/skills/claude-style-skill/SKILL.md');
+if (!existsSync(target)) throw new Error(`installed file missing: ${target}`);
+console.log(result.stdout.trim());

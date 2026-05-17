@@ -545,10 +545,11 @@ Capture draft 不应直接写入长期知识。必须先进入审批，尤其是
 
 System prompt 只说明知识工具存在和使用边界：
 
-- 问 OpenAgent 架构、runtime、项目文档、公共规范、历史决策时，优先通过 `knowledge_search` / `knowledge_query` 检索。
+- 是否在主模型调用前预检知识库，由轻量 LLM router 语义判断；不要每轮固定调用 `KnowledgeService.search()`，也不要用关键词硬判替代模型判断。
+- 问 OpenAgent 架构、runtime、项目文档、公共规范、历史决策时，LLM router 可选择先通过 `KnowledgeService.search()` 注入 top-k 摘要；主模型执行中仍可按需调用 `knowledge_search` / `knowledge_query`。
 - 需要沉淀知识时，优先通过 `knowledge_capture` 生成候选，再进入审批。
 - 不要把 wiki、memory、skills、docs 全量塞进 prompt。
-- 注入内容只允许是 `KnowledgeService` 返回的 top-k 摘要、snippet、citation，不允许 runtime 直接扫目录拼 prompt。
+- 注入内容只允许是 LLM router 判定相关后由 `KnowledgeService` 返回的 top-k 摘要、snippet、citation，不允许 runtime 直接扫目录拼 prompt。
 - 如果 query 结果显示存在未编译但相关的 source，可触发 `knowledge_compile_topic`，但应在 UI/run log 中可观测。
 
 ## 11. 安全与边界

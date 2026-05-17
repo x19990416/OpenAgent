@@ -72,6 +72,24 @@ export interface RuntimeSnapshot {
   activeThread: { threadId: string } | null;
 }
 
+export type RuntimeToolPolicyDecision =
+  | { kind: 'allow' }
+  | { kind: 'deny'; reason: string }
+  | {
+      kind: 'requires_approval';
+      approval: {
+        title: string;
+        risk: 'low' | 'medium' | 'high';
+        description: string;
+        actionType: string;
+        targetPath?: string;
+        access?: 'read' | 'write' | 'execute';
+        recursive?: boolean;
+        scope?: 'once' | 'session' | 'always';
+        payloadPreview?: string;
+      };
+    };
+
 export interface RuntimeTool {
   name: string;
   label?: string;
@@ -79,6 +97,7 @@ export interface RuntimeTool {
   parameters: unknown;
   risk?: 'read' | 'external_send' | 'external_write' | 'destructive' | 'secret_access';
   pluginId?: string;
+  policy?: (args: unknown, planContext?: PlanExecutionContext | null) => RuntimeToolPolicyDecision | null;
   execute(args: RuntimeToolExecutionInput): Promise<RuntimeToolExecutionResult>;
 }
 
@@ -118,6 +137,8 @@ export interface PlanExecutionContext {
   mode: 'planning' | 'executing';
   allowedTools?: string[];
   riskLevel?: 'low' | 'medium' | 'high';
+  selectedSkillName?: string;
+  selectedSkillHasScripts?: boolean;
 }
 
 export interface AgentRuntimeRunInput {
@@ -190,6 +211,7 @@ export interface RuntimeServiceOptions {
   pluginContextResolver?: {
     getRuntimeTools(): RuntimeTool[];
     getRelevantSkillSummaries(prompt: string): string[];
+    getSkillPackages?(): Array<{ pluginId: string; pluginName: string; name: string; description?: string; content?: string; rootDir?: string; skillFile?: string }>;
   };
 }
 
@@ -207,6 +229,12 @@ export interface RuntimeUiEvent {
     | 'tool.completed'
     | 'tool.failed'
     | 'runtime.activity'
+    | 'skill.resolved'
+    | 'skill.loaded'
+    | 'skill.script.started'
+    | 'skill.script.updated'
+    | 'skill.script.completed'
+    | 'skill.script.failed'
     | 'message.delta'
     | 'message.completed'
     | 'patch.ready'

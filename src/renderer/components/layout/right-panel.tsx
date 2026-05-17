@@ -72,6 +72,7 @@ export function RightPanel({
           <ContextPanel
             workspace={viewModel.workspace}
             tools={viewModel.tools}
+            runtimeActivities={viewModel.runtimeActivities}
             activeThreadId={viewModel.activeThreadId}
             onCompactThread={onCompactThread}
           />

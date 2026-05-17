@@ -17,6 +17,7 @@ export type SettingsTab =
   | 'appearance'
   | 'models'
   | 'plugins'
+  | 'skills'
   | 'knowledge'
   | 'config'
   | 'personalization'

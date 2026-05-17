@@ -34,12 +34,17 @@ const READ_ONLY_TOOLS = new Set([
   'knowledge_health',
   'knowledge_lint',
   'knowledge_graph',
-  'knowledge_provenance'
+  'knowledge_provenance',
+  'skill_list',
+  'skill_load',
+  'skill_resource'
 ]);
 
 const KNOWLEDGE_WRITE_TOOLS = new Set(['knowledge_ingest', 'knowledge_ingest_file', 'knowledge_compile', 'knowledge_compile_topic', 'knowledge_capture']);
 const FILE_WRITE_TOOLS = new Set(['write_file']);
 const SHELL_EXEC_TOOLS = new Set(['shell_exec']);
+const SKILL_SCRIPT_TOOLS = new Set(['skill_script']);
+const SKILL_TOOLS = new Set(['skill_list', 'skill_load', 'skill_resource', 'skill_script']);
 const PI_CODING_TOOLS = new Set(['pi_coding_agent']);
 
 export class ToolPolicy {
@@ -54,11 +59,25 @@ export class ToolPolicy {
     }
 
     if (PI_CODING_TOOLS.has(tool.name)) {
-      return decidePiCodingAgent(args);
+      return decidePiCodingAgent(args, planContext);
     }
 
     if (tool.name === 'feishu_agent') {
       return decideFeishuAgent(args, this.summarizeArgs(args));
+    }
+
+    const toolDecision = tool.policy?.(args, planContext);
+    if (toolDecision) {
+      if (toolDecision.kind === 'requires_approval' && !toolDecision.approval.payloadPreview) {
+        return {
+          ...toolDecision,
+          approval: {
+            ...toolDecision.approval,
+            payloadPreview: this.summarizeArgs(args)
+          }
+        };
+      }
+      return toolDecision;
     }
 
     if (tool.risk) {
@@ -96,6 +115,10 @@ export class ToolPolicy {
 
     if (SHELL_EXEC_TOOLS.has(tool.name)) {
       return this.decideShellExec(tool, args);
+    }
+
+    if (SKILL_SCRIPT_TOOLS.has(tool.name)) {
+      return this.decideSkillScript(tool, args);
     }
 
     if (KNOWLEDGE_WRITE_TOOLS.has(tool.name)) {
@@ -231,6 +254,34 @@ export class ToolPolicy {
     return { kind: 'allow' };
   }
 
+  private decideSkillScript(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+    const record = asRecord(args);
+    const skillName = String(record.skillName ?? '').trim();
+    const scriptPath = String(record.scriptPath ?? '').trim();
+    if (!skillName || !scriptPath) {
+      return { kind: 'deny', reason: 'skill_script requires skillName and scriptPath' };
+    }
+    if (scriptPath.includes('..') || scriptPath.startsWith('/') || scriptPath.includes('\\')) {
+      return { kind: 'deny', reason: `Refusing unsafe skill script path: ${scriptPath}` };
+    }
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: '请求执行 Skill 脚本',
+        risk: 'medium',
+        description: [
+          `OpenAgent 需要执行 Skill 脚本：${skillName}/${scriptPath}`,
+          'Skill 脚本由 OpenAgent 通过受控 tool 执行，会记录日志并受 timeout/abort 控制。',
+          '批准后仅用于本次 tool 调用。'
+        ].join('\n'),
+        actionType: 'skill.script',
+        access: 'execute',
+        scope: 'once',
+        payloadPreview: this.summarizeArgs(args)
+      }
+    };
+  }
+
 
   private decidePlanContext(tool: RuntimeTool, planContext?: PlanExecutionContext | null): ToolPolicyDecision | null {
     if (!planContext) return null;
@@ -240,6 +291,10 @@ export class ToolPolicy {
         kind: 'deny',
         reason: `Tool ${tool.name} is blocked while Agent Plan is in planning mode.`
       };
+    }
+
+    if (planContext.selectedSkillName && SKILL_TOOLS.has(tool.name)) {
+      return null;
     }
 
     const allowedTools = planContext.allowedTools ?? [];
@@ -323,11 +378,19 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('file-write') && FILE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('shell-exec') && SHELL_EXEC_TOOLS.has(toolName)) return true;
   if ((allowedTools.includes('pi-coding') || allowedTools.includes('coding')) && PI_CODING_TOOLS.has(toolName)) return true;
+  if ((allowedTools.includes('skill') || allowedTools.includes('skill-tools')) && SKILL_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('tool-executor')) return true;
   return false;
 }
 
-function decidePiCodingAgent(args: unknown): ToolPolicyDecision {
+function decidePiCodingAgent(args: unknown, planContext?: PlanExecutionContext | null): ToolPolicyDecision {
+  if (planContext?.selectedSkillName && planContext.selectedSkillHasScripts) {
+    return {
+      kind: 'deny',
+      reason: `Selected skill ${planContext.selectedSkillName} declares scripts; use skill_load/skill_resource/skill_script instead of delegating to pi_coding_agent.`
+    };
+  }
+
   const payload = asRecord(args);
   const task = String(payload.task ?? '').trim();
   if (!task) return { kind: 'deny', reason: 'coding agent task is required' };

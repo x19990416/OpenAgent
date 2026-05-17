@@ -348,6 +348,7 @@ function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {
   const searchCount = completed.filter((activity) => activity.kind === 'search').length;
   const commandCount = completed.filter((activity) => activity.kind === 'command').length;
   const toolCount = completed.filter((activity) => activity.kind === 'tool').length;
+  const skillCount = completed.filter((activity) => activity.kind === 'skill').length;
   const failedCount = activities.filter((activity) => activity.status === 'failed').length;
   const parts: string[] = [];
 
@@ -356,6 +357,7 @@ function summarizeRuntimeActivities(activities: RuntimeActivityItem[]) {
   if (searchCount > 0) parts.push(`${searchCount} 次搜索`);
   if (commandCount > 0) parts.push(`已运行 ${commandCount} 条命令`);
   if (toolCount > 0) parts.push(`已调用 ${toolCount} 个工具`);
+  if (skillCount > 0) parts.push(`${skillCount} 个 Skill 事件`);
   if (failedCount > 0) parts.push(`${failedCount} 个失败`);
 
   return parts.length > 0 ? parts.join('，') : `${activities.length} 条运行明细`;

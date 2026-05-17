@@ -1606,6 +1606,36 @@ button {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
+.settings-select {
+  width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  min-height: 40px;
+}
+
+.settings-select:focus {
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.settings-toggle-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.settings-toggle-row.disabled {
+  opacity: 0.62;
+}
+
 .settings-textarea {
   width: 100%;
   min-height: 220px;
@@ -6073,4 +6103,1802 @@ html.is-electron .topbar-brand {
 .settings-plugin-dependency-button.toolbar-button:disabled {
   opacity: 0.62;
   cursor: progress;
+}
+
+/* Skill resource listing in Settings / Skills. */
+.settings-skill-resource-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-skill-resource-item {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.settings-skill-resource-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-skill-resource-kind {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.09);
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-skill-resource-item.is-script .settings-skill-resource-kind {
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+.settings-skill-resource-item.is-reference .settings-skill-resource-kind {
+  background: rgba(124, 58, 237, 0.09);
+  color: #6d28d9;
+}
+
+.settings-skill-resource-path {
+  min-width: 0;
+  overflow: hidden;
+  color: #101828;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-resource-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-skill-install-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.settings-skill-install-row {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-provider-select {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Plugin center redesign: dashboard-style plugin management surface. */
+.settings-plugin-workspace {
+  display: grid;
+  gap: 18px;
+  color: #344054;
+}
+
+.settings-plugin-page-head {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(520px, 780px);
+  align-items: center;
+  gap: 20px;
+}
+
+.settings-plugin-page-head .settings-section-title {
+  color: #101828;
+  font-size: 30px;
+  font-weight: 850;
+  letter-spacing: -0.055em;
+  line-height: 1.05;
+}
+
+.settings-plugin-page-head .settings-section-description {
+  margin-top: 10px;
+  color: #475467;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.settings-plugin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-plugin-stat-grid > div {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  min-width: 0;
+  min-height: 88px;
+  padding: 16px 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.045);
+}
+
+.settings-plugin-stat-grid > div svg {
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: #2563eb;
+  stroke-width: 2.1;
+}
+
+.settings-plugin-stat-grid > div:nth-child(2) svg { color: #10b981; }
+.settings-plugin-stat-grid > div:nth-child(3) svg { color: #635bff; }
+.settings-plugin-stat-grid > div:nth-child(4) svg { color: #ef4444; }
+
+.settings-plugin-stat-grid strong {
+  color: #111827;
+  font-size: 22px;
+  font-weight: 850;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+
+.settings-plugin-stat-grid span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-plugin-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 396px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.settings-plugin-catalog-card,
+.settings-plugin-detail-card {
+  border: 1px solid rgba(15, 23, 42, 0.09) !important;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.055) !important;
+}
+
+.settings-plugin-catalog-card {
+  display: flex;
+  min-height: calc(100vh - 170px);
+  flex-direction: column;
+  padding: 20px;
+}
+
+.settings-plugin-catalog-card .settings-section-header {
+  align-items: center;
+  padding: 0;
+}
+
+.settings-plugin-catalog-card .settings-section-title {
+  color: #101828;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+.settings-plugin-catalog-card .inline-actions {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-plugin-catalog-card .settings-icon-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(15, 23, 42, 0.09);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #334155;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+}
+
+.settings-plugin-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  margin: 16px 0 20px;
+  padding: 0 14px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #98a2b3;
+  font-size: 13px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.settings-plugin-search-row svg {
+  color: #98a2b3;
+}
+
+.settings-plugin-list {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+  gap: 14px;
+  padding-right: 0;
+}
+
+.settings-plugin-card {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-items: start;
+  gap: 6px 14px;
+  min-height: 138px;
+  padding: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: #ffffff;
+  text-align: left;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.035);
+}
+
+.settings-plugin-card.active {
+  border-color: rgba(37, 99, 235, 0.72);
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  box-shadow: 0 16px 36px rgba(37, 99, 235, 0.13);
+}
+
+.settings-plugin-card.active::after {
+  content: '✓';
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2f6df6;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.settings-plugin-card-top {
+  grid-row: 1 / span 3;
+  grid-column: 1;
+  display: block;
+}
+
+.settings-plugin-card-top .settings-provider-item-leading {
+  width: 68px;
+  height: 68px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.055);
+}
+
+.settings-plugin-card-top .status-badge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+}
+
+.settings-plugin-card-title {
+  grid-column: 2 / 3;
+  margin: 2px 0 0;
+  color: #101828;
+  font-size: 16px;
+  font-weight: 850;
+  letter-spacing: -0.025em;
+}
+
+.settings-plugin-card-copy {
+  grid-column: 2 / 4;
+  min-height: 40px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.settings-plugin-card-footer {
+  grid-column: 1 / 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 0;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-plugin-mini-tag {
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: #f2f4f7;
+  color: #475467 !important;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.settings-plugin-catalog-foot {
+  padding: 18px 4px 0;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-plugin-detail-card {
+  max-width: none;
+  padding: 18px;
+}
+
+.settings-plugin-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 18px;
+  border-bottom: 0;
+}
+
+.settings-plugin-detail-title-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings-plugin-detail-avatar {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+}
+
+.settings-plugin-detail-avatar .settings-provider-item-leading {
+  width: 52px;
+  height: 52px;
+  box-shadow: none;
+}
+
+.settings-plugin-detail-header .settings-provider-console-title {
+  color: #101828;
+  font-size: 22px;
+  font-weight: 850;
+  letter-spacing: -0.04em;
+}
+
+.settings-plugin-live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.settings-plugin-live-state span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.13);
+}
+
+.settings-plugin-live-state.is-live {
+  color: #15803d;
+}
+
+.settings-plugin-live-state.is-live span {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+}
+
+.settings-plugin-detail-header .settings-provider-console-subtitle {
+  max-width: 660px;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-plugin-detail-card .inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-plugin-detail-card .inline-actions .toolbar-button,
+.settings-plugin-detail-card .inline-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 15px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.settings-plugin-detail-card .inline-actions .is-primary-ghost {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.settings-plugin-detail-card .inline-actions .primary-button {
+  min-width: 68px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+  color: #344054;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.055);
+}
+
+.settings-plugin-health-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+.settings-plugin-health-strip > div {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 2px 9px;
+  padding: 14px 20px;
+  border-right: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.settings-plugin-health-strip > div:last-child {
+  border-right: 0;
+}
+
+.settings-plugin-health-strip span {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  color: #10b981;
+}
+
+.settings-plugin-health-strip small {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-plugin-health-strip strong {
+  color: #101828;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.settings-plugin-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin: 24px 42px 22px;
+}
+
+.settings-plugin-flow-step {
+  position: relative;
+  display: grid;
+  min-height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.settings-plugin-flow-step::before {
+  content: '✓';
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+  place-items: center;
+  border: 1px solid rgba(37, 99, 235, 0.26);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2f6df6;
+  font-size: 13px;
+}
+
+.settings-plugin-flow-step.done::before {
+  background: #2f6df6;
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(47, 109, 246, 0.1);
+}
+
+.settings-plugin-flow-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: calc(50% + 38px);
+  width: calc(100% - 44px);
+  height: 2px;
+  background: #8bb2ff;
+  transform: translateY(-50%);
+}
+
+.settings-plugin-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.settings-plugin-info-panel {
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.settings-plugin-info-panel .settings-provider-console-label,
+.settings-plugin-section .settings-provider-console-label {
+  margin-bottom: 12px;
+  color: #344054;
+  font-size: 14px;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+
+.settings-plugin-info-list,
+.settings-plugin-diagnostic-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-plugin-info-list > div,
+.settings-plugin-diagnostic-list > div {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.settings-plugin-info-list strong,
+.settings-plugin-diagnostic-list strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #344054;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-info-list svg,
+.settings-plugin-diagnostic-list svg {
+  color: #64748b;
+}
+
+.settings-plugin-diagnostic-list > div {
+  grid-template-columns: 20px 64px minmax(0, 1fr);
+}
+
+.settings-plugin-diagnostic-list > div svg {
+  color: #16a34a;
+}
+
+.settings-plugin-log-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.settings-plugin-section {
+  margin-top: 18px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-plugin-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-plugin-capability {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #344054;
+}
+
+.settings-plugin-capability-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.settings-plugin-capability strong {
+  display: block;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-plugin-capability small {
+  display: block;
+  margin-top: 2px;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.settings-plugin-capability input[type='checkbox'] {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: #cbd5e1;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.settings-plugin-capability input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.24);
+  transition: transform 160ms ease;
+}
+
+.settings-plugin-capability input[type='checkbox']:checked {
+  background: #2f6df6;
+}
+
+.settings-plugin-capability input[type='checkbox']:checked::after {
+  transform: translateX(16px);
+}
+
+.settings-plugin-dependency-section {
+  margin-top: 18px;
+}
+
+.settings-plugin-dependency-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-plugin-dependency-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.settings-plugin-dependency-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-plugin-dependency-main > svg {
+  color: #475467;
+}
+
+.settings-plugin-dependency-main strong {
+  display: block;
+  color: #344054;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.settings-plugin-dependency-main span {
+  display: block;
+  color: #667085;
+  font-size: 12px;
+}
+
+.settings-plugin-dependency-main em {
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.settings-plugin-dependency-main small {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-plugin-dependency-button.toolbar-button {
+  min-height: 34px;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.settings-plugin-section:has(.settings-plugin-field) {
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: #fbfdff;
+}
+
+.settings-plugin-section:has(.settings-plugin-field) .settings-plugin-field:not(.is-boolean) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-plugin-field .settings-text-input,
+.settings-plugin-field .settings-select {
+  min-height: 38px;
+  border-radius: 9px;
+}
+
+.settings-plugin-section > .toolbar-button {
+  min-height: 36px;
+  border-radius: 9px;
+  background: #2f6df6;
+  color: #ffffff;
+}
+
+@media (max-width: 1320px) {
+  .settings-plugin-page-head,
+  .settings-plugin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-plugin-catalog-card {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-plugin-stat-grid,
+  .settings-plugin-health-strip,
+  .settings-plugin-dashboard-grid,
+  .settings-plugin-capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-plugin-health-strip > div {
+    border-right: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  }
+
+  .settings-plugin-health-strip > div:last-child {
+    border-bottom: 0;
+  }
+
+  .settings-plugin-flow {
+    margin-inline: 0;
+  }
+
+  .settings-plugin-flow-step:not(:last-child)::after {
+    display: none;
+  }
+}
+
+/* Closer plugin-detail match to the provided reference: larger cards, vertical actions, pill progress. */
+.settings-plugin-detail-card {
+  padding: 34px 34px 28px;
+  border-radius: 28px;
+}
+
+.settings-plugin-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 172px;
+  align-items: start;
+  gap: 24px;
+  min-height: 190px;
+}
+
+.settings-plugin-detail-title-block {
+  align-items: center;
+  gap: 32px;
+  padding-top: 36px;
+}
+
+.settings-plugin-detail-avatar {
+  width: 120px;
+  height: 120px;
+  border-radius: 28px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+}
+
+.settings-plugin-detail-avatar .settings-provider-item-leading {
+  width: 78px;
+  height: 78px;
+  border-radius: 999px;
+  background: #4b5563;
+  color: #ffffff;
+}
+
+.settings-plugin-detail-avatar .settings-provider-item-leading svg,
+.settings-plugin-detail-avatar svg {
+  color: #ffffff;
+}
+
+.settings-plugin-detail-header .settings-provider-console-title {
+  font-size: 38px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.settings-plugin-live-state {
+  margin-top: 18px;
+  font-size: 22px;
+  font-weight: 850;
+  letter-spacing: -0.025em;
+}
+
+.settings-plugin-live-state span {
+  width: 22px;
+  height: 22px;
+  box-shadow: 0 0 0 8px rgba(34, 197, 94, 0.13);
+}
+
+.settings-plugin-detail-header .settings-provider-console-subtitle {
+  max-width: 660px;
+  margin-top: 16px;
+  color: #667085;
+  font-size: 24px;
+  line-height: 1.38;
+}
+
+.settings-plugin-detail-actions {
+  display: grid !important;
+  justify-content: stretch !important;
+  gap: 22px !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions .toolbar-button,
+.settings-plugin-detail-card .settings-plugin-detail-actions .primary-button {
+  justify-content: center;
+  width: 100%;
+  min-height: 76px;
+  padding: 0 24px;
+  border-radius: 20px;
+  font-size: 22px;
+  font-weight: 850;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.055);
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions .is-primary-ghost {
+  border: 2px solid rgba(47, 109, 246, 0.28);
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions .primary-button,
+.settings-plugin-detail-card .settings-plugin-detail-actions .toolbar-button:not(.is-primary-ghost) {
+  border: 1px solid rgba(15, 23, 42, 0.09);
+  background: #ffffff;
+  color: #111827;
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions svg {
+  width: 24px;
+  height: 24px;
+}
+
+.settings-plugin-health-strip {
+  margin-top: 0;
+  border-radius: 26px;
+}
+
+.settings-plugin-health-strip > div {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 4px 18px;
+  padding: 28px 42px;
+}
+
+.settings-plugin-health-strip span svg {
+  width: 24px;
+  height: 24px;
+}
+
+.settings-plugin-health-strip small {
+  color: #667085;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.settings-plugin-health-strip strong {
+  color: #111827;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.settings-plugin-flow {
+  gap: 0;
+  margin: 44px 84px 42px;
+}
+
+.settings-plugin-flow-step {
+  min-height: 90px;
+  border-radius: 999px;
+  background: #eaf2ff;
+  color: #2563eb;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.05;
+}
+
+.settings-plugin-flow-step::before {
+  width: 56px;
+  height: 56px;
+  margin: 0 0 4px;
+  border: 8px solid rgba(47, 109, 246, 0.12);
+  background: #2f6df6;
+  color: #ffffff;
+  font-size: 34px;
+  box-shadow: none;
+}
+
+.settings-plugin-flow-step:not(:last-child)::after {
+  left: calc(50% + 72px);
+  z-index: 0;
+  width: calc(100% - 86px);
+  height: 4px;
+  background: #9bbdff;
+}
+
+.settings-plugin-dashboard-grid {
+  gap: 34px;
+}
+
+.settings-plugin-info-panel {
+  min-height: 270px;
+  padding: 32px;
+  border-radius: 28px;
+}
+
+.settings-plugin-info-panel .settings-provider-console-label,
+.settings-plugin-section .settings-provider-console-label {
+  margin-bottom: 26px;
+  color: #344054;
+  font-size: 25px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.settings-plugin-info-list,
+.settings-plugin-diagnostic-list {
+  gap: 22px;
+}
+
+.settings-plugin-info-list > div,
+.settings-plugin-diagnostic-list > div {
+  grid-template-columns: 190px minmax(0, 1fr) auto;
+  gap: 18px;
+  font-size: 24px;
+}
+
+.settings-plugin-info-list > div span,
+.settings-plugin-diagnostic-list > div span {
+  color: #667085;
+  font-weight: 650;
+}
+
+.settings-plugin-info-list strong,
+.settings-plugin-diagnostic-list strong {
+  color: #344054;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.settings-plugin-info-list svg {
+  width: 24px;
+  height: 24px;
+}
+
+.settings-plugin-diagnostic-list > div {
+  grid-template-columns: 34px 112px minmax(0, 1fr);
+}
+
+.settings-plugin-diagnostic-list > div svg {
+  width: 26px;
+  height: 26px;
+}
+
+.settings-plugin-log-link {
+  margin-top: 8px;
+  color: #2563eb;
+  font-size: 24px;
+  font-weight: 850;
+}
+
+.settings-plugin-section {
+  margin-top: 36px;
+}
+
+.settings-plugin-capability-grid {
+  gap: 22px;
+}
+
+.settings-plugin-capability {
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  min-height: 118px;
+  padding: 24px 26px;
+  border: 2px solid rgba(47, 109, 246, 0.26);
+  border-radius: 24px;
+  background: #edf4ff;
+}
+
+.settings-plugin-capability-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: transparent;
+  color: #2563eb;
+}
+
+.settings-plugin-capability-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.settings-plugin-capability strong {
+  color: #344054;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.18;
+}
+
+.settings-plugin-capability small {
+  margin-top: 8px;
+  color: #667085;
+  font-size: 20px;
+  font-weight: 750;
+}
+
+.settings-plugin-capability input[type='checkbox'] {
+  width: 72px;
+  height: 40px;
+}
+
+.settings-plugin-capability input[type='checkbox']::after {
+  top: 5px;
+  left: 5px;
+  width: 30px;
+  height: 30px;
+}
+
+.settings-plugin-capability input[type='checkbox']:checked::after {
+  transform: translateX(32px);
+}
+
+.settings-plugin-dependency-item,
+.settings-plugin-section:has(.settings-plugin-field) {
+  border-radius: 24px;
+}
+
+@media (max-width: 1480px) {
+  .settings-plugin-detail-header {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-plugin-detail-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .settings-plugin-detail-card .settings-plugin-detail-actions .toolbar-button,
+  .settings-plugin-detail-card .settings-plugin-detail-actions .primary-button {
+    min-height: 54px;
+    font-size: 16px;
+  }
+
+  .settings-plugin-detail-title-block {
+    padding-top: 0;
+  }
+}
+
+@media (max-width: 1100px) {
+  .settings-plugin-detail-header .settings-provider-console-title {
+    font-size: 30px;
+  }
+
+  .settings-plugin-live-state,
+  .settings-plugin-detail-header .settings-provider-console-subtitle,
+  .settings-plugin-health-strip small,
+  .settings-plugin-info-list > div,
+  .settings-plugin-diagnostic-list > div,
+  .settings-plugin-log-link,
+  .settings-plugin-capability strong,
+  .settings-plugin-capability small {
+    font-size: 16px;
+  }
+
+  .settings-plugin-health-strip strong,
+  .settings-plugin-info-list strong,
+  .settings-plugin-diagnostic-list strong,
+  .settings-plugin-info-panel .settings-provider-console-label,
+  .settings-plugin-section .settings-provider-console-label,
+  .settings-plugin-flow-step {
+    font-size: 18px;
+  }
+}
+
+/* Correction: keep the screenshot structure without oversized typography or vertical wrapping. */
+.settings-plugin-detail-card {
+  padding: 22px 22px 18px;
+  border-radius: 20px;
+}
+
+.settings-plugin-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  align-items: start;
+  gap: 18px;
+  min-height: 132px;
+}
+
+.settings-plugin-detail-title-block {
+  gap: 16px;
+  padding-top: 0;
+}
+
+.settings-plugin-detail-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+}
+
+.settings-plugin-detail-avatar .settings-provider-item-leading {
+  width: 48px;
+  height: 48px;
+}
+
+.settings-plugin-detail-header .settings-provider-console-title {
+  font-size: 22px;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+
+.settings-plugin-live-state {
+  margin-top: 7px;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.settings-plugin-live-state span {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.13);
+}
+
+.settings-plugin-detail-header .settings-provider-console-subtitle {
+  max-width: 620px;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.settings-plugin-detail-actions {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  justify-content: stretch !important;
+  gap: 10px !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions .toolbar-button,
+.settings-plugin-detail-card .settings-plugin-detail-actions .primary-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.settings-plugin-detail-card .settings-plugin-detail-actions svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-plugin-health-strip {
+  margin-top: 6px;
+  border-radius: 16px;
+}
+
+.settings-plugin-health-strip > div {
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 14px 18px;
+  min-width: 0;
+}
+
+.settings-plugin-health-strip span svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-plugin-health-strip small {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-health-strip strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-plugin-flow {
+  gap: 8px;
+  margin: 24px 48px 22px;
+}
+
+.settings-plugin-flow-step {
+  min-height: 54px;
+  border-radius: 999px;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.settings-plugin-flow-step::before {
+  width: 28px;
+  height: 28px;
+  margin: 0 0 2px;
+  border: 4px solid rgba(47, 109, 246, 0.13);
+  font-size: 17px;
+}
+
+.settings-plugin-flow-step:not(:last-child)::after {
+  left: calc(50% + 34px);
+  width: calc(100% - 42px);
+  height: 2px;
+}
+
+.settings-plugin-dashboard-grid {
+  gap: 16px;
+}
+
+.settings-plugin-info-panel {
+  min-height: 160px;
+  padding: 18px;
+  border-radius: 16px;
+}
+
+.settings-plugin-info-panel .settings-provider-console-label,
+.settings-plugin-section .settings-provider-console-label {
+  margin-bottom: 12px;
+  font-size: 16px;
+  letter-spacing: -0.025em;
+}
+
+.settings-plugin-info-list,
+.settings-plugin-diagnostic-list {
+  gap: 10px;
+}
+
+.settings-plugin-info-list > div,
+.settings-plugin-diagnostic-list > div {
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.settings-plugin-info-list strong,
+.settings-plugin-diagnostic-list strong {
+  font-size: 13px;
+}
+
+.settings-plugin-info-list svg,
+.settings-plugin-diagnostic-list > div svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-plugin-diagnostic-list > div {
+  grid-template-columns: 20px 52px minmax(0, 1fr);
+}
+
+.settings-plugin-log-link {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.settings-plugin-section {
+  margin-top: 18px;
+}
+
+.settings-plugin-capability-grid {
+  gap: 10px;
+}
+
+.settings-plugin-capability {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  min-height: 62px;
+  padding: 12px 14px;
+  border-width: 1px;
+  border-radius: 14px;
+}
+
+.settings-plugin-capability-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.settings-plugin-capability-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-plugin-capability strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.settings-plugin-capability small {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.settings-plugin-capability input[type='checkbox'] {
+  width: 38px;
+  height: 22px;
+}
+
+.settings-plugin-capability input[type='checkbox']::after {
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+}
+
+.settings-plugin-capability input[type='checkbox']:checked::after {
+  transform: translateX(16px);
+}
+
+@media (max-width: 1480px) {
+  .settings-plugin-detail-header {
+    grid-template-columns: minmax(0, 1fr) 132px;
+  }
+
+  .settings-plugin-detail-actions {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 980px) {
+  .settings-plugin-detail-header {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-plugin-detail-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Tighten plugin setup flow size only. */
+.settings-plugin-flow {
+  gap: 6px;
+  margin: 16px 64px 18px;
+}
+
+.settings-plugin-flow-step {
+  min-height: 38px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.settings-plugin-flow-step::before {
+  width: 22px;
+  height: 22px;
+  margin: 0 0 1px;
+  border-width: 3px;
+  font-size: 13px;
+}
+
+.settings-plugin-flow-step:not(:last-child)::after {
+  left: calc(50% + 25px);
+  width: calc(100% - 32px);
+  height: 2px;
+}
+
+/* Add breathing room between plugin health summary and detail cards. */
+.settings-plugin-health-strip + .settings-plugin-dashboard-grid {
+  margin-top: 14px;
+}
+
+/* Basic plugin info occupies the row after removing diagnostic card. */
+.settings-plugin-dashboard-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Normalize plugin runtime dependency row layout. */
+.settings-plugin-dependency-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 86px;
+  padding: 16px 18px;
+}
+
+.settings-plugin-dependency-main {
+  display: grid;
+  grid-template-columns: 34px minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-plugin-dependency-main > svg {
+  grid-column: 1;
+  justify-self: center;
+  width: 22px;
+  height: 22px;
+  color: #475467;
+}
+
+.settings-plugin-dependency-main > div {
+  min-width: 0;
+}
+
+.settings-plugin-dependency-main strong {
+  color: #344054;
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.settings-plugin-dependency-main span {
+  margin-top: 3px;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.settings-plugin-dependency-main em {
+  justify-self: start;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.settings-plugin-dependency-main small {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.settings-plugin-dependency-button.toolbar-button {
+  min-width: 92px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  color: #2563eb;
+  font-weight: 800;
+}
+
+@media (max-width: 980px) {
+  .settings-plugin-dependency-item,
+  .settings-plugin-dependency-main {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}
+
+/* Compact runtime dependency row matching the desired reference. */
+.settings-plugin-dependency-section {
+  margin-top: 18px;
+}
+
+.settings-plugin-dependency-section .settings-provider-console-label {
+  margin-bottom: 10px;
+}
+
+.settings-plugin-dependency-item {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 56px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.settings-plugin-dependency-main {
+  grid-template-columns: 28px minmax(180px, 1fr) auto auto;
+  gap: 10px;
+}
+
+.settings-plugin-dependency-main > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-plugin-dependency-main strong {
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.settings-plugin-dependency-main span {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-plugin-dependency-main em {
+  padding: 3px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.settings-plugin-dependency-main small {
+  font-size: 12px;
+}
+
+.settings-plugin-dependency-button.toolbar-button {
+  min-width: 78px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: #344054;
+  background: #ffffff;
+}
+
+.settings-plugin-dependency-menu.toolbar-button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #475467;
+}
+
+/* Force runtime dependency to stay horizontal in the plugin detail panel. */
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  min-height: 56px !important;
+  padding: 10px 12px !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-main {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-width: 0 !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main > svg {
+  flex: 0 0 auto !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main > div {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main em,
+.settings-plugin-detail-card .settings-plugin-dependency-main small,
+.settings-plugin-detail-card .settings-plugin-dependency-button,
+.settings-plugin-detail-card .settings-plugin-dependency-menu {
+  flex: 0 0 auto !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main span {
+  display: block !important;
+  max-width: 520px !important;
+}
+
+/* Fix dependency row root cause: old `.settings-plugin-dependency-item > div` set column direction. */
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-item > .settings-plugin-dependency-main {
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-main > div {
+  display: block !important;
+}
+
+/* Remove selected plugin card blue outline and checkmark. */
+.settings-plugin-card.active {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  background: #ffffff !important;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.045) !important;
+}
+
+.settings-plugin-card.active::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Keep runtime dependency row inside the visible panel bounds. */
+.settings-plugin-detail-card .settings-plugin-dependency-list,
+.settings-plugin-detail-card .settings-plugin-dependency-item {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-item {
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-list .settings-plugin-dependency-main {
+  flex: 1 1 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  overflow: hidden !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main > div {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main strong,
+.settings-plugin-detail-card .settings-plugin-dependency-main span {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-main em,
+.settings-plugin-detail-card .settings-plugin-dependency-main small {
+  flex: 0 0 auto !important;
+  max-width: 72px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-button.toolbar-button {
+  flex: 0 0 auto !important;
+  min-width: 76px !important;
+  max-width: 86px !important;
+  padding: 0 10px !important;
+  white-space: nowrap !important;
+}
+
+.settings-plugin-detail-card .settings-plugin-dependency-menu.toolbar-button {
+  flex: 0 0 34px !important;
+}
+
+/* Keep capability cards compact on narrow widths: ellipsize labels instead of wrapping. */
+.settings-plugin-capability {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.settings-plugin-capability > span:not(.settings-plugin-capability-icon) {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.settings-plugin-capability strong,
+.settings-plugin-capability small {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.settings-plugin-capability input[type='checkbox'] {
+  flex: 0 0 auto !important;
+  justify-self: end !important;
+}
+
+/* Ensure plugin catalog cards always render a visible top border. */
+.settings-plugin-card {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.075),
+    0 10px 26px rgba(15, 23, 42, 0.035) !important;
+}
+
+.settings-plugin-card.active {
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.075),
+    0 10px 26px rgba(15, 23, 42, 0.045) !important;
 }

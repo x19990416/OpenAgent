@@ -33,7 +33,7 @@ export interface PluginManifest {
   configSchema?: JsonSchemaObject;
   secretSchema?: JsonSchemaObject;
   tools?: Array<{ name: string; description?: string; risk?: PluginRiskLevel }>;
-  skills?: Array<{ name: string; description?: string }>;
+  skills?: Array<{ name: string; description?: string; path?: string; content?: string }>;
   agents?: PluginProvidedAgent[];
   mcpServers?: Array<{ name: string; command?: string }>;
   runtimeDependencies?: Array<{ id: string; type: 'npm' | 'cli'; packageName: string; binary?: string; version?: string; description?: string }>;
@@ -65,7 +65,7 @@ export interface PluginRecord {
   authorized?: boolean;
   capabilities: Record<string, boolean>;
   manifest: PluginManifest;
-  skills: Array<{ name: string; description?: string }>;
+  skills: Array<{ name: string; description?: string; path?: string; content?: string; rootDir?: string }>;
   mcpServers: Array<{ name: string; command?: string }>;
   tools: Array<{ name: string; description?: string; risk?: PluginRiskLevel }>;
   policy: PluginToolPolicy[];
@@ -108,6 +108,8 @@ export interface PluginSkill {
   name: string;
   description?: string;
   content?: string;
+  path?: string;
+  rootDir?: string;
 }
 
 export interface OpenAgentChannel {

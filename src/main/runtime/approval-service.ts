@@ -82,12 +82,13 @@ export class ApprovalService {
     }
 
     this.pending.delete(approvalId);
-    const scope = input.scope || pending.request.scope || 'once';
+    const requestedScope = input.scope || pending.request.scope || 'once';
+    const scope = normalizeResolvedScope(pending.request, requestedScope);
     if (decision === 'approved' && scope !== 'once') {
       this.addGrant(pending.request, scope);
     }
     pending.resolve(decision);
-    return { ok: true, request: pending.request, decision, scope };
+    return { ok: true, request: pending.request, decision, scope, requestedScope };
   }
 
   getPendingApproval() {
@@ -133,6 +134,11 @@ export class ApprovalService {
       this.grants.push(grant);
     }
   }
+}
+
+function normalizeResolvedScope(request: RuntimeApprovalRequest, requestedScope: ApprovalScope): ApprovalScope {
+  if (request.actionType?.startsWith('skill.script')) return 'once';
+  return requestedScope;
 }
 
 function matchesGrant(grant: ApprovalGrant, request: RuntimeApprovalRequest) {

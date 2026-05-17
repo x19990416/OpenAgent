@@ -1,7 +1,9 @@
-import { safeStorage } from 'electron';
+import electron from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getOpenAgentHome } from '../runtime/knowledge/knowledge-paths.js';
+
+const { safeStorage } = electron;
 
 export class PluginSecretStore {
   private readonly settingsDir = path.join(getOpenAgentHome(), 'settings', 'plugins');

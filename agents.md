@@ -24,6 +24,7 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 | `docs/plan-mode.md` | 设计或实现 Agent Plan Mode、计划审批、分步执行、plan 持久化时必须阅读。 |
 | `docs/knowledge.md` | 设计或实现 system wiki、llm-wiki-agent schema、知识库工具时必须阅读。 |
 | `docs/plugins.md` | 设计或实现插件系统、飞书/Slack/企业微信等 channel、插件 tools/skills/remote UI 时必须阅读。 |
+| `docs/skills.md` | 设计或实现 Skill 包、SKILL.md、scripts/templates/references、SkillResolver、skill_script 时必须阅读。 |
 | `docs/feishu-cli-integration.md` | 设计或实现飞书 CLI 插件、飞书私聊/群聊入口、飞书 IM/Docs/Calendar/Bitable tools 时必须阅读。 |
 | `docs/approval-scope.md` | 设计或实现审批按钮、外部路径授权、tool approval scope 时必须阅读。 |
 | `agents.md` | 每次开始开发前阅读，用作路由和约束入口。 |
@@ -44,6 +45,7 @@ docs/
 ├── subagents.md          # 子 agent 架构、职责边界和 pi_coding_agent 开发规划
 ├── knowledge.md          # system wiki 知识层设计
 ├── plugins.md            # OpenAgent 插件系统标准
+├── skills.md             # Skill 包、按需注入与脚本执行设计
 └── feishu-cli-integration.md # 飞书 CLI 插件集成设计
 ```
 
@@ -223,7 +225,8 @@ pnpm build
 | session/thread 持久化 | `src/main/runtime/session-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
 | tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节，审批 scope 另见 `docs/approval-scope.md` |
 | model/provider 配置 | 后续 model config store，避免写死在 Pi adapter |
-| plugin/skill 注入 | `docs/plugins.md`，先设计 enabled/loaded/relevant 过滤，再进入 prompt |
+| Skill 包 / SKILL.md / scripts | `docs/skills.md`，按 Claude Code 包结构与 OpenAgent policy 设计发现、注入和脚本执行 |
+| plugin/skill 注入 | `docs/plugins.md` + `docs/skills.md`，先设计 enabled/loaded/relevant 过滤，再进入 prompt |
 | 飞书 CLI 集成 | `docs/plugins.md` + `docs/feishu-cli-integration.md`，按 FeishuClient adapter、channel、tools、policy、remote UI 分层实现 |
 | 飞书/Slack/企业微信等外部入口 | `docs/plugins.md`，按 channel + tools + remote UI 插件实现 |
 | agent brain / system wiki / 知识库 | `docs/knowledge.md`，然后 `src/main/runtime/knowledge` |

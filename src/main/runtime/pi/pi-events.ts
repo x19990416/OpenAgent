@@ -24,6 +24,8 @@ export async function promptOpenAgentPiSession(input: {
   let activeLoop = 0;
   let toolResultCount = 0;
   let maxIterationsExceeded = false;
+  let thinkingTextLength = 0;
+  let lastThinkingActivityLength = 0;
   const maxLoopCount = normalizeMaxIterations(input.maxIterations);
   const unsubscribe = session.subscribe((event: any) => {
     if (event.type === 'turn_start') {
@@ -82,17 +84,65 @@ export async function promptOpenAgentPiSession(input: {
       return;
     }
 
+    if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'thinking_start') {
+      thinkingTextLength = 0;
+      lastThinkingActivityLength = 0;
+      emitPiRuntimeActivity(emitUiEvent, {
+        id: `pi-turn-${activeLoop || loopCount || 1}-thinking`,
+        runId,
+        threadId,
+        kind: 'thinking',
+        status: 'running',
+        title: 'Model reasoning stream started',
+        detail: 'Provider is streaming reasoning_content / thinking tokens.'
+      });
+      return;
+    }
+
+    if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'thinking_delta') {
+      const delta = String(event.assistantMessageEvent.delta ?? '');
+      thinkingTextLength += delta.length;
+      if (thinkingTextLength - lastThinkingActivityLength >= 256) {
+        lastThinkingActivityLength = thinkingTextLength;
+        emitPiRuntimeActivity(emitUiEvent, {
+          id: `pi-turn-${activeLoop || loopCount || 1}-thinking`,
+          runId,
+          threadId,
+          kind: 'thinking',
+          status: 'running',
+          title: 'Model reasoning stream in progress',
+          detail: `${thinkingTextLength} reasoning characters received.`
+        });
+      }
+      return;
+    }
+
+    if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'thinking_end') {
+      emitPiRuntimeActivity(emitUiEvent, {
+        id: `pi-turn-${activeLoop || loopCount || 1}-thinking`,
+        runId,
+        threadId,
+        kind: 'thinking',
+        status: 'completed',
+        title: 'Model reasoning stream completed',
+        detail: `${thinkingTextLength} reasoning characters received.`
+      });
+      return;
+    }
+
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
       const delta = String(event.assistantMessageEvent.delta ?? '');
       assistantText += delta;
-      if (delta) {
+      const displayText = cleanProviderChannelMarkers(assistantText);
+      const displayDelta = cleanProviderChannelMarkers(delta);
+      if (displayDelta) {
         emitUiEvent?.('message.delta', {
           id: `assistant-stream-${runId ?? 'run'}`,
           runId,
           threadId,
           role: 'assistant',
-          delta,
-          content: assistantText,
+          delta: displayDelta,
+          content: displayText,
           createdAt: new Date().toISOString()
         });
       }
@@ -160,10 +210,20 @@ export async function promptOpenAgentPiSession(input: {
   }
 
   return {
-    assistantText: assistantText.trim(),
+    assistantText: cleanProviderChannelMarkers(assistantText).trim(),
     loopCount,
     toolResultCount
   };
+}
+
+function cleanProviderChannelMarkers(value: string) {
+  return value
+    .replace(/<\|channel>[^\n<]*(?:\n)?<channel\|>/g, '')
+    .replace(/<\|channel>[^\n<]*(?:\n)?<\|channel>/g, '')
+    .replace(/<\|channel>[^<]*$/g, '')
+    .replace(/<channel\|>/g, '')
+    .replace(/<\|channel>/g, '')
+    .trimStart();
 }
 
 

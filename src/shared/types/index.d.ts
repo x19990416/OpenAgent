@@ -343,6 +343,12 @@ export interface DesktopApi {
     setActiveLlmProvider?: (payload: any) => Promise<any>;
     listSkills?: () => Promise<SkillCatalogItem[]>;
     getSkillCatalog?: () => Promise<SkillCatalogItem[]>;
+    refreshSkills?: () => Promise<SkillCatalogItem[]>;
+    getSkill?: (payload: { skillName?: string; skillId?: string } | string) => Promise<SkillCatalogItem | null>;
+    setSkillEnabled?: (payload: { skillName?: string; skillId?: string; enabled: boolean }) => Promise<any>;
+    testSkill?: (payload: { skillName?: string; skillId?: string }) => Promise<any>;
+    chooseSkillDirectory?: () => Promise<{ ok: boolean; canceled?: boolean; directoryPath?: string; error?: string }>;
+    installLocalSkill?: (payload: { sourceDir: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) => Promise<any>;
     logDiagnostic?: (level: 'info' | 'warn' | 'error', message: string, meta?: unknown) => void;
     discoverPlugins?: () => Promise<any>;
     discoverPluginsInDirectory?: (payload: any) => Promise<any>;

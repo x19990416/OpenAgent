@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { shell } from 'electron';
+import electron from 'electron';
 import os from 'node:os';
 import path from 'node:path';
 import type { RuntimeTool } from '../runtime/runtime-types.js';
@@ -19,6 +19,8 @@ import {
   withConfigDefaults
 } from './plugin-registry.js';
 import type { PluginInstallState, PluginRecord, PluginRegistrationResult, PluginRegistrySnapshot } from './plugin-types.js';
+
+const { shell } = electron;
 
 export class PluginService {
   private readonly configStore = new PluginConfigStore();
@@ -375,14 +377,40 @@ export class PluginService {
     return tools;
   }
 
+  getSkillPackages() {
+    const packages: Array<{ pluginId: string; pluginName: string; name: string; description?: string; content?: string; rootDir?: string; skillFile?: string }> = [];
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.status !== 'loaded' || !record.capabilities.skills) continue;
+      const skills = record.skills;
+      const pluginName = record.manifest.interface?.displayName ?? record.name;
+      for (const skill of skills) {
+        const rootDir = typeof skill.rootDir === 'string'
+          ? skill.rootDir
+          : typeof skill.path === 'string' && record.rootPath && !record.rootPath.startsWith('builtin:')
+            ? path.resolve(record.rootPath, skill.path.endsWith('SKILL.md') ? path.dirname(skill.path) : skill.path)
+            : undefined;
+        const skillFile = typeof skill.path === 'string' && record.rootPath && !record.rootPath.startsWith('builtin:')
+          ? path.resolve(record.rootPath, skill.path)
+          : undefined;
+        packages.push({
+          pluginId: record.id,
+          pluginName,
+          name: skill.name,
+          description: skill.description,
+          content: skill.content,
+          rootDir,
+          skillFile
+        });
+      }
+    }
+    return packages;
+  }
+
   getRelevantSkillSummaries(prompt: string): string[] {
     const summaries: string[] = [];
     for (const record of this.records.values()) {
       if (!record.enabled || !record.capabilities.skills) continue;
-      const registeredSkills = this.registrations.get(record.id)?.skills ?? [];
-      const skills = registeredSkills.length > 0 ? registeredSkills : record.skills;
       const displayName = record.manifest.interface?.displayName ?? record.name;
-      for (const skill of skills) summaries.push(`- ${displayName} / ${skill.name}: ${skill.description ?? '插件相关任务能力。'}`);
       const tools = this.registrations.get(record.id)?.tools ?? record.tools ?? [];
       const agents = record.manifest.agents ?? [];
       if (agents.length > 0 || tools.length > 0) {
@@ -408,7 +436,13 @@ export class PluginService {
   }
 
   private applyRegistrationToRecord(record: PluginRecord, registration: PluginRegistrationResult) {
-    record.skills = registration.skills.map((skill) => ({ name: skill.name, description: skill.description }));
+    const skillsByName = new Map<string, { name: string; description?: string; path?: string; content?: string; rootDir?: string }>(
+      (record.manifest.skills ?? []).map((skill) => [skill.name, { name: skill.name, description: skill.description, path: skill.path, content: skill.content }])
+    );
+    for (const skill of registration.skills) {
+      skillsByName.set(skill.name, { name: skill.name, description: skill.description, path: skill.path, content: skill.content, rootDir: skill.rootDir });
+    }
+    record.skills = [...skillsByName.values()];
     record.tools = registration.tools.map((tool) => ({ name: tool.name, description: tool.description, risk: tool.risk }));
     record.policy = registration.policies.flatMap((policy) => policy.tools ?? record.tools.map((tool) => ({ toolName: tool.name, risk: tool.risk ?? 'read', requiresApproval: tool.risk !== 'read', description: tool.description })));
   }

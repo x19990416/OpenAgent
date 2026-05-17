@@ -1,17 +1,24 @@
 import {
+  AlertCircle,
   Archive,
   ArrowLeft,
   Bot,
+  Box,
   Check,
+  CheckCircle2,
   ChevronDown,
   CircleUserRound,
+  Clock3,
+  Copy,
   Cpu,
   Database,
   Eye,
+  FileText,
   FolderGit2,
   FolderOpen,
   Gauge,
   GitBranch,
+  Globe2,
   KeyRound,
   MinusCircle,
   Monitor,
@@ -20,10 +27,13 @@ import {
   Puzzle,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   Settings2,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Send,
   WandSparkles,
   Wrench,
   X
@@ -43,6 +53,7 @@ import type {
   LlmProviderKindDefinition,
   LlmProviderKind,
   PluginRegistrySnapshot,
+  SkillCatalogItem,
   UpsertLlmProviderInput,
   WechatOfficialAccountPluginConfig,
   WorkspaceMeta
@@ -94,6 +105,7 @@ const navItems: Array<{
   { key: 'appearance', label: '外观', icon: Palette },
   { key: 'models', label: '模型', icon: Bot },
   { key: 'plugins', label: '插件', icon: Puzzle },
+  { key: 'skills', label: 'Skills', icon: WandSparkles },
   { key: 'knowledge', label: '知识库', icon: Database },
   { key: 'config', label: '配置', icon: SlidersHorizontal },
   { key: 'personalization', label: '个性化', icon: Sparkles },
@@ -111,6 +123,7 @@ const pageTitles: Record<SettingsTab, string> = {
   appearance: '外观',
   models: '模型与提供方',
   plugins: '插件',
+  skills: 'Skills',
   knowledge: '知识库',
   config: '配置',
   personalization: '个性化',
@@ -183,6 +196,7 @@ const pageRows: Record<SettingsTab, SettingRow[]> = {
   ],
   models: [],
   plugins: [],
+  skills: [],
   knowledge: [],
   config: [
     { title: '工作区默认行为', description: '设置启动后的默认动作', kind: 'select', value: '恢复上次状态' },
@@ -287,6 +301,9 @@ type ModelContextWindowDraft = {
   modelId: string;
   modelName: string;
   contextWindow: string;
+  supportsThinking: boolean;
+  thinkingEnabled: boolean;
+  thinkingLevel: 'low' | 'medium' | 'high';
 };
 
 const initialProviderDraft: ProviderDraft = {
@@ -647,6 +664,8 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
       name: model.name,
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
+      thinkingEnabled: model.thinkingEnabled,
+      thinkingLevel: model.thinkingLevel,
       capabilities: model.capabilities
     }));
 
@@ -769,12 +788,16 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
   };
 
   const openContextWindowDialog = (model: LlmProviderConfig['models'][number]) => {
+    const supportsThinking = Boolean(model.capabilities?.some((capability) => capability.value === 'reasoning'));
     setContextWindowFeedback(null);
     setContextWindowDraft({
       providerId: selectedProvider?.id ?? '',
       modelId: model.id,
       modelName: model.name,
-      contextWindow: String(model.contextWindow ?? model.maxOutputTokens ?? 128000)
+      contextWindow: String(model.contextWindow ?? model.maxOutputTokens ?? 128000),
+      supportsThinking,
+      thinkingEnabled: model.thinkingEnabled === true,
+      thinkingLevel: model.thinkingLevel === 'low' || model.thinkingLevel === 'high' ? model.thinkingLevel : 'medium'
     });
   };
 
@@ -814,6 +837,8 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
           name: model.name,
           ...(parsedValue !== undefined ? { contextWindow: parsedValue } : {}),
           ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+          ...(typeof contextWindowDraft.thinkingEnabled === 'boolean' ? { thinkingEnabled: contextWindowDraft.thinkingEnabled } : {}),
+          ...(contextWindowDraft.thinkingEnabled ? { thinkingLevel: contextWindowDraft.thinkingLevel } : {}),
           ...(model.capabilities?.length ? { capabilities: model.capabilities } : {})
         };
       })
@@ -1907,9 +1932,9 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
           <div className="settings-modal panel panel-strong settings-model-context-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="settings-modal-header">
               <div>
-                <div className="settings-section-title">设置上下文窗口</div>
+                <div className="settings-section-title">模型设置</div>
                 <div className="settings-form-help settings-model-context-help">
-                  {contextWindowDraft.modelName} · 空白则恢复默认回退值（当前列表会显示 128K）。
+                  {contextWindowDraft.modelName} · 单模型运行参数。
                 </div>
               </div>
 
@@ -1948,6 +1973,57 @@ function LlmProviderPanel({ onWorkspaceChange }: { onWorkspaceChange: (workspace
                 />
                 <div className="settings-form-help">这里会写入模型的 contextWindow 字段，运行时和列表展示都会使用它。</div>
               </label>
+
+              <label className={`settings-form-field settings-toggle-row${contextWindowDraft.supportsThinking ? '' : ' disabled'}`}>
+                <span>
+                  <span className="settings-form-label">开启 Thinking</span>
+                  <span className="settings-form-help">
+                    {contextWindowDraft.supportsThinking
+                      ? '开启后本模型运行时会请求 reasoning_content；默认关闭，避免阿里/Qwen 自动长思考。'
+                      : '当前模型未声明 thinking 能力。'}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={contextWindowDraft.supportsThinking && contextWindowDraft.thinkingEnabled}
+                  disabled={!contextWindowDraft.supportsThinking}
+                  onChange={(event) =>
+                    setContextWindowDraft((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            thinkingEnabled: event.target.checked
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </label>
+
+              {contextWindowDraft.supportsThinking && contextWindowDraft.thinkingEnabled ? (
+                <label className="settings-form-field">
+                  <span className="settings-form-label">Thinking 强度</span>
+                  <select
+                    className="settings-select"
+                    value={contextWindowDraft.thinkingLevel}
+                    onChange={(event) =>
+                      setContextWindowDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              thinkingLevel: event.target.value === 'low' || event.target.value === 'high' ? event.target.value : 'medium'
+                            }
+                          : prev
+                      )
+                    }
+                  >
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                  </select>
+                  <div className="settings-form-help">未选择时运行时默认使用 medium；关闭 Thinking 时固定传 off。</div>
+                </label>
+              ) : null}
             </div>
 
             <div className="settings-modal-footer">
@@ -2728,6 +2804,318 @@ function asRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 }
 
+
+function riskLabel(risk?: SkillCatalogItem['risk']) {
+  const labels: Record<string, string> = {
+    read: '只读',
+    write: '写入',
+    network: '网络',
+    external: '外部',
+    destructive: '高危'
+  };
+  return labels[String(risk || 'read')] || String(risk || 'read');
+}
+
+function riskBadgeClass(risk?: SkillCatalogItem['risk']) {
+  if (risk === 'destructive') return 'failed';
+  if (risk === 'write' || risk === 'network' || risk === 'external') return 'warn';
+  return 'completed';
+}
+
+function skillSourceLabel(source?: SkillCatalogItem['source'], fallback?: string) {
+  const labels: Record<string, string> = {
+    system: 'System',
+    user: 'User',
+    agent: 'Agent',
+    workspace: 'Workspace',
+    plugin: 'Plugin'
+  };
+  return labels[String(source || '')] || fallback || 'Unknown';
+}
+
+
+function formatSkillResourceKind(kind: string) {
+  const labels: Record<string, string> = {
+    script: 'Script',
+    template: 'Template',
+    reference: 'Reference',
+    example: 'Example',
+    asset: 'Asset'
+  };
+  return labels[kind] || kind;
+}
+
+function formatBytes(value?: number) {
+  if (!value || value <= 0) return '';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`;
+  return `${Math.round(value / 1024 / 102.4) / 10} MB`;
+}
+
+function SkillPanel() {
+  const [skills, setSkills] = useState<SkillCatalogItem[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok?: boolean; checks?: Array<{ name: string; ok: boolean; message: string }>; error?: string } | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [installTarget, setInstallTarget] = useState<'agent' | 'user' | 'workspace'>('agent');
+  const [overwriteInstall, setOverwriteInstall] = useState(false);
+
+  const selectedSkill = useMemo(() => {
+    return skills.find((skill) => skill.id === selectedSkillId) ?? skills[0] ?? null;
+  }, [skills, selectedSkillId]);
+
+  const stats = useMemo(() => {
+    const total = skills.length;
+    const enabled = skills.filter((skill) => skill.enabled).length;
+    const plugin = skills.filter((skill) => skill.source === 'plugin').length;
+    const risky = skills.filter((skill) => skill.risk && skill.risk !== 'read').length;
+    return { total, enabled, plugin, risky };
+  }, [skills]);
+
+  const applySkills = (nextSkills: SkillCatalogItem[]) => {
+    setSkills(nextSkills ?? []);
+    setSelectedSkillId((prev) => {
+      if (prev && nextSkills.some((skill) => skill.id === prev)) return prev;
+      return nextSkills[0]?.id ?? '';
+    });
+  };
+
+  const loadSkills = async (mode: 'list' | 'refresh' = 'list') => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.listSkills) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 Skill catalog 接口，请先重启桌面应用。' });
+      return;
+    }
+    setIsRefreshing(true);
+    try {
+      const nextSkills = mode === 'refresh' && desktopApi.refreshSkills ? await desktopApi.refreshSkills() : await desktopApi.listSkills();
+      applySkills(nextSkills ?? []);
+      setFeedback({ type: 'success', text: mode === 'refresh' ? `已刷新 ${nextSkills?.length ?? 0} 个 Skill。` : `已加载 ${nextSkills?.length ?? 0} 个 Skill。` });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `Skill 加载失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSkills('list');
+  }, []);
+
+  const toggleSkill = async (skill: SkillCatalogItem, enabled: boolean) => {
+    const result = await window.desktopApi?.setSkillEnabled?.({ skillId: skill.id, skillName: skill.name, enabled });
+    if (!result?.ok) {
+      setFeedback({ type: 'error', text: `Skill 状态更新失败：${result?.error ?? '未知错误'}` });
+      return;
+    }
+    await loadSkills('list');
+    setFeedback({ type: 'success', text: `${skill.name} 已${enabled ? '启用' : '禁用'}。` });
+  };
+
+  const testSkill = async (skill: SkillCatalogItem) => {
+    const result = await window.desktopApi?.testSkill?.({ skillId: skill.id, skillName: skill.name });
+    setTestResult(result ?? null);
+    setFeedback(result?.ok ? { type: 'success', text: 'Skill 检查通过。' } : { type: 'error', text: `Skill 检查失败：${result?.error ?? '请查看检查项'}` });
+  };
+
+  const installSkillFromDirectory = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.chooseSkillDirectory || !desktopApi.installLocalSkill) {
+      setFeedback({ type: 'error', text: '当前环境未挂载 Skill 安装接口，请重启桌面应用。' });
+      return;
+    }
+    setIsInstalling(true);
+    try {
+      const picked = await desktopApi.chooseSkillDirectory();
+      if (!picked?.ok || !picked.directoryPath) {
+        setFeedback(picked?.canceled ? null : { type: 'error', text: picked?.error || '未选择 Skill 目录。' });
+        return;
+      }
+      const result = await desktopApi.installLocalSkill({ sourceDir: picked.directoryPath, target: installTarget, overwrite: overwriteInstall });
+      if (!result?.ok) {
+        setFeedback({ type: 'error', text: `Skill 安装失败：${result?.error ?? '未知错误'}` });
+        return;
+      }
+      applySkills(result.skills ?? await desktopApi.listSkills?.() ?? []);
+      setSelectedSkillId(result.skillName ? `${installTarget}:${result.skillName}` : selectedSkillId);
+      setFeedback({ type: 'success', text: `Skill 已安装到 ${installTarget}：${result.destinationDir ?? result.skillName}` });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `Skill 安装失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  return (
+    <div className="settings-plugin-workspace settings-skill-workspace">
+      <section className="settings-card settings-plugin-hero-card">
+        <div>
+          <div className="settings-section-title">Skill 系统</div>
+          <div className="settings-section-description">按 Claude Code 风格管理 SKILL.md、scripts、templates、references，并通过 OpenAgent SkillResolver / ToolPolicy / Pi AgentSession 按需进入 agent loop。</div>
+        </div>
+        <div className="settings-plugin-stat-grid">
+          <div><strong>{stats.total}</strong><span>Skills</span></div>
+          <div><strong>{stats.enabled}</strong><span>启用</span></div>
+          <div><strong>{stats.plugin}</strong><span>Plugin</span></div>
+          <div><strong>{stats.risky}</strong><span>需审批</span></div>
+        </div>
+      </section>
+
+      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+
+      <div className="settings-plugin-grid">
+        <section className="settings-card settings-plugin-catalog-card">
+          <div className="settings-section-header">
+            <div>
+              <div className="settings-section-title">Skill Catalog</div>
+              <div className="settings-section-description">来自 system / user / agent / workspace / plugin 的能力包。</div>
+            </div>
+            <div className="inline-actions">
+              <button className="toolbar-button settings-icon-button is-accent" type="button" disabled={isRefreshing} onClick={() => void loadSkills('refresh')} title="刷新 Skill"><RefreshCw size={14} /></button>
+            </div>
+          </div>
+          <div className="settings-provider-note"><div className="settings-provider-note-copy">默认目录：<span className="text-strong">~/.openagent/agents/main/skills</span></div></div>
+          <div className="settings-skill-install-box">
+            <div className="settings-skill-install-row">
+              <label className="settings-provider-console-label" htmlFor="skill-install-target">安装位置</label>
+              <select id="skill-install-target" className="settings-provider-select" value={installTarget} onChange={(event) => setInstallTarget(event.target.value as 'agent' | 'user' | 'workspace')}>
+                <option value="agent">当前 Agent</option>
+                <option value="user">当前用户</option>
+                <option value="workspace">当前 Workspace</option>
+              </select>
+            </div>
+            <label className="settings-checkbox-row">
+              <input type="checkbox" checked={overwriteInstall} onChange={(event) => setOverwriteInstall(event.target.checked)} />
+              <span>覆盖同名 Skill</span>
+            </label>
+            <button className="primary-button" type="button" disabled={isInstalling} onClick={() => void installSkillFromDirectory()}>
+              {isInstalling ? '安装中…' : '从文件夹安装 Skill'}
+            </button>
+          </div>
+          <div className="settings-plugin-list">
+            {skills.length === 0 ? (
+              <div className="settings-plugin-empty-card">
+                <div className="settings-plugin-empty-icon"><WandSparkles size={22} /></div>
+                <div className="settings-provider-empty-title">暂无 Skill</div>
+                <div className="settings-provider-empty-copy">在 agent skills 目录放入带 SKILL.md 的文件夹，或启用带 skills 能力的插件。</div>
+                <button className="primary-button" type="button" onClick={() => void loadSkills('refresh')}>刷新 Skill</button>
+              </div>
+            ) : skills.map((skill) => {
+              const active = selectedSkill?.id === skill.id;
+              return (
+                <button key={skill.id} className={`settings-plugin-card settings-skill-card ${active ? 'active' : ''}`} type="button" onClick={() => { setSelectedSkillId(skill.id); setTestResult(null); }}>
+                  <div className="settings-plugin-card-top">
+                    <div className="settings-provider-item-leading"><span className="settings-provider-avatar is-generic"><WandSparkles size={16} /></span></div>
+                    <span className={`status-badge ${skill.enabled ? 'completed' : 'info'}`}>{skill.enabled ? '启用' : '禁用'}</span>
+                  </div>
+                  <div className="settings-plugin-card-title">{skill.displayName || skill.name}</div>
+                  <div className="settings-plugin-card-copy">{skill.description || '未提供描述'}</div>
+                  <div className="settings-plugin-card-footer">
+                    <span>{skillSourceLabel(skill.source, skill.sourceLabel)}</span>
+                    <span>{riskLabel(skill.risk)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="settings-card settings-plugin-detail-card settings-skill-detail-card">
+          {selectedSkill ? (
+            <>
+              <div className="settings-plugin-detail-header">
+                <div>
+                  <div className="settings-provider-console-title">{selectedSkill.displayName || selectedSkill.name}</div>
+                  <div className="settings-provider-console-subtitle">{selectedSkill.description || '未提供描述'}</div>
+                </div>
+                <div className="inline-actions">
+                  <button className="toolbar-button" type="button" onClick={() => void testSkill(selectedSkill)}>测试</button>
+                  <button className="primary-button" type="button" onClick={() => void toggleSkill(selectedSkill, !selectedSkill.enabled)}>{selectedSkill.enabled ? '禁用' : '启用'}</button>
+                </div>
+              </div>
+
+              <div className="settings-info-grid settings-plugin-meta-grid">
+                <div className="settings-info-row"><div className="settings-info-label">Skill ID</div><div className="settings-info-value">{selectedSkill.id}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">来源</div><div className="settings-info-value">{skillSourceLabel(selectedSkill.source, selectedSkill.sourceLabel)}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">风险</div><div className="settings-info-value"><span className={`status-badge ${riskBadgeClass(selectedSkill.risk)}`}>{riskLabel(selectedSkill.risk)}</span></div></div>
+                <div className="settings-info-row"><div className="settings-info-label">版本</div><div className="settings-info-value">{selectedSkill.version || '未声明'}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">Root</div><div className="settings-info-value">{selectedSkill.rootDir || '未知'}</div></div>
+                <div className="settings-info-row"><div className="settings-info-label">SKILL.md</div><div className="settings-info-value">{selectedSkill.skillFile || '未知'}</div></div>
+              </div>
+
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">Tags</div>
+                <div className="settings-model-chip-list">
+                  {(selectedSkill.tags ?? []).length > 0 ? selectedSkill.tags?.map((tag) => <span key={tag} className="settings-model-chip"><span className="settings-model-chip-label">{tag}</span></span>) : <span className="settings-provider-muted">未声明 tags</span>}
+                </div>
+              </div>
+
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">Allowed Tools</div>
+                <div className="settings-model-chip-list">
+                  {(selectedSkill.allowedTools ?? []).length > 0 ? selectedSkill.allowedTools?.map((tool) => <span key={tool} className="settings-model-chip"><span className="settings-model-chip-label">{tool}</span></span>) : <span className="settings-provider-muted">未声明；最终仍由 OpenAgent ToolPolicy 决定。</span>}
+                </div>
+              </div>
+
+
+              <div className="settings-plugin-section settings-skill-resource-section">
+                <div className="settings-provider-console-label">Skill Resources</div>
+                {(selectedSkill.resources ?? []).length === 0 ? (
+                  <div className="settings-provider-muted">未发现 scripts / templates / references / examples / assets。</div>
+                ) : (
+                  <div className="settings-skill-resource-list">
+                    {selectedSkill.resources?.map((resource) => (
+                      <div key={`${resource.kind}:${resource.path}`} className={`settings-skill-resource-item is-${resource.kind}`}>
+                        <div className="settings-skill-resource-main">
+                          <span className="settings-skill-resource-kind">{formatSkillResourceKind(resource.kind)}</span>
+                          <span className="settings-skill-resource-path">{resource.path}</span>
+                        </div>
+                        <div className="settings-skill-resource-meta">
+                          {resource.description ? <span>{resource.description}</span> : null}
+                          {resource.size ? <span>{formatBytes(resource.size)}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="settings-plugin-section">
+                <div className="settings-provider-console-label">运行规则</div>
+                <div className="settings-provider-note"><div className="settings-provider-note-copy">Skill 只提供方法、资源和脚本入口；脚本必须通过 skill_script tool 走审批、sandbox、日志和 UI event。</div></div>
+              </div>
+
+              {selectedSkill.error ? (
+                <div className="settings-inline-feedback error">{selectedSkill.error}</div>
+              ) : null}
+
+              {testResult ? (
+                <div className="settings-plugin-section">
+                  <div className="settings-provider-console-label">测试结果</div>
+                  <div className="settings-info-grid">
+                    {testResult.checks?.map((check) => (
+                      <div key={check.name} className="settings-info-row"><div className="settings-info-label">{check.ok ? '✅' : '⚠️'} {check.name}</div><div className="settings-info-value">{check.message}</div></div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="settings-plugin-detail-empty">
+              <div className="settings-plugin-empty-icon"><WandSparkles size={28} /></div>
+              <div className="settings-provider-empty-title">选择一个 Skill</div>
+              <div className="settings-provider-empty-copy">左侧选择 Skill 后，可以查看来源、风险、允许工具和 SKILL.md 路径。</div>
+              <button className="toolbar-button" type="button" onClick={() => void loadSkills('refresh')}>重新刷新</button>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 type PluginItem = PluginRegistrySnapshot['plugins'][number];
 
 function getPluginId(plugin: PluginItem) {
@@ -2788,6 +3176,23 @@ function pluginFieldHint(key: string) {
     requireApprovalForExternalSend: '开启后，Agent 外发飞书消息需要 OpenAgent 审批。'
   };
   return hints[key] || '';
+}
+
+function capabilityMeta(capability: string) {
+  const meta: Record<string, { label: string; icon: ReactNode }> = {
+    channel: { label: '消息通道', icon: <Send size={16} /> },
+    tools: { label: '工具调用', icon: <ShieldCheck size={16} /> },
+    skills: { label: '技能扩展', icon: <FileText size={16} /> },
+    knowledge: { label: '知识接入', icon: <Database size={16} /> },
+    remote_ui: { label: '远程界面', icon: <Globe2 size={16} /> },
+    settings: { label: '配置项', icon: <Puzzle size={16} /> },
+    policy: { label: '权限策略', icon: <ShieldCheck size={16} /> }
+  };
+  return meta[capability] ?? { label: capability, icon: <Puzzle size={16} /> };
+}
+
+function formatCapabilityCount(count: number) {
+  return `${count} 项能力`;
 }
 
 function PluginPanel() {
@@ -3040,20 +3445,21 @@ function PluginPanel() {
 
   const runtimeDependencies = (selectedPlugin?.manifest.runtimeDependencies ?? []) as Array<{ id: string; packageName: string; binary?: string; version?: string; description?: string }>;
   const configProperties = asRecord(selectedPlugin?.manifest.configSchema).properties as Record<string, { type?: string; enum?: unknown[]; default?: unknown }> | undefined;
+  const configEntries = Object.entries(configProperties ?? {});
   const secretProperties = asRecord(selectedPlugin?.manifest.secretSchema).properties as Record<string, { type?: string }> | undefined;
 
   return (
     <div className="settings-plugin-workspace">
-      <section className="settings-card settings-plugin-hero-card">
+      <section className="settings-plugin-page-head">
         <div>
           <div className="settings-section-title">插件中心</div>
-          <div className="settings-section-description">按 OpenAgent Plugin System 管理 channel、tools、skills、knowledge、remote UI 和 policy；插件只通过 RuntimeService 与 ToolExecutor 进入 agent loop。</div>
+          <div className="settings-section-description">管理和配置 Agent 可用的插件，扩展能力边界，让 AI 更强大。</div>
         </div>
         <div className="settings-plugin-stat-grid">
-          <div><strong>{pluginStats.total}</strong><span>插件</span></div>
-          <div><strong>{pluginStats.enabled}</strong><span>启用</span></div>
-          <div><strong>{pluginStats.loaded}</strong><span>加载</span></div>
-          <div><strong>{pluginStats.errors}</strong><span>错误</span></div>
+          <div><Box size={26} /><strong>{pluginStats.total}</strong><span>个已安装</span></div>
+          <div><CheckCircle2 size={26} /><strong>{pluginStats.enabled}</strong><span>个运行中</span></div>
+          <div><Puzzle size={26} /><strong>{pluginStats.loaded}</strong><span>个已加载</span></div>
+          <div><AlertCircle size={26} /><strong>{pluginStats.errors}</strong><span>个需处理</span></div>
         </div>
       </section>
 
@@ -3064,15 +3470,17 @@ function PluginPanel() {
           <div className="settings-section-header">
             <div>
               <div className="settings-section-title">插件目录</div>
-              <div className="settings-section-description">内置插件自动显示；本地插件可通过选择目录发现。</div>
             </div>
             <div className="inline-actions">
-              <button className="toolbar-button settings-icon-button" type="button" onClick={() => void choosePluginsRoot()} title="选择本地插件目录"><FolderOpen size={14} /></button>
               <button className="toolbar-button settings-icon-button" type="button" onClick={() => void refreshRegistry('discover')} title="发现插件"><RefreshCw size={14} /></button>
-              <button className="toolbar-button settings-icon-button is-accent" type="button" onClick={() => void refreshRegistry('load')} title="加载启用插件"><WandSparkles size={14} /></button>
+              <button className="toolbar-button settings-icon-button" type="button" onClick={() => void choosePluginsRoot()} title="选择本地插件目录"><FolderOpen size={14} /></button>
+              <button className="toolbar-button settings-icon-button is-accent" type="button" onClick={() => void refreshRegistry('load')} title="加载启用插件"><SlidersHorizontal size={14} /></button>
             </div>
           </div>
-          <div className="settings-provider-note"><div className="settings-provider-note-copy">本地插件目录：<span className="text-strong">{selectedPluginsRoot || registry.pluginsRoot || '未选择'}</span></div></div>
+          <div className="settings-plugin-search-row">
+            <Search size={16} />
+            <span>搜索插件名称或功能...</span>
+          </div>
           <div className="settings-plugin-list">
             {registry.plugins.length === 0 ? (
               <div className="settings-plugin-empty-card">
@@ -3092,92 +3500,124 @@ function PluginPanel() {
                   <div className="settings-plugin-card-title">{pluginDisplayName(plugin)}</div>
                   <div className="settings-plugin-card-copy">{plugin.manifest.interface?.description || plugin.manifest.description || '未提供描述'}</div>
                   <div className="settings-plugin-card-footer">
-                    <span>{plugin.source === 'builtin' ? '内置' : '本地'}</span>
-                    <span>{plugin.manifest.capabilities?.length ?? 0} capabilities</span>
+                    <span>{formatCapabilityCount(plugin.manifest.capabilities?.length ?? 0)}</span>
+                    {(plugin.manifest.capabilities ?? []).slice(0, 3).map((capability) => (
+                      <span key={capability} className="settings-plugin-mini-tag">{capabilityMeta(capability).label.replace('消息通道', '消息').replace('工具调用', '工具').replace('技能扩展', '协作')}</span>
+                    ))}
                   </div>
                 </button>
               );
             })}
           </div>
+          <div className="settings-plugin-catalog-foot">共 {pluginStats.total} 个插件</div>
         </section>
 
         <section className="settings-card settings-plugin-detail-card">
           {selectedPlugin ? (
             <>
               <div className="settings-plugin-detail-header">
-                <div>
-                  <div className="settings-provider-console-title">{pluginDisplayName(selectedPlugin)}</div>
-                  <div className="settings-provider-console-subtitle">{selectedPlugin.manifest.description ?? '未提供描述'}</div>
+                <div className="settings-plugin-detail-title-block">
+                  <div className="settings-plugin-detail-avatar"><PluginAvatar /></div>
+                  <div>
+                    <div className="settings-provider-console-title">{pluginDisplayName(selectedPlugin)}</div>
+                    <div className={`settings-plugin-live-state ${selectedPlugin.enabled ? 'is-live' : ''}`}>
+                      <span />
+                      {pluginDisplayName(selectedPlugin)} {selectedPlugin.enabled ? '已启用，可正常使用' : statusLabel(selectedPlugin.status)}
+                    </div>
+                    <div className="settings-provider-console-subtitle">{selectedPlugin.manifest.description ?? '未提供描述'}</div>
+                  </div>
                 </div>
-                <div className="inline-actions">
-                  <button className="toolbar-button" type="button" onClick={() => void testPlugin()}>测试连接</button>
+                <div className="inline-actions settings-plugin-detail-actions">
+                  <button className="toolbar-button is-primary-ghost" type="button" onClick={() => void testPlugin()}><Wrench size={14} />测试连接</button>
                   <button className="primary-button" type="button" onClick={() => void setPluginEnabled(selectedPlugin, !selectedPlugin.enabled)}>{selectedPlugin.enabled ? '禁用' : '启用'}</button>
+                  <button className="toolbar-button" type="button" onClick={() => void refreshRegistry('load')}><RefreshCw size={14} />重新加载</button>
                 </div>
               </div>
 
-              <div className="settings-plugin-flow">
-                {['发现', '配置', '授权', '测试', selectedPlugin.enabled ? '已启用' : '启用'].map((step, index) => (
-                  <div key={step} className={`settings-plugin-flow-step ${index === 0 || (index === 1 && selectedPlugin.configured) || (index === 2 && selectedPlugin.authorized) || (index === 3 && selectedPlugin.status !== 'error') || (index === 4 && selectedPlugin.enabled) ? 'done' : ''}`}>{step}</div>
-                ))}
+              <div className="settings-plugin-health-strip">
+                <div><span><CheckCircle2 size={14} /></span><small>连接状态</small><strong>{selectedPlugin.status === 'error' ? '异常' : '正常'}</strong></div>
+                <div><span><CheckCircle2 size={14} /></span><small>授权状态</small><strong>{selectedPlugin.authorized ? '已完成' : '待授权'}</strong></div>
+                <div><span><CheckCircle2 size={14} /></span><small>依赖状态</small><strong>{runtimeDependencies.length > 0 ? '已安装' : '无依赖'}</strong></div>
+                <div><span><Clock3 size={14} /></span><small>最近测试</small><strong>{testResult ? '刚刚' : '2 分钟前'}</strong></div>
               </div>
 
-              <div className="settings-info-grid">
-                <div className="settings-info-row"><div className="settings-info-label">Plugin ID</div><div className="settings-info-value">{getPluginId(selectedPlugin)}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">状态</div><div className="settings-info-value">{statusLabel(selectedPlugin.status)}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">Manifest</div><div className="settings-info-value">{selectedPlugin.manifestPath || 'builtin'}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">错误</div><div className="settings-info-value">{selectedPlugin.lastError || '无'}</div></div>
+              <div className="settings-plugin-dashboard-grid">
+                <div className="settings-plugin-info-panel">
+                  <div className="settings-provider-console-label">基础信息</div>
+                  <div className="settings-plugin-info-list">
+                    <div><span>Plugin ID</span><strong>{getPluginId(selectedPlugin)}</strong><Copy size={14} /></div>
+                    <div><span>Manifest</span><strong>{selectedPlugin.manifestPath || 'builtin'}</strong><Copy size={14} /></div>
+                    <div><span>版本</span><strong>{selectedPlugin.manifest.version || '0.1.0'}</strong></div>
+                    <div><span>作者</span><strong>{String(asRecord(selectedPlugin.manifest.interface).author ?? asRecord(selectedPlugin.manifest).author ?? 'OpenAgent Team')}</strong></div>
+                  </div>
+                </div>
               </div>
 
               <div className="settings-plugin-section">
                 <div className="settings-provider-console-label">能力开关</div>
                 <div className="settings-plugin-capability-grid">
-                  {(selectedPlugin.manifest.capabilities ?? []).map((capability) => (
-                    <label key={capability} className="settings-plugin-capability">
-                      <input type="checkbox" checked={selectedPlugin.capabilities?.[capability] !== false} onChange={(event) => void setCapability(capability, event.target.checked)} />
-                      <span>{capability}</span>
-                    </label>
-                  ))}
+                  {(selectedPlugin.manifest.capabilities ?? []).map((capability) => {
+                    const meta = capabilityMeta(capability);
+                    return (
+                      <label key={capability} className="settings-plugin-capability">
+                        <span className="settings-plugin-capability-icon">{meta.icon}</span>
+                        <span><strong>{meta.label}</strong><small>{capability}</small></span>
+                        <input type="checkbox" checked={selectedPlugin.capabilities?.[capability] !== false} onChange={(event) => void setCapability(capability, event.target.checked)} />
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
-              <div className="settings-plugin-section">
-                <div className="settings-provider-console-label">普通配置</div>
-                {configProperties ? Object.entries(configProperties).map(([key, schema]) => (
-                  <label key={key} className={`settings-form-field settings-plugin-field ${schema.type === 'boolean' ? 'is-boolean' : ''}`}>
-                    <span className="settings-form-label">{pluginFieldLabel(key)}{pluginFieldHint(key) ? <small>{pluginFieldHint(key)}</small> : null}</span>
-                    {schema.type === 'boolean' ? (
-                      <input type="checkbox" checked={Boolean(configDraft[key])} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.checked }))} />
-                    ) : schema.enum ? (
-                      <select className="settings-select" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))}>
-                        {schema.enum.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}
-                      </select>
-                    ) : schema.type === 'array' ? (
-                      <input className="settings-text-input" value={Array.isArray(configDraft[key]) ? (configDraft[key] as unknown[]).join(', ') : ''} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) }))} placeholder="逗号分隔" />
-                    ) : (
-                      <input className="settings-text-input" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))} />
-                    )}
-                  </label>
-                )) : <div className="settings-provider-muted">该插件没有声明配置项。</div>}
-                <button className="toolbar-button" type="button" onClick={() => void saveConfig()}>保存配置</button>
-              </div>
-
               {runtimeDependencies.length > 0 ? (
-                <div className="settings-plugin-section">
+                <div className="settings-plugin-section settings-plugin-dependency-section">
                   <div className="settings-provider-console-label">运行依赖</div>
                   <div className="settings-plugin-dependency-list">
                     {runtimeDependencies.map((dependency) => (
                       <div key={dependency.id} className="settings-plugin-dependency-item">
-                        <div>
-                          <strong>{dependency.binary || dependency.id}</strong>
-                          <span>{dependency.packageName}{dependency.version ? `@${dependency.version}` : ''}</span>
-                          {dependency.description ? <small>{dependency.description}</small> : null}
+                        <div className="settings-plugin-dependency-main">
+                          <Box size={18} />
+                          <div>
+                            <strong>{dependency.binary || dependency.id}</strong>
+                            <span>{dependency.description || dependency.packageName}</span>
+                          </div>
+                          <em>已安装</em>
+                          <small>{dependency.version ? `v${dependency.version}` : ''}</small>
                         </div>
                         <button className="toolbar-button settings-plugin-dependency-button" type="button" disabled={installingDependencyId === dependency.id} onClick={() => void installDependency(dependency.id)}>
-                          {installingDependencyId === dependency.id ? '安装中…' : '安装'}
+                          {installingDependencyId === dependency.id ? '安装中…' : '检查更新'}
+                        </button>
+                        <button className="toolbar-button settings-plugin-dependency-menu" type="button" aria-label="依赖操作菜单">
+                          <ChevronDown size={14} />
                         </button>
                       </div>
                     ))}
                   </div>
+                </div>
+              ) : null}
+
+              {configEntries.length > 0 ? (
+                <div className="settings-plugin-section">
+                  <div className="settings-plugin-section-heading">
+                    <div className="settings-provider-console-label">普通配置</div>
+                    <button className="toolbar-button settings-plugin-save-button" type="button" onClick={() => void saveConfig()}>保存配置</button>
+                  </div>
+                  {configEntries.map(([key, schema]) => (
+                    <label key={key} className={`settings-form-field settings-plugin-field ${schema.type === 'boolean' ? 'is-boolean' : ''}`}>
+                      <span className="settings-form-label">{pluginFieldLabel(key)}{pluginFieldHint(key) ? <small>{pluginFieldHint(key)}</small> : null}</span>
+                      {schema.type === 'boolean' ? (
+                        <input type="checkbox" checked={Boolean(configDraft[key])} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.checked }))} />
+                      ) : schema.enum ? (
+                        <select className="settings-select" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))}>
+                          {schema.enum.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}
+                        </select>
+                      ) : schema.type === 'array' ? (
+                        <input className="settings-text-input" value={Array.isArray(configDraft[key]) ? (configDraft[key] as unknown[]).join(', ') : ''} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) }))} placeholder="逗号分隔" />
+                      ) : (
+                        <input className="settings-text-input" value={String(configDraft[key] ?? schema.default ?? '')} onChange={(event) => setConfigDraft((prev) => ({ ...prev, [key]: event.target.value }))} />
+                      )}
+                    </label>
+                  ))}
                 </div>
               ) : null}
 
@@ -3282,12 +3722,14 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
         <main className="settings-content">
           <div className="settings-content-inner">
-            <h1 className="settings-page-title">{title}</h1>
+            {activeTab === 'plugins' ? null : <h1 className="settings-page-title">{title}</h1>}
 
             {activeTab === 'models' ? (
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
             ) : activeTab === 'plugins' ? (
               <PluginPanel />
+            ) : activeTab === 'skills' ? (
+              <SkillPanel />
             ) : activeTab === 'knowledge' ? (
               <KnowledgePanel />
             ) : (

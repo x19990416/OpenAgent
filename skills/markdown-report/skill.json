@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "openagent.skill.v1",
+  "name": "markdown-report",
+  "version": "0.1.0",
+  "displayName": "Markdown Report",
+  "description": "Create concise Markdown reports and run read-only text statistics.",
+  "risk": "read",
+  "tags": ["markdown", "report", "writing"],
+  "allowedTools": ["skill_load", "skill_resource", "skill_script"],
+  "scripts": [
+    {
+      "path": "scripts/word_count.mjs",
+      "runtime": "node",
+      "description": "Return line, word, and character counts for provided text arguments.",
+      "risk": "read",
+      "timeoutMs": 10000,
+      "network": false,
+      "writes": false
+    }
+  ],
+  "resources": [
+    {
+      "path": "templates/report.md",
+      "type": "template",
+      "description": "Default concise Markdown report layout."
+    },
+    {
+      "path": "references/style.md",
+      "type": "reference",
+      "description": "Markdown style and tone guidance."
+    },
+    {
+      "path": "examples/summary.md",
+      "type": "example",
+      "description": "Example summary report."
+    }
+  ]
+}

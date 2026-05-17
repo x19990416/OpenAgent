@@ -68,6 +68,7 @@ export interface ToolCallItem {
 
 export type RuntimeActivityKind =
   | 'thinking'
+  | 'skill'
   | 'search'
   | 'read'
   | 'write'
@@ -141,6 +142,12 @@ export interface UiEvent {
     | 'tool.completed'
     | 'tool.failed'
     | 'runtime.activity'
+    | 'skill.resolved'
+    | 'skill.loaded'
+    | 'skill.script.started'
+    | 'skill.script.updated'
+    | 'skill.script.completed'
+    | 'skill.script.failed'
     | 'message.delta'
     | 'message.completed'
     | 'patch.ready'

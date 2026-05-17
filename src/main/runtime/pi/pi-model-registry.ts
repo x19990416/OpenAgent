@@ -8,6 +8,8 @@ export interface PiModelCatalogItem {
   name: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
   capabilities?: Array<{ value: string; label: string }>;
 }
 
@@ -16,6 +18,8 @@ interface OpenAgentLlmModelConfig {
   name?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
   capabilities?: Array<{ value: string; label?: string }>;
 }
 
@@ -74,6 +78,8 @@ interface PiModelsJsonProvider {
     id: string;
     name?: string;
     reasoning?: boolean;
+    thinkingEnabled?: boolean;
+    thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
     input?: Array<'text' | 'image'>;
     contextWindow?: number;
     maxTokens?: number;
@@ -321,13 +327,15 @@ export function createPiModelContext(input: { providerId: string; modelId: strin
   if (!selectedModel) {
     throw new Error(`Model registry cannot find model: ${input.providerId}/${input.modelId}`);
   }
+  const providerConfig = readOpenAgentPiModelsJson().providers?.[selectedModel.provider] ?? readOpenAgentPiModelsJson().providers?.[input.providerId];
+  const runtimeModel = withRuntimeModelCompat(selectedModel, providerConfig);
 
   return {
     authStorage,
     modelRegistry,
-    selectedModel,
-    providerId: selectedModel.provider,
-    modelId: selectedModel.id
+    selectedModel: runtimeModel,
+    providerId: runtimeModel.provider,
+    modelId: runtimeModel.id
   };
 }
 
@@ -384,9 +392,11 @@ export async function buildPiProviderCatalog(input?: { activeProviderId?: string
           name: String(model.name ?? model.id),
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxOutputTokens ?? model.maxTokens,
+          thinkingEnabled: typeof model.thinkingEnabled === 'boolean' ? model.thinkingEnabled : undefined,
+          thinkingLevel: normalizeThinkingLevel(model.thinkingLevel),
           capabilities: [
             ...(Array.isArray(model.input) ? model.input.map((value) => ({ value: String(value), label: String(value) })) : []),
-            ...(model.reasoning ? [{ value: 'reasoning', label: 'Reasoning' }] : [])
+            ...(model.reasoning || isProviderQwenThinkingModel(model, providerConfig) ? [{ value: 'reasoning', label: 'Thinking' }] : [])
           ]
         }))
       };
@@ -501,6 +511,10 @@ function writeOpenAgentPiModelsJsonProvider(
       apiKey: apiKeyFallback,
       authHeader: authType !== 'none' && (authType !== 'api_key_header' || headerName === 'Authorization'),
       ...(headers ? { headers } : {}),
+      compat: inferProviderCompat({
+        baseUrl: String(input.baseUrl || existingProvider?.baseUrl || '').trim() || 'https://api.openai.com/v1',
+        existingCompat: existingProvider?.compat
+      }),
       models: models.length > 0 ? models.map(toPiModelDefinition) : existingProvider?.models ?? []
     }
   };
@@ -525,6 +539,8 @@ function normalizeModelInputs(models: OpenAgentLlmModelConfig[]) {
       name: String(model.name || id),
       contextWindow: typeof model.contextWindow === 'number' ? model.contextWindow : undefined,
       maxOutputTokens: typeof model.maxOutputTokens === 'number' ? model.maxOutputTokens : undefined,
+      thinkingEnabled: typeof model.thinkingEnabled === 'boolean' ? model.thinkingEnabled : undefined,
+      thinkingLevel: normalizeThinkingLevel(model.thinkingLevel),
       capabilities: model.capabilities
     });
   }
@@ -538,11 +554,76 @@ function toPiModelDefinition(model: OpenAgentLlmModelConfig) {
     id: model.id,
     name: model.name || model.id,
     reasoning: capabilities.has('reasoning'),
+    ...(typeof model.thinkingEnabled === 'boolean' ? { thinkingEnabled: model.thinkingEnabled } : {}),
+    ...(normalizeThinkingLevel(model.thinkingLevel) ? { thinkingLevel: normalizeThinkingLevel(model.thinkingLevel) } : {}),
     input: capabilities.has('vision') ? (['text', 'image'] as Array<'text' | 'image'>) : (['text'] as Array<'text' | 'image'>),
     contextWindow: model.contextWindow ?? 128000,
     maxTokens: model.maxOutputTokens ?? 16384,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   };
+}
+
+function withRuntimeModelCompat(model: any, providerConfig?: PiModelsJsonProvider) {
+  const compat = inferProviderCompat({
+    baseUrl: providerConfig?.baseUrl ?? model.baseUrl,
+    existingCompat: { ...(providerConfig?.compat ?? {}), ...(model.compat ?? {}) }
+  });
+  const shouldControlQwenThinking = compat.thinkingFormat === 'qwen' && isQwenThinkingModel(model);
+
+  if (!shouldControlQwenThinking && Object.keys(compat).length === 0) {
+    return model;
+  }
+
+  return {
+    ...model,
+    // Pi only emits DashScope/Qwen `enable_thinking` when the model is marked
+    // as reasoning-capable. OpenAgent still passes thinkingLevel='off', so this
+    // forces the final provider payload to carry enable_thinking=false instead
+    // of relying on DashScope's per-model default.
+    reasoning: shouldControlQwenThinking ? true : model.reasoning,
+    compat: {
+      ...(model.compat ?? {}),
+      ...compat
+    }
+  };
+}
+
+export function resolvePiThinkingLevel(model: any): 'off' | 'low' | 'medium' | 'high' {
+  if (model?.thinkingEnabled === true) {
+    return normalizeThinkingLevel(model.thinkingLevel) ?? 'medium';
+  }
+  return 'off';
+}
+
+function inferProviderCompat(input: { baseUrl?: string; existingCompat?: Record<string, unknown> }) {
+  const baseUrl = String(input.baseUrl || '').toLowerCase();
+  const inferred = baseUrl.includes('dashscope.aliyuncs.com') || baseUrl.includes('dashscope-intl.aliyuncs.com')
+    ? {
+        thinkingFormat: 'qwen',
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        maxTokensField: 'max_tokens'
+      }
+    : {};
+
+  return {
+    ...inferred,
+    ...(input.existingCompat ?? {})
+  };
+}
+
+function isQwenThinkingModel(model: any) {
+  const modelId = String(model?.id ?? model?.model ?? model?.name ?? '').toLowerCase();
+  return /(^|[/_-])(qwen3|qwq|qvq)/.test(modelId);
+}
+
+function isProviderQwenThinkingModel(model: any, providerConfig?: PiModelsJsonProvider) {
+  const compat = inferProviderCompat({ baseUrl: providerConfig?.baseUrl ?? model?.baseUrl, existingCompat: providerConfig?.compat });
+  return compat.thinkingFormat === 'qwen' && isQwenThinkingModel(model);
+}
+
+function normalizeThinkingLevel(value: unknown): 'off' | 'low' | 'medium' | 'high' | undefined {
+  return value === 'off' || value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
 }
 
 function resolvePiApi(invocationMode: string, kind: string) {
