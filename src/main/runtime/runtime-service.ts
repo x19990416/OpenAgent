@@ -142,7 +142,7 @@ export class RuntimeService {
     return this.skillService.testSkill(input.skillName || input.skillId || '');
   }
 
-  installLocalSkill(input: { sourceDir?: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) {
+  installLocalSkill(input: { sourceDir?: string; target?: 'user' | 'agent'; overwrite?: boolean }) {
     this.syncPluginSkills();
     return this.skillService.installLocal({
       sourceDir: String(input.sourceDir || ''),

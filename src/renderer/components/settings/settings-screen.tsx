@@ -2845,6 +2845,23 @@ function formatSkillResourceKind(kind: string) {
   return labels[kind] || kind;
 }
 
+function getSkillUsageItems(skill: SkillCatalogItem) {
+  return [
+    skill.description || '按任务需要加载 SKILL.md 中的工作流说明',
+    (skill.allowedTools ?? []).length > 0 ? `可使用 ${skill.allowedTools?.slice(0, 2).join('、')} 等工具` : '按 OpenAgent ToolPolicy 执行工具审批',
+    (skill.resources ?? []).some((resource) => resource.kind === 'script') ? '通过 skill_script 执行配套脚本' : '读取参考资料与模板辅助完成任务',
+    (skill.resources ?? []).length > 0 ? '按需提取资源并生成结构化结果' : '仅在匹配任务中注入，避免 prompt 膨胀'
+  ].slice(0, 4);
+}
+
+function getSkillTagItems(skill: SkillCatalogItem) {
+  return Array.from(new Set([
+    ...(skill.tags ?? []),
+    skillSourceLabel(skill.source, skill.sourceLabel),
+    riskLabel(skill.risk)
+  ].filter(Boolean))).slice(0, 4);
+}
+
 function formatBytes(value?: number) {
   if (!value || value <= 0) return '';
   if (value < 1024) return `${value} B`;
@@ -2859,7 +2876,7 @@ function SkillPanel() {
   const [testResult, setTestResult] = useState<{ ok?: boolean; checks?: Array<{ name: string; ok: boolean; message: string }>; error?: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
-  const [installTarget, setInstallTarget] = useState<'agent' | 'user' | 'workspace'>('agent');
+  const [installTarget, setInstallTarget] = useState<'agent' | 'user'>('agent');
   const [overwriteInstall, setOverwriteInstall] = useState(false);
 
   const selectedSkill = useMemo(() => {
@@ -2950,16 +2967,16 @@ function SkillPanel() {
 
   return (
     <div className="settings-plugin-workspace settings-skill-workspace">
-      <section className="settings-card settings-plugin-hero-card">
+      <section className="settings-plugin-page-head">
         <div>
-          <div className="settings-section-title">Skill 系统</div>
-          <div className="settings-section-description">按 Claude Code 风格管理 SKILL.md、scripts、templates、references，并通过 OpenAgent SkillResolver / ToolPolicy / Pi AgentSession 按需进入 agent loop。</div>
+          <div className="settings-section-title">Skill 中心</div>
+          <div className="settings-section-description">管理 Agent 可用的 SKILL.md 能力包、脚本、模板和参考资料，按需注入到 OpenAgent agent loop。</div>
         </div>
         <div className="settings-plugin-stat-grid">
-          <div><strong>{stats.total}</strong><span>Skills</span></div>
-          <div><strong>{stats.enabled}</strong><span>启用</span></div>
-          <div><strong>{stats.plugin}</strong><span>Plugin</span></div>
-          <div><strong>{stats.risky}</strong><span>需审批</span></div>
+          <div><WandSparkles size={26} /><strong>{stats.total}</strong><span>个已安装</span></div>
+          <div><CheckCircle2 size={26} /><strong>{stats.enabled}</strong><span>个已启用</span></div>
+          <div><Puzzle size={26} /><strong>{stats.plugin}</strong><span>来自插件</span></div>
+          <div><AlertCircle size={26} /><strong>{stats.risky}</strong><span>个需审批</span></div>
         </div>
       </section>
 
@@ -2969,21 +2986,23 @@ function SkillPanel() {
         <section className="settings-card settings-plugin-catalog-card">
           <div className="settings-section-header">
             <div>
-              <div className="settings-section-title">Skill Catalog</div>
-              <div className="settings-section-description">来自 system / user / agent / workspace / plugin 的能力包。</div>
+              <div className="settings-section-title">Skill 目录</div>
             </div>
             <div className="inline-actions">
               <button className="toolbar-button settings-icon-button is-accent" type="button" disabled={isRefreshing} onClick={() => void loadSkills('refresh')} title="刷新 Skill"><RefreshCw size={14} /></button>
             </div>
           </div>
+          <div className="settings-plugin-search-row">
+            <Search size={16} />
+            <span>搜索 Skill 名称、来源或风险等级...</span>
+          </div>
           <div className="settings-provider-note"><div className="settings-provider-note-copy">默认目录：<span className="text-strong">~/.openagent/agents/main/skills</span></div></div>
           <div className="settings-skill-install-box">
             <div className="settings-skill-install-row">
               <label className="settings-provider-console-label" htmlFor="skill-install-target">安装位置</label>
-              <select id="skill-install-target" className="settings-provider-select" value={installTarget} onChange={(event) => setInstallTarget(event.target.value as 'agent' | 'user' | 'workspace')}>
+              <select id="skill-install-target" className="settings-provider-select" value={installTarget} onChange={(event) => setInstallTarget(event.target.value as 'agent' | 'user')}>
                 <option value="agent">当前 Agent</option>
                 <option value="user">当前用户</option>
-                <option value="workspace">当前 Workspace</option>
               </select>
             </div>
             <label className="settings-checkbox-row">
@@ -3004,6 +3023,7 @@ function SkillPanel() {
               </div>
             ) : skills.map((skill) => {
               const active = selectedSkill?.id === skill.id;
+              const skillTags = getSkillTagItems(skill);
               return (
                 <button key={skill.id} className={`settings-plugin-card settings-skill-card ${active ? 'active' : ''}`} type="button" onClick={() => { setSelectedSkillId(skill.id); setTestResult(null); }}>
                   <div className="settings-plugin-card-top">
@@ -3013,42 +3033,80 @@ function SkillPanel() {
                   <div className="settings-plugin-card-title">{skill.displayName || skill.name}</div>
                   <div className="settings-plugin-card-copy">{skill.description || '未提供描述'}</div>
                   <div className="settings-plugin-card-footer">
-                    <span>{skillSourceLabel(skill.source, skill.sourceLabel)}</span>
-                    <span>{riskLabel(skill.risk)}</span>
+                    {skillTags.map((tag) => <span key={tag} className="settings-plugin-mini-tag">{tag}</span>)}
                   </div>
                 </button>
               );
             })}
           </div>
+          <div className="settings-plugin-catalog-foot">共 {stats.total} 个 Skill</div>
         </section>
 
         <section className="settings-card settings-plugin-detail-card settings-skill-detail-card">
           {selectedSkill ? (
             <>
               <div className="settings-plugin-detail-header">
-                <div>
-                  <div className="settings-provider-console-title">{selectedSkill.displayName || selectedSkill.name}</div>
-                  <div className="settings-provider-console-subtitle">{selectedSkill.description || '未提供描述'}</div>
+                <div className="settings-plugin-detail-title-block">
+                  <div className="settings-plugin-detail-avatar settings-skill-detail-avatar">
+                    <div className="settings-provider-item-leading">
+                      <span className="settings-provider-avatar is-generic"><WandSparkles size={18} /></span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="settings-provider-console-title">{selectedSkill.displayName || selectedSkill.name}</div>
+                    <div className={`settings-plugin-live-state ${selectedSkill.enabled ? 'is-live' : ''}`}>
+                      <span />
+                      {selectedSkill.enabled ? '已启用，可被任务匹配和按需加载' : '已禁用，不会进入 agent loop'}
+                    </div>
+                    <div className="settings-provider-console-subtitle">{selectedSkill.description || '未提供描述'}</div>
+                  </div>
                 </div>
-                <div className="inline-actions">
-                  <button className="toolbar-button" type="button" onClick={() => void testSkill(selectedSkill)}>测试</button>
+                <div className="inline-actions settings-plugin-detail-actions">
+                  <button className="toolbar-button is-primary-ghost" type="button" onClick={() => void testSkill(selectedSkill)}><Wrench size={14} />测试</button>
                   <button className="primary-button" type="button" onClick={() => void toggleSkill(selectedSkill, !selectedSkill.enabled)}>{selectedSkill.enabled ? '禁用' : '启用'}</button>
+                  <button className="toolbar-button" type="button" onClick={() => void loadSkills('refresh')}><RefreshCw size={14} />重新加载</button>
                 </div>
               </div>
 
-              <div className="settings-info-grid settings-plugin-meta-grid">
-                <div className="settings-info-row"><div className="settings-info-label">Skill ID</div><div className="settings-info-value">{selectedSkill.id}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">来源</div><div className="settings-info-value">{skillSourceLabel(selectedSkill.source, selectedSkill.sourceLabel)}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">风险</div><div className="settings-info-value"><span className={`status-badge ${riskBadgeClass(selectedSkill.risk)}`}>{riskLabel(selectedSkill.risk)}</span></div></div>
-                <div className="settings-info-row"><div className="settings-info-label">版本</div><div className="settings-info-value">{selectedSkill.version || '未声明'}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">Root</div><div className="settings-info-value">{selectedSkill.rootDir || '未知'}</div></div>
-                <div className="settings-info-row"><div className="settings-info-label">SKILL.md</div><div className="settings-info-value">{selectedSkill.skillFile || '未知'}</div></div>
+              <div className="settings-plugin-health-strip">
+                <div><span><CheckCircle2 size={14} /></span><small>启用状态</small><strong>{selectedSkill.enabled ? '可用' : '禁用'}</strong></div>
+                <div><span><FileText size={14} /></span><small>入口文件</small><strong>{selectedSkill.skillFile ? '已发现' : '未知'}</strong></div>
+                <div><span><ShieldCheck size={14} /></span><small>风险等级</small><strong>{riskLabel(selectedSkill.risk)}</strong></div>
+                <div><span><Clock3 size={14} /></span><small>最近检查</small><strong>{testResult ? '刚刚' : '未运行'}</strong></div>
               </div>
 
-              <div className="settings-plugin-section">
-                <div className="settings-provider-console-label">Tags</div>
-                <div className="settings-model-chip-list">
-                  {(selectedSkill.tags ?? []).length > 0 ? selectedSkill.tags?.map((tag) => <span key={tag} className="settings-model-chip"><span className="settings-model-chip-label">{tag}</span></span>) : <span className="settings-provider-muted">未声明 tags</span>}
+              <div className="settings-plugin-dashboard-grid settings-skill-rule-grid">
+                <div className="settings-plugin-info-panel">
+                  <div className="settings-provider-console-label">使用场景</div>
+                  <div className="settings-skill-usage-list">
+                    {getSkillUsageItems(selectedSkill).map((item, index) => (
+                      <div key={`${item}-${index}`} className="settings-skill-usage-item">
+                        <span>{index === 0 ? <Sparkles size={14} /> : index === 1 ? <ShieldCheck size={14} /> : index === 2 ? <Clock3 size={14} /> : <FileText size={14} />}</span>
+                        <strong>{item}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="settings-plugin-info-panel">
+                  <div className="settings-provider-console-label">运行规则</div>
+                  <div className="settings-plugin-info-list">
+                    <div><span>入口文件</span><strong>SKILL.md</strong></div>
+                    <div><span>脚本</span><strong>{(selectedSkill.resources ?? []).filter((item) => item.kind === 'script').length} 个</strong></div>
+                    <div><span>资源</span><strong>{selectedSkill.resources?.length ?? 0} 个</strong></div>
+                    <div><span>允许操作</span><strong>{(selectedSkill.allowedTools ?? []).length > 0 ? selectedSkill.allowedTools?.slice(0, 2).join('、') : '只读 / policy 决定'}</strong></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="settings-plugin-dashboard-grid settings-skill-meta-grid">
+                <div className="settings-plugin-info-panel">
+                  <div className="settings-provider-console-label">技术信息</div>
+                  <div className="settings-plugin-info-list">
+                    <div><span>Skill ID</span><strong>{selectedSkill.id}</strong><Copy size={14} /></div>
+                    <div><span>来源</span><strong>{skillSourceLabel(selectedSkill.source, selectedSkill.sourceLabel)}</strong></div>
+                    <div><span>版本</span><strong>{selectedSkill.version || '未声明'}</strong></div>
+                    <div><span>Root</span><strong>{selectedSkill.rootDir || '未知'}</strong></div>
+                  </div>
                 </div>
               </div>
 
@@ -3058,7 +3116,6 @@ function SkillPanel() {
                   {(selectedSkill.allowedTools ?? []).length > 0 ? selectedSkill.allowedTools?.map((tool) => <span key={tool} className="settings-model-chip"><span className="settings-model-chip-label">{tool}</span></span>) : <span className="settings-provider-muted">未声明；最终仍由 OpenAgent ToolPolicy 决定。</span>}
                 </div>
               </div>
-
 
               <div className="settings-plugin-section settings-skill-resource-section">
                 <div className="settings-provider-console-label">Skill Resources</div>
@@ -3083,24 +3140,36 @@ function SkillPanel() {
               </div>
 
               <div className="settings-plugin-section">
-                <div className="settings-provider-console-label">运行规则</div>
-                <div className="settings-provider-note"><div className="settings-provider-note-copy">Skill 只提供方法、资源和脚本入口；脚本必须通过 skill_script tool 走审批、sandbox、日志和 UI event。</div></div>
-              </div>
-
-              {selectedSkill.error ? (
-                <div className="settings-inline-feedback error">{selectedSkill.error}</div>
-              ) : null}
-
-              {testResult ? (
-                <div className="settings-plugin-section">
-                  <div className="settings-provider-console-label">测试结果</div>
-                  <div className="settings-info-grid">
-                    {testResult.checks?.map((check) => (
-                      <div key={check.name} className="settings-info-row"><div className="settings-info-label">{check.ok ? '✅' : '⚠️'} {check.name}</div><div className="settings-info-value">{check.message}</div></div>
-                    ))}
-                  </div>
+                <div className="settings-provider-console-label">最近运行记录</div>
+                <div className="settings-skill-run-list">
+                  {testResult?.checks?.length ? testResult.checks.map((check) => (
+                    <div key={check.name} className="settings-skill-run-item">
+                      <span className={check.ok ? 'is-ok' : 'is-warn'}>{check.ok ? <Check size={12} /> : <AlertCircle size={12} />}</span>
+                      <strong>{check.name}</strong>
+                      <small>{check.message}</small>
+                    </div>
+                  )) : (
+                    <div className="settings-skill-run-item">
+                      <span><Clock3 size={12} /></span>
+                      <strong>未运行</strong>
+                      <small>—</small>
+                    </div>
+                  )}
+                  {selectedSkill.error ? (
+                    <div className="settings-skill-run-item is-error">
+                      <span><AlertCircle size={12} /></span>
+                      <strong>最近风险告警</strong>
+                      <small>{selectedSkill.error}</small>
+                    </div>
+                  ) : (
+                    <div className="settings-skill-run-item">
+                      <span className="is-ok"><ShieldCheck size={12} /></span>
+                      <strong>最近无风险告警</strong>
+                      <small>{testResult ? '刚刚' : '—'}</small>
+                    </div>
+                  )}
                 </div>
-              ) : null}
+              </div>
             </>
           ) : (
             <div className="settings-plugin-detail-empty">
@@ -3722,7 +3791,7 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
         <main className="settings-content">
           <div className="settings-content-inner">
-            {activeTab === 'plugins' ? null : <h1 className="settings-page-title">{title}</h1>}
+            {activeTab === 'plugins' || activeTab === 'skills' ? null : <h1 className="settings-page-title">{title}</h1>}
 
             {activeTab === 'models' ? (
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />

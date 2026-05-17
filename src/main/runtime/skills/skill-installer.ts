@@ -7,7 +7,7 @@ import type { SkillSource } from './skill-types.js';
 
 export interface InstallLocalSkillInput {
   sourceDir: string;
-  target?: 'user' | 'agent' | 'workspace';
+  target?: 'user' | 'agent';
   overwrite?: boolean;
 }
 
@@ -61,12 +61,11 @@ export function installLocalSkill(input: InstallLocalSkillInput & { agentId: str
 export function resolveInstallRoot(target: SkillSource, input: { agentId: string; workspaceRoot: string; openAgentRoot?: string }) {
   const openAgentRoot = input.openAgentRoot ?? process.env.OPENAGENT_HOME ?? path.join(os.homedir(), '.openagent');
   if (target === 'user') return path.join(openAgentRoot, 'skills');
-  if (target === 'workspace') return path.join(input.workspaceRoot, '.openagent', 'skills');
   return path.join(openAgentRoot, 'agents', input.agentId, 'skills');
 }
 
-function normalizeInstallTarget(value: unknown): 'user' | 'agent' | 'workspace' {
-  return value === 'user' || value === 'workspace' ? value : 'agent';
+function normalizeInstallTarget(value: unknown): 'user' | 'agent' {
+  return value === 'user' ? value : 'agent';
 }
 
 function readSkillJson(rootDir: string): Record<string, unknown> {

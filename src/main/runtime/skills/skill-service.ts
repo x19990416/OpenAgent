@@ -76,7 +76,7 @@ export class SkillService {
     return { ok: checks.every((check) => check.ok), skill, checks };
   }
 
-  installLocal(input: { sourceDir: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) {
+  installLocal(input: { sourceDir: string; target?: 'user' | 'agent'; overwrite?: boolean }) {
     const result = installLocalSkill({
       ...input,
       agentId: this.options.agentId,
