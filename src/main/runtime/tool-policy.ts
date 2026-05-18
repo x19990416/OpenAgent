@@ -55,7 +55,7 @@ export class ToolPolicy {
     if (planDecision) return planDecision;
 
     if (tool.name === 'knowledge_agent') {
-      return decideKnowledgeAgent(args);
+      return decideKnowledgeAgent(args, this.summarizeArgs(args));
     }
 
     if (PI_CODING_TOOLS.has(tool.name)) {
@@ -318,11 +318,70 @@ export class ToolPolicy {
   }
 }
 
-function decideKnowledgeAgent(args: unknown): ToolPolicyDecision {
+function decideKnowledgeAgent(args: unknown, payloadPreview: string): ToolPolicyDecision {
   const payload = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   const operation = String(payload.operation ?? '');
-  if (['search', 'query', 'ingest', 'ingest_file', 'compile', 'compile_topic', 'capture', 'provenance', 'health', 'lint', 'graph'].includes(operation)) {
+  if (['search', 'query', 'capture', 'provenance', 'health'].includes(operation)) {
     return { kind: 'allow' };
+  }
+
+  if (operation === 'ingest' || operation === 'ingest_file') {
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: '请求通过 KnowledgeAgent 写入 Knowledge Base',
+        risk: 'medium',
+        description: [
+          'OpenAgent 需要通过 knowledge_agent 写入内置知识库。',
+          `operation: ${operation}`,
+          '批准后仅用于本次 tool 调用。'
+        ].join('\n'),
+        actionType: 'knowledge.ingest',
+        access: 'write',
+        scope: 'once',
+        payloadPreview
+      }
+    };
+  }
+
+  if (operation === 'compile' || operation === 'compile_topic') {
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: '请求通过 KnowledgeAgent 编译 Knowledge Base',
+        risk: 'medium',
+        description: [
+          'OpenAgent 需要通过 knowledge_agent 触发知识库编译。',
+          `operation: ${operation}`,
+          '该操作会生成或更新 summary / article / provenance / index 等知识库产物。',
+          '批准后仅用于本次 tool 调用。'
+        ].join('\n'),
+        actionType: 'knowledge.compile',
+        access: 'write',
+        scope: 'once',
+        payloadPreview
+      }
+    };
+  }
+
+  if (operation === 'lint' || operation === 'graph') {
+    return {
+      kind: 'requires_approval',
+      approval: {
+        title: '请求通过 KnowledgeAgent 维护 Knowledge Base',
+        risk: 'medium',
+        description: [
+          'OpenAgent 需要通过 knowledge_agent 执行知识库维护操作。',
+          `operation: ${operation}`,
+          '该操作可能写入 report、graph 或其他派生产物。',
+          '批准后仅用于本次 tool 调用。'
+        ].join('\n'),
+        actionType: 'knowledge.maintenance',
+        access: 'write',
+        scope: 'once',
+        payloadPreview
+      }
+    };
   }
 
   return { kind: 'deny', reason: `Unsupported KnowledgeAgent operation: ${operation || '(missing)'}` };

@@ -220,9 +220,10 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
       if (unparsedToolCall) {
         const recovery = parseUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
+        const recoveryEnabled = allowTextToolCallRecovery();
         input.onLog?.({
           scope: 'agent-loop',
-          message: recovery ? 'unparsed_tool_call_recovery_attempt' : 'unparsed_tool_call',
+          message: recovery && recoveryEnabled ? 'unparsed_tool_call_recovery_attempt' : 'unparsed_tool_call',
           data: {
             runId: input.runId,
             threadId: input.threadId,
@@ -230,6 +231,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             model: input.model,
             toolName: unparsedToolCall.toolName,
             parsedArgs: recovery?.args,
+            textToolCallRecoveryEnabled: recoveryEnabled,
             assistantText,
             toolResultCount: promptResult.toolResultCount,
             hadPriorToolResults: promptResult.toolResultCount > 0,
@@ -237,7 +239,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           }
         });
 
-        if (recovery && promptResult.toolResultCount === 0) {
+        if (recoveryEnabled && recovery && promptResult.toolResultCount === 0) {
           const toolCallId = `text-tool-${randomUUID()}`;
           const result = await toolExecutor.execute({
             toolName: recovery.toolName,
@@ -346,6 +348,10 @@ function parseLooseToolArgs(body: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function allowTextToolCallRecovery() {
+  return process.env.OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY === '1';
 }
 
 function escapeRegExp(value: string) {

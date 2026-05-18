@@ -25,6 +25,20 @@ Raw Sources
 - **不无脑注入 prompt**：prompt 只注入与当前任务相关的短摘要；长内容、图谱扩展、原文证据通过工具按需读取。
 - **可替换/可集成**：未来可以把 provider 换成 SQLite 原生实现、外部 MCP 知识库、远端知识服务、企业知识库或其他 wiki compiler，而不影响 renderer 和 agent runtime 主链路。
 
+## 1.1 Review 后落地约束：`knowledge_agent` 也必须等价走审批
+
+2026-05-18 代码 review 发现：如果 `knowledge_agent` 直接调用 `KnowledgeService.ingest/compile/...`，但 `ToolPolicy` 只把 `knowledge_agent` 当成单个只读工具放行，就会绕过 `knowledge_ingest`、`knowledge_compile` 等写入型工具原本应触发的审批。
+
+因此后续实现必须遵守：
+
+- `knowledge_agent` 不是审批豁免入口；它只是知识能力的子 agent facade。
+- `knowledge_agent` 的 operation 必须按风险分级：
+  - 只读/分析型：`search`、`query`、`capture`、`provenance`、`health` 可以直接执行。
+  - 写入/产物型：`ingest`、`ingest_file`、`compile`、`compile_topic`、`lint`、`graph` 必须触发审批。
+- 审批 actionType 应能表达实际操作：例如 `knowledge.ingest`、`knowledge.compile`、`knowledge.maintenance`。
+- 如果未来 `KnowledgeAgent` 内部改为调用具体 `knowledge_*` runtime tool，应通过 `ToolExecutor` 进入同一条 `ToolPolicy -> Approval -> run log -> UI event` 链路，而不是直接调用 provider。
+- 文案中出现“KnowledgeAgent 不绕过 ToolPolicy”时，含义是 operation 级别必须具备和对应 `knowledge_*` tool 等价的 policy，不是只对 `knowledge_agent` 工具名做一次粗放 allow。
+
 ## 2. 分层架构
 
 OpenAgent 知识库分为五层：

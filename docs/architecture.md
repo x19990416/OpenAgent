@@ -89,6 +89,13 @@ flowchart TD
 - main 进程持有 `RuntimeService`、`ScheduledTaskService`、模型配置等长期对象。
 - IPC handler 保持薄层，复杂逻辑下沉到 runtime service。
 
+当前 agent 管理边界：
+
+- 第一版 runtime 仍是单主智能体模型，`activeAgentId` 固定为 `main`。
+- `agents:list` 只返回内置 `main` agent。
+- 在真正实现多 agent runtime 切换前，`agents:create` 不得返回假成功；`agents:set-active` 只能接受当前 `main`，其他 agentId 必须明确返回未实现错误。
+- 后续如果实现多 agent，需要重新实例化或路由 `RuntimeService`、`SessionStore`、`SoulManager`、`SkillService`、workspaceRoot 和 scheduled task agentId，而不是只修改 renderer 状态。
+
 典型入口：
 
 ```text

@@ -417,7 +417,7 @@ export interface DesktopApi {
   selectThread: (payload: any) => Promise<any>;
   compactThread?: (payload?: { threadId?: string }) => Promise<any>;
   exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
-  saveImage?: (payload: { dataUrl: string; suggestedName?: string }) => Promise<{ ok: boolean; cancelled?: boolean; path?: string; error?: string }>;
+  saveImage?: (payload: { dataUrl: string; suggestedName?: string; format?: 'png' | 'svg'; mimeType?: string }) => Promise<{ ok: boolean; cancelled?: boolean; path?: string; error?: string }>;
   deleteThread: (payload: any) => Promise<any>;
   resolveApproval: (payload: any) => Promise<any>;
   openPromptAttachment: (payload: any) => Promise<any>;

@@ -159,20 +159,26 @@ function MermaidDiagram({ chart }: { chart: string }) {
     }
   }
 
-  async function saveMermaidImage() {
+  async function saveMermaidSvg() {
     if (state.status !== 'rendered' || !state.svg) return;
     try {
-      const dataUrl = await renderSvgToPngDataUrl(state.svg);
+      const exportSvg = prepareSvgForExport(state.svg);
+      const dataUrl = svgToDataUrl(exportSvg);
       const result = await window.desktopApi?.saveImage?.({
         dataUrl,
+        format: 'svg',
+        mimeType: 'image/svg+xml',
         suggestedName: buildMermaidImageFileName(chart)
       });
       if (result?.ok) {
         setSaved(true);
         window.setTimeout(() => setSaved(false), 1600);
+      } else if (result && !result.cancelled) {
+        window.desktopApi?.logDiagnostic?.('warn', 'Mermaid image save returned failure', result);
       }
     } catch (error) {
       window.desktopApi?.logDiagnostic?.('warn', 'Mermaid image save failed', {
+        format: 'svg',
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -181,7 +187,13 @@ function MermaidDiagram({ chart }: { chart: string }) {
   if (state.status === 'rendered' && state.svg) {
     return (
       <div className="mermaid-diagram">
-        <button className="markdown-code-copy mermaid-save-button" type="button" onClick={() => void saveMermaidImage()} aria-label="保存 Mermaid 图片" title={saved ? '已保存' : '保存为 PNG 图片'}>
+        <button
+          className="markdown-code-copy mermaid-save-button"
+          type="button"
+          onClick={() => void saveMermaidSvg()}
+          aria-label="保存 Mermaid SVG 图片"
+          title={saved ? 'SVG 已保存' : '保存为 SVG 图片'}
+        >
           {saved ? <Check size={14} /> : <Download size={14} />}
         </button>
         <button className="markdown-code-copy mermaid-copy-button" type="button" onClick={() => void copyMermaidSource()} aria-label="复制 Mermaid 源码" title={copied ? '已复制' : '复制 Mermaid 源码'}>
@@ -204,63 +216,33 @@ function MermaidDiagram({ chart }: { chart: string }) {
   return <div className="mermaid-diagram is-loading">正在渲染 Mermaid 图表…</div>;
 }
 
-async function renderSvgToPngDataUrl(svg: string) {
-  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-  const objectUrl = URL.createObjectURL(svgBlob);
-  try {
-    const image = await loadImage(objectUrl);
-    const size = getSvgImageSize(svg, image);
-    const scale = Math.max(1, Math.min(3, window.devicePixelRatio || 2));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(size.width * scale);
-    canvas.height = Math.ceil(size.height * scale);
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Canvas 2D context is not available');
-    context.setTransform(scale, 0, 0, scale, 0, 0);
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, size.width, size.height);
-    context.drawImage(image, 0, 0, size.width, size.height);
-    return canvas.toDataURL('image/png');
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function loadImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Mermaid SVG image load failed'));
-    image.src = src;
-  });
-}
-
-function getSvgImageSize(svg: string, image: HTMLImageElement) {
-  const fallbackWidth = image.naturalWidth || 960;
-  const fallbackHeight = image.naturalHeight || 540;
-  try {
-    const documentSvg = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
-    const viewBox = documentSvg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
-    if (viewBox && viewBox.length === 4 && viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0) {
-      return { width: viewBox[2], height: viewBox[3] };
+function prepareSvgForExport(svg: string) {
+  const trimmed = svg.trim();
+  const svgStart = trimmed.indexOf('<svg');
+  const svgEnd = trimmed.lastIndexOf('</svg>');
+  const rawSvg = svgStart >= 0 && svgEnd >= 0 ? trimmed.slice(svgStart, svgEnd + '</svg>'.length) : trimmed;
+  const xmlSafeSvg = rawSvg
+    .replace(/<br\s*\/?>\s*<\/br>/gi, '<br/>')
+    .replace(/<br(\s[^>/]*)?>/gi, (_match, attrs = '') => `<br${attrs}/>`);
+  const withXmlns = xmlSafeSvg.replace(
+    /^<svg\b([^>]*)>/i,
+    (match, attrs: string) => {
+      let nextAttrs = attrs;
+      if (!/\sxmlns=/.test(nextAttrs)) nextAttrs += ' xmlns="http://www.w3.org/2000/svg"';
+      if (!/\sxmlns:xlink=/.test(nextAttrs)) nextAttrs += ' xmlns:xlink="http://www.w3.org/1999/xlink"';
+      return `<svg${nextAttrs}>`;
     }
-    const width = parseSvgLength(documentSvg.getAttribute('width')) || fallbackWidth;
-    const height = parseSvgLength(documentSvg.getAttribute('height')) || fallbackHeight;
-    return { width, height };
-  } catch {
-    return { width: fallbackWidth, height: fallbackHeight };
-  }
+  );
+  return withXmlns.startsWith('<?xml') ? withXmlns : `<?xml version="1.0" encoding="UTF-8"?>\n${withXmlns}`;
 }
 
-function parseSvgLength(value: string | null) {
-  if (!value) return 0;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+function svgToDataUrl(svg: string) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 function buildMermaidImageFileName(chart: string) {
   const firstLine = chart.split('\n').map((line) => line.trim()).find(Boolean) || 'mermaid-diagram';
-  return `mermaid-${firstLine.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'diagram'}.png`;
+  return `mermaid-${firstLine.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'diagram'}.svg`;
 }
 
 function getMermaidChartFromPre(children: ReactNode) {

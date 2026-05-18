@@ -233,19 +233,25 @@ async function exportSessionDocument(payload: { format?: unknown; title?: unknow
   }
 }
 
-async function saveImageDocument(payload: { dataUrl?: unknown; suggestedName?: unknown }) {
+async function saveImageDocument(payload: { dataUrl?: unknown; suggestedName?: unknown; format?: unknown; mimeType?: unknown }) {
   if (!mainWindow) return { ok: false, error: 'Main window is not ready' };
   const dataUrl = typeof payload.dataUrl === 'string' ? payload.dataUrl : '';
-  if (!dataUrl.startsWith('data:image/png')) return { ok: false, error: 'Only PNG image data URLs are supported' };
+  const requestedFormat = payload.format === 'svg' ? 'svg' : payload.format === 'png' ? 'png' : null;
+  const inferredFormat = dataUrl.startsWith('data:image/svg+xml') ? 'svg' : dataUrl.startsWith('data:image/png') ? 'png' : null;
+  const format = requestedFormat || inferredFormat;
+  if (!format) return { ok: false, error: 'Only PNG and SVG image data URLs are supported' };
 
   const suggestedBaseName = sanitizeExportFileName(
-    String(payload.suggestedName || 'openagent-image').replace(/\.png$/i, '')
+    String(payload.suggestedName || 'openagent-image').replace(/\.(png|svg)$/i, '')
   );
+  const isSvg = format === 'svg';
   const selected = await dialog.showSaveDialog(mainWindow, {
-    title: '保存图片',
-    defaultPath: `${suggestedBaseName}.png`,
+    title: isSvg ? '保存 SVG 图片' : '保存 PNG 图片',
+    defaultPath: `${suggestedBaseName}.${format}`,
     filters: [
-      { name: 'PNG Image', extensions: ['png'] },
+      isSvg
+        ? { name: 'SVG Image', extensions: ['svg'] }
+        : { name: 'PNG Image', extensions: ['png'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   });
@@ -264,7 +270,6 @@ async function saveImageDocument(payload: { dataUrl?: unknown; suggestedName?: u
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
-
 
 async function captureSessionPng(exportWindow: BrowserWindow) {
   const metrics = await exportWindow.webContents.executeJavaScript(`(() => {
@@ -324,15 +329,30 @@ function sanitizeExportFileName(value: string) {
 }
 
 function decodeDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  const match = dataUrl.match(/^data:([^,]*?),(.*)$/s);
   if (!match) return Buffer.from(dataUrl, 'utf8');
-  const isBase64 = Boolean(match[2]);
-  const payload = match[3] ?? '';
+  const meta = match[1] ?? '';
+  const isBase64 = /(?:^|;)base64(?:;|$)/i.test(meta);
+  const payload = match[2] ?? '';
   return isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
 }
 
 function buildSnapshot() {
   return runtimeService.getSnapshot();
+}
+
+function buildAgentList() {
+  return [
+    {
+      id: activeAgentId,
+      kind: 'system',
+      workspaceRoot: workspace.rootPath,
+      providerId: workspace.providerId,
+      model: workspace.model,
+      description: 'OpenAgent 主智能体',
+      updatedAt: createdAt
+    }
+  ];
 }
 
 function updateActiveModel(providerId: string, modelId: string) {
@@ -400,18 +420,8 @@ function registerIpc() {
   ipcMain.handle('soul:approve-proposal', (_event, payload) => runtimeService.approveSoulProposal(String(payload?.proposalId || '')));
   ipcMain.handle('soul:reject-proposal', (_event, payload) => runtimeService.rejectSoulProposal(String(payload?.proposalId || '')));
   ipcMain.handle('agents:list', () => ({
-    activeAgentId: 'main',
-    agents: [
-      {
-        id: 'main',
-        kind: 'system',
-        workspaceRoot: workspace.rootPath,
-        providerId: workspace.providerId,
-        model: workspace.model,
-        description: 'OpenAgent 主智能体',
-        updatedAt: createdAt
-      }
-    ]
+    activeAgentId,
+    agents: buildAgentList()
   }));
   ipcMain.handle('state:get-snapshot', () => buildSnapshot());
   ipcMain.handle('runtime:get-tasks', () => runtimeService.listRuntimeTasks());
@@ -446,8 +456,31 @@ function registerIpc() {
   ipcMain.handle('scheduled-tasks:run-now', (_event, payload) => scheduledTaskService.runNow(String(payload?.taskId || '')));
   ipcMain.handle('prompt:send', (_event, payload) => runtimeService.submitPrompt(payload));
   ipcMain.handle('run:stop', (_event, payload) => runtimeService.stopRun(payload?.runId));
-  ipcMain.handle('agents:create', () => ({ ok: true }));
-  ipcMain.handle('agents:set-active', () => ({ ok: true }));
+  ipcMain.handle('agents:create', () => ({
+    ok: false,
+    error: 'Agent creation is not implemented yet. Current OpenAgent runtime is single-agent and only supports the built-in main agent.'
+  }));
+  ipcMain.handle('agents:set-active', (_event, payload) => {
+    const requestedAgentId = String(payload?.agentId || '');
+    if (requestedAgentId === activeAgentId) {
+      return {
+        ok: true,
+        activeAgentId,
+        agents: buildAgentList(),
+        agentBootstrap: runtimeService.getAgentBootstrapSnapshot(),
+        snapshot: buildSnapshot()
+      };
+    }
+
+    return {
+      ok: false,
+      error: `Agent switching is not implemented yet. Current OpenAgent runtime only supports agent: ${activeAgentId}.`,
+      activeAgentId,
+      agents: buildAgentList(),
+      agentBootstrap: runtimeService.getAgentBootstrapSnapshot(),
+      snapshot: buildSnapshot()
+    };
+  });
   ipcMain.handle('threads:create', () => runtimeService.createThread());
   ipcMain.handle('threads:select', (_event, payload) => runtimeService.selectThread(payload.threadId));
   ipcMain.handle('threads:compact', (_event, payload) => runtimeService.compactThread(payload?.threadId));

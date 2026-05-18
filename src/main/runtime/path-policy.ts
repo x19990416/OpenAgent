@@ -1,6 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 
 export type PathAccessKind = 'read' | 'write' | 'execute';
 
@@ -30,12 +30,13 @@ export function classifyToolPathAccess(input: { toolName: string; args: unknown;
   const args = asRecord(input.args);
   const argValue = args[rule.argName];
   const rawPath = typeof argValue === 'string' && argValue.trim() ? argValue.trim() : rule.fallback;
-  const targetPath = resolveAgainstWorkspace(input.workspaceRoot, rawPath);
+  const lexicalTargetPath = resolveAgainstWorkspace(input.workspaceRoot, rawPath);
+  const targetPath = resolveRealAccessPath(lexicalTargetPath, rule.access);
 
   return {
     targetPath,
     access: rule.access,
-    isExternal: !isInsidePath(targetPath, input.workspaceRoot)
+    isExternal: !isInsidePath(targetPath, resolveRealAccessPath(input.workspaceRoot, 'read'))
   };
 }
 
@@ -68,6 +69,45 @@ export function isInsidePath(targetPath: string, rootPath: string) {
   const normalizedRoot = path.resolve(rootPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolveRealAccessPath(targetPath: string, access: PathAccessKind) {
+  try {
+    if (existsSync(targetPath)) {
+      return realpathSync(targetPath);
+    }
+
+    if (access === 'write') {
+      const resolved = resolveExistingParent(targetPath);
+      if (resolved) return resolved;
+    }
+  } catch {
+    // Fall back to the lexical path; the actual tool will still fail if the
+    // path is invalid. Policy should not crash on broken symlinks.
+  }
+
+  return path.resolve(targetPath);
+}
+
+function resolveExistingParent(targetPath: string) {
+  let current = path.dirname(path.resolve(targetPath));
+  const missingSegments = [path.basename(targetPath)];
+
+  while (current && current !== path.dirname(current)) {
+    if (existsSync(current)) {
+      const realParent = realpathSync(current);
+      return path.join(realParent, ...missingSegments.reverse());
+    }
+    missingSegments.push(path.basename(current));
+    current = path.dirname(current);
+  }
+
+  if (existsSync(current)) {
+    const realParent = realpathSync(current);
+    return path.join(realParent, ...missingSegments.reverse());
+  }
+
+  return null;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {

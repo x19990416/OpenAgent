@@ -335,6 +335,8 @@ export interface DesktopApi {
     saveImage?: (payload: {
         dataUrl: string;
         suggestedName?: string;
+        format?: 'png' | 'svg';
+        mimeType?: string;
     }) => Promise<{
         ok: boolean;
         cancelled?: boolean;

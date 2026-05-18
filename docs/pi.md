@@ -227,6 +227,7 @@ call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 处理规则：
 
 - 不允许通过正则或文本匹配把这类内容“补执行”为工具调用，避免模型文本绕过 ToolPolicy、审批和审计。
+- 文本工具调用恢复只能作为显式 debug 兼容开关存在，默认必须关闭。默认路径应记录 `unparsed_tool_call` 并失败返回，推动修复 provider tool schema / Pi event 适配，而不是把普通 assistant 文本升级成真实 tool call。
 - 如果最终 assistant 文本本身像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答；即使此前已经有其他结构化 tool result（例如先成功 `write_file`，最后又吐出伪 `shell_exec`）也不能放行。
 - run log 需要记录 `unparsed_tool_call` 诊断信息，包括 `runId`、`threadId`、模型、文本摘要和是否存在真实 tool results。
 - UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。
