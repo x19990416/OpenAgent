@@ -3,68 +3,6 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import type { PluginCapability, PluginManifest, PluginRecord, PluginStateFile, PluginToolPolicy } from './plugin-types.js';
 
-export const BUILTIN_FEISHU_MANIFEST: PluginManifest = {
-  schemaVersion: 'openagent.plugin.v1',
-  id: 'openagent-plugin-feishu-cli',
-  name: 'Feishu CLI',
-  version: '0.1.0',
-  description: 'Feishu channel and tools integration backed by a local Feishu CLI adapter.',
-  main: 'builtin:feishu-cli',
-  capabilities: ['channel', 'tools', 'skills', 'remote_ui', 'settings', 'policy'],
-  interface: {
-    displayName: '飞书 CLI',
-    description: '通过本地飞书 CLI 适配飞书消息入口、回复和基础工具。',
-    category: 'Channel / Enterprise',
-    brandColor: '#3370ff'
-  },
-  configSchema: {
-    type: 'object',
-    properties: {},
-    additionalProperties: false
-  },
-  secretSchema: {
-    type: 'object',
-    properties: {
-      appId: { type: 'string' },
-      appSecret: { type: 'string' }
-    },
-    additionalProperties: false
-  },
-  tools: [
-    { name: 'feishu_agent', description: 'Plugin-provided Feishu subagent for all Feishu/Lark CLI tasks.', risk: 'read' },
-    { name: 'feishu.test_connection', description: 'Test Feishu CLI availability and plugin configuration.', risk: 'read' },
-    { name: 'feishu.calendar_list', description: 'List Feishu/Lark calendars visible to the authorized user.', risk: 'read' },
-    { name: 'feishu.calendar_agenda', description: 'View Feishu/Lark calendar agenda for a date range.', risk: 'read' },
-    { name: 'feishu.send_text_message', description: 'Send a text message to an allowed Feishu chat or user.', risk: 'external_send' },
-    { name: 'feishu.reply_to_current_chat', description: 'Reply to the current Feishu channel context.', risk: 'external_send' }
-  ],
-  skills: [{ name: 'feishu-workspace', description: 'Use Feishu calendar and IM tools safely through OpenAgent policy.' }],
-  agents: [
-    {
-      id: 'feishu_agent',
-      name: '飞书助手',
-      description: '负责飞书 CLI 的所有任务，包括日程、消息、文档、云盘、多维表格、审批等能力；通过受控 lark-cli adapter 执行。',
-      tools: ['feishu_agent', 'feishu.test_connection', 'feishu.calendar_list', 'feishu.calendar_agenda', 'feishu.send_text_message', 'feishu.reply_to_current_chat'],
-      routingHints: ['飞书', 'Lark', '日程', '会议', '消息', '群聊', '文档', '云盘', '多维表格', '审批'],
-      constraints: [
-        '优先通过 feishu_agent 委派飞书任务。',
-        '不能让主 Agent 自己查 .env 或环境变量来替代插件密钥。',
-        '不能绕过 OpenAgent ToolPolicy、approval、logs 和 UI event。'
-      ]
-    }
-  ],
-  runtimeDependencies: [
-    {
-      id: 'lark-cli',
-      type: 'npm',
-      packageName: '@larksuite/cli',
-      binary: 'lark-cli',
-      version: 'latest',
-      description: 'Official Lark/Feishu CLI used by the Feishu CLI plugin.'
-    }
-  ]
-};
-
 export class PluginRegistry {
   constructor(private readonly getState: () => PluginStateFile) {}
 
@@ -72,29 +10,48 @@ export class PluginRegistry {
     const state = this.getState();
     const root = typeof input.pluginsRoot === 'string' ? input.pluginsRoot : state.pluginsRoot || '';
     const next = new Map<string, PluginRecord>();
-    if (input.includeBuiltins !== false) {
-      const record = this.createRecordFromManifest(BUILTIN_FEISHU_MANIFEST, { source: 'builtin', rootPath: 'builtin:feishu-cli', manifestPath: 'builtin:feishu-cli/plugin.json' });
-      next.set(record.id, record);
-    }
-    const manifestPaths = await this.findLocalManifestPaths(root);
-    for (const manifestPath of [...new Set([...(state.installedLocalManifests ?? []), ...manifestPaths])]) {
+    const discoveredManifestPaths = [
+      ...(input.includeBuiltins !== false ? await this.findFirstPartyManifestPaths() : []),
+      ...await this.findLocalManifestPaths(root)
+    ];
+    for (const manifestPath of [...new Set(discoveredManifestPaths)]) {
       try {
         const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as PluginManifest;
-        const record = this.createRecordFromManifest(manifest, { source: 'local', rootPath: path.dirname(manifestPath), manifestPath });
+        const record = this.createRecordFromManifest(manifest, { source: this.isFirstPartyManifestPath(manifestPath) ? 'first_party' : 'local', rootPath: path.dirname(manifestPath), manifestPath, installed: false });
         next.set(record.id, record);
       } catch (error) {
         const id = `invalid:${manifestPath}`;
-        next.set(id, this.createInvalidRecord(id, manifestPath, error));
+        next.set(id, this.createInvalidRecord(id, manifestPath, error, this.isFirstPartyManifestPath(manifestPath) ? 'first_party' : 'local'));
+      }
+    }
+    for (const manifestPath of [...new Set(state.installedLocalManifests ?? [])]) {
+      try {
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as PluginManifest;
+        const record = this.createRecordFromManifest(manifest, { source: 'local', rootPath: path.dirname(manifestPath), manifestPath, installed: true });
+        next.set(record.id, record);
+      } catch (error) {
+        const id = `invalid:${manifestPath}`;
+        next.set(id, this.createInvalidRecord(id, manifestPath, error, 'local'));
       }
     }
     return next;
   }
 
-  createRecordFromManifest(manifest: PluginManifest, source: { source: 'builtin' | 'local'; rootPath?: string; manifestPath?: string }): PluginRecord {
+  async findFirstPartyManifestPaths() {
+    return this.findLocalManifestPaths(path.join(process.cwd(), 'openagent-plugins'));
+  }
+
+  private isFirstPartyManifestPath(manifestPath: string) {
+    const firstPartyRoot = path.resolve(process.cwd(), 'openagent-plugins');
+    return path.resolve(manifestPath).startsWith(`${firstPartyRoot}${path.sep}`);
+  }
+
+  createRecordFromManifest(manifest: PluginManifest, source: { source: 'builtin' | 'first_party' | 'local'; rootPath?: string; manifestPath?: string; installed?: boolean }): PluginRecord {
     const state = this.getState();
     const validationErrors = validateManifest(manifest);
     const id = manifest.id || manifest.name || source.manifestPath || 'unknown-plugin';
-    const enabled = Boolean(state.enabled?.[id]);
+    const installed = source.installed ?? source.source === 'builtin';
+    const enabled = installed && Boolean(state.enabled?.[id]);
     const config = withConfigDefaults(manifest, state.config?.[id] ?? {});
     const record: PluginRecord = {
       id,
@@ -114,13 +71,14 @@ export class PluginRegistry {
       mcpServers: Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [],
       tools: manifest.tools ?? [],
       policy: (manifest.tools ?? []).map((tool) => ({ toolName: tool.name, risk: tool.risk ?? 'read', requiresApproval: tool.risk === 'external_send' || tool.risk === 'external_write' || tool.risk === 'destructive', description: tool.description })) as PluginToolPolicy[],
-      source: source.source
+      source: source.source,
+      installed
     };
-    record.status = validationErrors.length ? 'error' : enabled ? 'installed' : 'disabled';
+    record.status = validationErrors.length ? 'error' : !installed ? 'discovered' : enabled ? 'installed' : 'disabled';
     return record;
   }
 
-  createInvalidRecord(id: string, manifestPath: string, error: unknown): PluginRecord {
+  createInvalidRecord(id: string, manifestPath: string, error: unknown, source: 'first_party' | 'local' = 'local'): PluginRecord {
     const message = error instanceof Error ? error.message : String(error);
     return {
       id,
@@ -140,7 +98,8 @@ export class PluginRegistry {
       mcpServers: [],
       tools: [],
       policy: [],
-      source: 'local'
+      source,
+      installed: false
     };
   }
 

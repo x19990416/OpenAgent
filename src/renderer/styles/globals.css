@@ -2517,6 +2517,25 @@ button {
   font-weight: 700;
 }
 
+.markdown-content a,
+.markdown-action-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #2563eb;
+  font: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.markdown-content a:hover,
+.markdown-action-link:hover {
+  color: #1d4ed8;
+}
+
 .markdown-content code {
   display: inline-block;
   padding: 1px 6px;
@@ -2534,11 +2553,99 @@ button {
   background: rgba(15, 23, 42, 0.06);
 }
 
+.markdown-code-block {
+  position: relative;
+}
+
+.markdown-code-block pre {
+  padding-right: 46px;
+}
+
+.markdown-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #64748b;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+}
+
+.markdown-code-copy:hover {
+  background: #ffffff;
+  color: #2563eb;
+}
+
+.markdown-code-copy:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
 .markdown-content pre code {
   display: inline;
   padding: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.mermaid-diagram {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 16px;
+  overflow-x: auto;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-sm);
+}
+
+.mermaid-diagram-svg {
+  display: grid;
+  place-items: center;
+  min-width: 100%;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-copy-button {
+  z-index: 1;
+}
+
+.mermaid-save-button {
+  right: 44px;
+  z-index: 1;
+}
+
+.mermaid-diagram.is-loading {
+  justify-content: start;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.mermaid-diagram-fallback {
+  display: grid;
+  gap: 10px;
+}
+
+.mermaid-diagram-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 10px;
+  background: rgba(254, 242, 242, 0.92);
+  color: #991b1b;
+  font-size: var(--font-size-sm);
+  font-weight: 650;
 }
 
 .markdown-content table {
@@ -6609,7 +6716,7 @@ html.is-electron .topbar-brand {
 
 .settings-plugin-health-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
@@ -6750,6 +6857,28 @@ html.is-electron .topbar-brand {
 .settings-plugin-info-list svg,
 .settings-plugin-diagnostic-list svg {
   color: #64748b;
+}
+
+.settings-plugin-copy-button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.settings-plugin-copy-button:hover {
+  background: rgba(47, 109, 246, 0.08);
+  color: #2f6df6;
+}
+
+.settings-plugin-copy-button:focus-visible {
+  outline: 2px solid rgba(47, 109, 246, 0.35);
+  outline-offset: 2px;
 }
 
 .settings-plugin-diagnostic-list > div {
@@ -7201,6 +7330,11 @@ html.is-electron .topbar-brand {
   height: 24px;
 }
 
+.settings-plugin-copy-button svg {
+  width: 20px;
+  height: 20px;
+}
+
 .settings-plugin-diagnostic-list > div {
   grid-template-columns: 34px 112px minmax(0, 1fr);
 }
@@ -7405,15 +7539,27 @@ html.is-electron .topbar-brand {
 }
 
 .settings-plugin-health-strip {
-  margin-top: 6px;
-  border-radius: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.05);
 }
 
 .settings-plugin-health-strip > div {
-  grid-template-columns: 20px minmax(0, 1fr);
-  gap: 2px 8px;
-  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 14px 22px;
   min-width: 0;
+}
+
+.settings-plugin-health-strip > div:not(:last-child) {
+  border-right: 1px solid rgba(16, 24, 40, 0.08);
 }
 
 .settings-plugin-health-strip span svg {
@@ -7421,11 +7567,20 @@ html.is-electron .topbar-brand {
   height: 15px;
 }
 
+.settings-plugin-health-strip > div > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.1);
+}
+
 .settings-plugin-health-strip small {
   min-width: 0;
   overflow: hidden;
+  color: #667085;
   font-size: 12px;
   line-height: 1.2;
+  font-weight: 760;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7433,8 +7588,10 @@ html.is-electron .topbar-brand {
 .settings-plugin-health-strip strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 14px;
+  color: #101828;
+  font-size: 16px;
   line-height: 1.25;
+  font-weight: 820;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

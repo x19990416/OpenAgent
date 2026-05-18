@@ -103,7 +103,7 @@ export class RuntimeService {
       this.messages.push({
         id: 'assistant-welcome',
         role: 'assistant',
-        content: '你好，我是 OpenAgent Desktop UI 原型。当前已接入第一版 runtime loop 骨架，后续可以切换到 AgentSession。',
+        content: '你好，我是 OpenAgent。你可以在这里和桌面 Agent 对话，让我读取项目上下文、调用受控工具、管理插件与技能，并把运行过程记录到会话里。首次使用请先到 **[设置 → 模型](#/settings/models)** 里配置模型和认证信息，配置完成后直接输入你的任务即可开始。',
         createdAt: this.createdAt
       });
     }

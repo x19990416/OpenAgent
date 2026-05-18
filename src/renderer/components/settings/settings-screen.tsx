@@ -3264,7 +3264,7 @@ function PluginPanel() {
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
   const [secretStatus, setSecretStatus] = useState<Record<string, { configured?: boolean; maskedValue?: string }>>({});
   const [testResult, setTestResult] = useState<{ ok: boolean; checks?: Array<{ name: string; ok: boolean; message: string }>; error?: string } | null>(null);
-  const [installingDependencyId, setInstallingDependencyId] = useState<string | null>(null);
+  const [installingPluginId, setInstallingPluginId] = useState<string | null>(null);
   const [authorizingAll, setAuthorizingAll] = useState(false);
   const [authorizationUrl, setAuthorizationUrl] = useState('');
 
@@ -3274,10 +3274,11 @@ function PluginPanel() {
 
   const pluginStats = useMemo(() => {
     const total = registry.plugins.length;
+    const installed = registry.plugins.filter((plugin) => plugin.installed).length;
     const enabled = registry.plugins.filter((plugin) => plugin.enabled).length;
     const loaded = registry.plugins.filter((plugin) => plugin.status === 'loaded').length;
     const errors = registry.plugins.filter((plugin) => plugin.status === 'error').length;
-    return { total, enabled, loaded, errors };
+    return { total, installed, enabled, loaded, errors };
   }, [registry.plugins]);
 
   const applyRegistry = (nextRegistry: PluginRegistrySnapshot) => {
@@ -3385,6 +3386,10 @@ function PluginPanel() {
   };
 
   const setPluginEnabled = async (plugin: PluginItem, enabled: boolean) => {
+    if (!plugin.installed) {
+      setFeedback({ type: 'error', text: '请先安装插件，再启用。' });
+      return;
+    }
     const result = await window.desktopApi?.setPluginEnabled?.({ pluginId: getPluginId(plugin), enabled });
     if (!result?.ok) {
       setFeedback({ type: 'error', text: `状态更新失败：${result?.error ?? '未知错误'}` });
@@ -3394,6 +3399,54 @@ function PluginPanel() {
     const loadResult = enabled ? await window.desktopApi?.loadPlugins?.({ pluginIds: [getPluginId(plugin)] }) : null;
     applyRegistry(loadResult?.registry ?? result.registry);
     setFeedback({ type: 'success', text: enabled ? `已启用 ${pluginDisplayName(plugin)}` : `已禁用 ${pluginDisplayName(plugin)}` });
+  };
+
+  const installPlugin = async (plugin: PluginItem) => {
+    const installPath = plugin.manifestPath || plugin.rootPath || '';
+    if (!installPath) {
+      setFeedback({ type: 'error', text: '该插件没有可安装路径。' });
+      return;
+    }
+    setInstallingPluginId(getPluginId(plugin));
+    setFeedback({ type: 'success', text: `正在安装 ${pluginDisplayName(plugin)} 及运行依赖，请稍候…` });
+    try {
+      const result = await window.desktopApi?.installLocalPlugin?.({ path: installPath });
+      if (!result?.ok) {
+        setFeedback({ type: 'error', text: `插件安装失败：${result?.error ?? '未知错误'}` });
+        if (result?.registry) applyRegistry(result.registry);
+        return;
+      }
+      applyRegistry(result.registry ?? registry);
+      setFeedback({ type: 'success', text: `${pluginDisplayName(plugin)} 已安装到 ~/.openagent/plugins，运行依赖已处理。` });
+    } finally {
+      setInstallingPluginId(null);
+    }
+  };
+
+  const copyPluginInfo = async (label: string, value: string) => {
+    const text = value || '';
+    if (!text) {
+      setFeedback({ type: 'error', text: `${label} 为空，无法复制。` });
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setFeedback({ type: 'success', text: `${label} 已复制。` });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `复制失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
   };
 
   const saveConfig = async () => {
@@ -3456,24 +3509,6 @@ function PluginPanel() {
     setFeedback({ type: 'success', text: `${capability} 已${enabled ? '启用' : '关闭'}。` });
   };
 
-  const installDependency = async (dependencyId: string) => {
-    if (!selectedPlugin) return;
-    setInstallingDependencyId(dependencyId);
-    setFeedback({ type: 'success', text: '正在安装插件依赖，请稍候…' });
-    try {
-      const result = await window.desktopApi?.installPluginDependency?.({ pluginId: getPluginId(selectedPlugin), dependencyId });
-      if (!result?.ok) {
-        setFeedback({ type: 'error', text: `依赖安装失败：${result?.error ?? '未知错误'}` });
-        return;
-      }
-      if (result.registry) applyRegistry(result.registry);
-      setFeedback({ type: 'success', text: `依赖已安装：${result.binaryPath ?? dependencyId}` });
-      await testPlugin();
-    } finally {
-      setInstallingDependencyId(null);
-    }
-  };
-
   const testPlugin = async () => {
     if (!selectedPlugin) return;
     const result = await window.desktopApi?.testPlugin?.({ pluginId: getPluginId(selectedPlugin) });
@@ -3504,6 +3539,13 @@ function PluginPanel() {
   };
 
   const runtimeDependencies = (selectedPlugin?.manifest.runtimeDependencies ?? []) as Array<{ id: string; packageName: string; binary?: string; version?: string; description?: string }>;
+  const runtimeDependencyVersions = asRecord(configDraft.runtimeDependencyVersions) as Record<string, string>;
+  const dependencyVersionLabel = (dependency: { id: string; version?: string }) => {
+    const installedVersion = runtimeDependencyVersions[dependency.id];
+    if (installedVersion) return installedVersion.startsWith('v') ? installedVersion : `v${installedVersion}`;
+    if (dependency.version && dependency.version !== 'latest') return dependency.version.startsWith('v') ? dependency.version : `v${dependency.version}`;
+    return '';
+  };
   const configProperties = asRecord(selectedPlugin?.manifest.configSchema).properties as Record<string, { type?: string; enum?: unknown[]; default?: unknown }> | undefined;
   const configEntries = Object.entries(configProperties ?? {});
   const secretProperties = asRecord(selectedPlugin?.manifest.secretSchema).properties as Record<string, { type?: string }> | undefined;
@@ -3516,7 +3558,7 @@ function PluginPanel() {
           <div className="settings-section-description">管理和配置 Agent 可用的插件，扩展能力边界，让 AI 更强大。</div>
         </div>
         <div className="settings-plugin-stat-grid">
-          <div><Box size={26} /><strong>{pluginStats.total}</strong><span>个已安装</span></div>
+          <div><Box size={26} /><strong>{pluginStats.installed}</strong><span>个已安装</span></div>
           <div><CheckCircle2 size={26} /><strong>{pluginStats.enabled}</strong><span>个运行中</span></div>
           <div><Puzzle size={26} /><strong>{pluginStats.loaded}</strong><span>个已加载</span></div>
           <div><AlertCircle size={26} /><strong>{pluginStats.errors}</strong><span>个需处理</span></div>
@@ -3588,8 +3630,13 @@ function PluginPanel() {
                   </div>
                 </div>
                 <div className="inline-actions settings-plugin-detail-actions">
-                  <button className="toolbar-button is-primary-ghost" type="button" onClick={() => void testPlugin()}><Wrench size={14} />测试连接</button>
-                  <button className="primary-button" type="button" onClick={() => void setPluginEnabled(selectedPlugin, !selectedPlugin.enabled)}>{selectedPlugin.enabled ? '禁用' : '启用'}</button>
+                  {!selectedPlugin.installed ? (
+                    <button className="primary-button" type="button" disabled={installingPluginId === getPluginId(selectedPlugin)} onClick={() => void installPlugin(selectedPlugin)}>
+                      {installingPluginId === getPluginId(selectedPlugin) ? '安装中…' : '安装插件'}
+                    </button>
+                  ) : null}
+                  <button className="toolbar-button is-primary-ghost" type="button" disabled={!selectedPlugin.installed} onClick={() => void testPlugin()}><Wrench size={14} />测试连接</button>
+                  <button className="primary-button" type="button" disabled={!selectedPlugin.installed} onClick={() => void setPluginEnabled(selectedPlugin, !selectedPlugin.enabled)}>{selectedPlugin.enabled ? '禁用' : '启用'}</button>
                   <button className="toolbar-button" type="button" onClick={() => void refreshRegistry('load')}><RefreshCw size={14} />重新加载</button>
                 </div>
               </div>
@@ -3597,16 +3644,28 @@ function PluginPanel() {
               <div className="settings-plugin-health-strip">
                 <div><span><CheckCircle2 size={14} /></span><small>连接状态</small><strong>{selectedPlugin.status === 'error' ? '异常' : '正常'}</strong></div>
                 <div><span><CheckCircle2 size={14} /></span><small>授权状态</small><strong>{selectedPlugin.authorized ? '已完成' : '待授权'}</strong></div>
-                <div><span><CheckCircle2 size={14} /></span><small>依赖状态</small><strong>{runtimeDependencies.length > 0 ? '已安装' : '无依赖'}</strong></div>
-                <div><span><Clock3 size={14} /></span><small>最近测试</small><strong>{testResult ? '刚刚' : '2 分钟前'}</strong></div>
+                <div><span><Clock3 size={14} /></span><small>最近测试</small><strong>{testResult ? '刚刚' : '未测试'}</strong></div>
               </div>
 
               <div className="settings-plugin-dashboard-grid">
                 <div className="settings-plugin-info-panel">
                   <div className="settings-provider-console-label">基础信息</div>
                   <div className="settings-plugin-info-list">
-                    <div><span>Plugin ID</span><strong>{getPluginId(selectedPlugin)}</strong><Copy size={14} /></div>
-                    <div><span>Manifest</span><strong>{selectedPlugin.manifestPath || 'builtin'}</strong><Copy size={14} /></div>
+                    <div>
+                      <span>Plugin ID</span>
+                      <strong>{getPluginId(selectedPlugin)}</strong>
+                      <button className="settings-plugin-copy-button" type="button" title="复制 Plugin ID" aria-label="复制 Plugin ID" onClick={() => void copyPluginInfo('Plugin ID', getPluginId(selectedPlugin))}>
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <div>
+                      <span>Manifest</span>
+                      <strong>{selectedPlugin.manifestPath || 'builtin'}</strong>
+                      <button className="settings-plugin-copy-button" type="button" title="复制 Manifest 路径" aria-label="复制 Manifest 路径" onClick={() => void copyPluginInfo('Manifest 路径', selectedPlugin.manifestPath || 'builtin')}>
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <div><span>安装状态</span><strong>{selectedPlugin.installed ? '已安装' : '仅发现，待安装'}</strong></div>
                     <div><span>版本</span><strong>{selectedPlugin.manifest.version || '0.1.0'}</strong></div>
                     <div><span>作者</span><strong>{String(asRecord(selectedPlugin.manifest.interface).author ?? asRecord(selectedPlugin.manifest).author ?? 'OpenAgent Team')}</strong></div>
                   </div>
@@ -3633,25 +3692,24 @@ function PluginPanel() {
                 <div className="settings-plugin-section settings-plugin-dependency-section">
                   <div className="settings-provider-console-label">运行依赖</div>
                   <div className="settings-plugin-dependency-list">
-                    {runtimeDependencies.map((dependency) => (
-                      <div key={dependency.id} className="settings-plugin-dependency-item">
-                        <div className="settings-plugin-dependency-main">
-                          <Box size={18} />
-                          <div>
-                            <strong>{dependency.binary || dependency.id}</strong>
-                            <span>{dependency.description || dependency.packageName}</span>
+                    {runtimeDependencies.map((dependency) => {
+                      const versionLabel = dependencyVersionLabel(dependency);
+                      return (
+                        <div key={dependency.id} className="settings-plugin-dependency-item">
+                          <div className="settings-plugin-dependency-main">
+                            <Box size={18} />
+                            <div>
+                              <strong>{dependency.binary || dependency.id}</strong>
+                              <span>{dependency.description || dependency.packageName}</span>
+                            </div>
+                            {versionLabel ? <small>{versionLabel}</small> : null}
                           </div>
-                          <em>已安装</em>
-                          <small>{dependency.version ? `v${dependency.version}` : ''}</small>
+                          <button className="toolbar-button settings-plugin-dependency-menu" type="button" aria-label="依赖操作菜单">
+                            <ChevronDown size={14} />
+                          </button>
                         </div>
-                        <button className="toolbar-button settings-plugin-dependency-button" type="button" disabled={installingDependencyId === dependency.id} onClick={() => void installDependency(dependency.id)}>
-                          {installingDependencyId === dependency.id ? '安装中…' : '检查更新'}
-                        </button>
-                        <button className="toolbar-button settings-plugin-dependency-menu" type="button" aria-label="依赖操作菜单">
-                          <ChevronDown size={14} />
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}

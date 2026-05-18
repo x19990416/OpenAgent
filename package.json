@@ -27,26 +27,27 @@
   "dependencies": {
     "@mariozechner/pi-agent-core": "0.64.0",
     "@mariozechner/pi-ai": "0.64.0",
-    "@mariozechner/pi-coding-agent": "0.64.0"
+    "@mariozechner/pi-coding-agent": "0.64.0",
+    "mermaid": "^11.15.0"
   },
   "devDependencies": {
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "concurrently": "latest",
-    "electron": "latest",
-    "typescript": "latest",
-    "vite": "latest",
-    "wait-on": "latest",
-    "electron-builder": "latest",
     "@vitejs/plugin-react": "latest",
     "clsx": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "latest",
     "remark-gfm": "latest",
-    "tailwind-merge": "latest"
+    "tailwind-merge": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wait-on": "latest"
   },
   "bin": {
     "openagent-skill": "scripts/openagent-skill.mjs"

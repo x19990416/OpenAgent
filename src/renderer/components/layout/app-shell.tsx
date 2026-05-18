@@ -116,6 +116,7 @@ export function AppShell(props: AppShellProps) {
                 <ConversationPane
                   messages={viewModel.messages}
                   threadTitle={viewModel.threads.find((thread) => thread.threadId === viewModel.activeThreadId)?.title}
+                  onOpenSettings={onOpenSettings}
                 />
 
                 <PromptComposer

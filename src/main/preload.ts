@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
   selectThread: (payload: unknown) => ipcRenderer.invoke('threads:select', payload),
   compactThread: (payload?: unknown) => ipcRenderer.invoke('threads:compact', payload),
   exportSession: (payload: unknown) => ipcRenderer.invoke('threads:export', payload),
+  saveImage: (payload: unknown) => ipcRenderer.invoke('image:save', payload),
   deleteThread: (payload: unknown) => ipcRenderer.invoke('threads:delete', payload),
   resolveApproval: (payload: unknown) => ipcRenderer.invoke('approval:resolve', payload),
   openPromptAttachment: (payload: unknown) => ipcRenderer.invoke('attachment:open', payload),

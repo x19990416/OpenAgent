@@ -2,15 +2,17 @@ import { Download, FileImage, FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { MessageItem } from '@shared-types/events';
 import { MessageList } from '@/components/chat/message-list';
+import type { SettingsTab } from '@/types/workbench';
 
 interface ConversationPaneProps {
   messages: MessageItem[];
   threadTitle?: string;
+  onOpenSettings?: (tab: SettingsTab) => void;
 }
 
 type ExportFormat = 'pdf' | 'png';
 
-export function ConversationPane({ messages, threadTitle }: ConversationPaneProps) {
+export function ConversationPane({ messages, threadTitle, onOpenSettings }: ConversationPaneProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const exportContentRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -101,7 +103,7 @@ export function ConversationPane({ messages, threadTitle }: ConversationPaneProp
         </div>
       </div>
       <div ref={exportContentRef} className="conversation-export-content">
-        <MessageList messages={messages} />
+        <MessageList messages={messages} onOpenSettings={onOpenSettings} />
       </div>
     </section>
   );

@@ -2,15 +2,10 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { feishuCliPlugin } from './builtins/feishu-cli-plugin.js';
 import { createPluginContext } from './plugin-context.js';
 import type { PluginConfigStore } from './plugin-config-store.js';
 import type { PluginSecretStore } from './plugin-secret-store.js';
 import type { OpenAgentPlugin, PluginEventSubscribe, PluginRecord, PluginRegistrationResult, PluginRuntimeSubmit } from './plugin-types.js';
-
-const BUILTIN_PLUGINS: Record<string, OpenAgentPlugin> = {
-  'builtin:feishu-cli': feishuCliPlugin
-};
 
 export class PluginLoader {
   constructor(
@@ -35,7 +30,6 @@ export class PluginLoader {
 
   private async resolvePlugin(record: PluginRecord): Promise<OpenAgentPlugin> {
     const main = String(record.manifest.main || '');
-    if (BUILTIN_PLUGINS[main]) return BUILTIN_PLUGINS[main];
     if (!record.rootPath) throw new Error(`Cannot load plugin without rootPath: ${record.id}`);
     const entryPath = path.isAbsolute(main) ? main : path.join(record.rootPath, main);
     await verifyEntryIntegrity(record, entryPath);

@@ -69,7 +69,8 @@ export interface PluginRecord {
   mcpServers: Array<{ name: string; command?: string }>;
   tools: Array<{ name: string; description?: string; risk?: PluginRiskLevel }>;
   policy: PluginToolPolicy[];
-  source: 'builtin' | 'local';
+  source: 'builtin' | 'first_party' | 'local';
+  installed?: boolean;
 }
 
 export interface PluginToolPolicy {

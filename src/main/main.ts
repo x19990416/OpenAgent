@@ -233,6 +233,38 @@ async function exportSessionDocument(payload: { format?: unknown; title?: unknow
   }
 }
 
+async function saveImageDocument(payload: { dataUrl?: unknown; suggestedName?: unknown }) {
+  if (!mainWindow) return { ok: false, error: 'Main window is not ready' };
+  const dataUrl = typeof payload.dataUrl === 'string' ? payload.dataUrl : '';
+  if (!dataUrl.startsWith('data:image/png')) return { ok: false, error: 'Only PNG image data URLs are supported' };
+
+  const suggestedBaseName = sanitizeExportFileName(
+    String(payload.suggestedName || 'openagent-image').replace(/\.png$/i, '')
+  );
+  const selected = await dialog.showSaveDialog(mainWindow, {
+    title: '保存图片',
+    defaultPath: `${suggestedBaseName}.png`,
+    filters: [
+      { name: 'PNG Image', extensions: ['png'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+
+  if (selected.canceled || !selected.filePath) {
+    return { ok: false, cancelled: true };
+  }
+
+  try {
+    writeFileSync(selected.filePath, decodeDataUrl(dataUrl));
+    if (!existsSync(selected.filePath) || statSync(selected.filePath).size <= 0) {
+      return { ok: false, error: '保存失败：文件没有成功写入。' };
+    }
+    return { ok: true, path: selected.filePath };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 
 async function captureSessionPng(exportWindow: BrowserWindow) {
   const metrics = await exportWindow.webContents.executeJavaScript(`(() => {
@@ -289,6 +321,14 @@ function normalizeExportDimension(value: unknown, fallback: number, max: number)
 
 function sanitizeExportFileName(value: string) {
   return value.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'openagent-session';
+}
+
+function decodeDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (!match) return Buffer.from(dataUrl, 'utf8');
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? '';
+  return isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
 }
 
 function buildSnapshot() {
@@ -412,6 +452,7 @@ function registerIpc() {
   ipcMain.handle('threads:select', (_event, payload) => runtimeService.selectThread(payload.threadId));
   ipcMain.handle('threads:compact', (_event, payload) => runtimeService.compactThread(payload?.threadId));
   ipcMain.handle('threads:export', (_event, payload) => exportSessionDocument(payload ?? {}));
+  ipcMain.handle('image:save', (_event, payload) => saveImageDocument(payload ?? {}));
   ipcMain.handle('threads:delete', (_event, payload) => runtimeService.deleteThread(payload.threadId));
   ipcMain.handle('approval:resolve', (_event, payload) => runtimeService.resolveApproval(payload ?? {}));
   ipcMain.handle('attachment:open', async (_event, payload) => {

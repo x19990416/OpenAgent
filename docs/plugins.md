@@ -91,6 +91,19 @@ flowchart LR
 
 ## 4. 插件目录与 manifest
 
+OpenAgent 主程序只内置插件系统能力，不再把具体业务插件写死在 `src/main/plugins/builtins`。
+仓库随附但不进入发布包的第一方插件放在：
+
+```text
+openagent-plugins/
+└── feishu-cli/
+    ├── plugin.json
+    └── index.mjs
+```
+
+开发态初始化会自动发现 `openagent-plugins` 下的 manifest；打包发布时该目录应排除，用户侧插件通过
+`~/.openagent/plugins` 或设置页选择的插件根目录安装/加载。
+
 推荐插件目录：
 
 ```text

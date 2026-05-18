@@ -229,7 +229,8 @@ export interface PluginRegistrySnapshot {
     capabilities?: Record<string, boolean>;
     tools?: Array<{ name: string; description?: string; risk?: string; [key: string]: unknown }>;
     policy?: Array<{ toolName: string; risk: string; requiresApproval: boolean; description?: string; [key: string]: unknown }>;
-    source?: 'builtin' | 'local' | string;
+    source?: 'builtin' | 'first_party' | 'local' | string;
+    installed?: boolean;
     manifest: {
       id?: string;
       name?: string;
@@ -416,6 +417,7 @@ export interface DesktopApi {
   selectThread: (payload: any) => Promise<any>;
   compactThread?: (payload?: { threadId?: string }) => Promise<any>;
   exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
+  saveImage?: (payload: { dataUrl: string; suggestedName?: string }) => Promise<{ ok: boolean; cancelled?: boolean; path?: string; error?: string }>;
   deleteThread: (payload: any) => Promise<any>;
   resolveApproval: (payload: any) => Promise<any>;
   openPromptAttachment: (payload: any) => Promise<any>;

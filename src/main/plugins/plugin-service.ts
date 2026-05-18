@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import electron from 'electron';
 import os from 'node:os';
@@ -85,8 +85,17 @@ export class PluginService {
   async installLocal(manifestPathOrRoot: string) {
     const manifestPath = await resolveManifestPath(manifestPathOrRoot);
     if (!manifestPath) return { ok: false, error: '未找到 plugin.json 或 .openagent-plugin/plugin.json', registry: this.getRegistry() };
-    await this.configStore.addLocalManifest(manifestPath);
-    return this.discover({ pluginsRoot: this.configStore.getState().pluginsRoot, includeBuiltins: true });
+    const installedManifestPath = await this.installPluginPackage(manifestPath);
+    await this.configStore.addLocalManifest(installedManifestPath);
+    await this.discover({ pluginsRoot: this.configStore.getState().pluginsRoot, includeBuiltins: true });
+    const installedRecord = [...this.records.values()].find((record) => record.manifestPath === installedManifestPath);
+    if (!installedRecord) return { ok: false, error: '插件已复制，但未能重新发现安装后的 manifest。', registry: this.getRegistry() };
+    for (const dependency of installedRecord.manifest.runtimeDependencies ?? []) {
+      const result = await this.installDependency({ pluginId: installedRecord.id, dependencyId: dependency.id });
+      if (!result.ok) return { ...result, registry: this.getRegistry() };
+    }
+    this.refreshRecordDerivedState(installedRecord);
+    return { ok: true, plugin: installedRecord, registry: this.getRegistry() };
   }
 
   async load(input: { pluginIds?: string[]; pluginNames?: string[]; onlyEnabled?: boolean } = {}) {
@@ -145,6 +154,7 @@ export class PluginService {
   async setEnabled(input: { pluginId?: string; pluginName?: string; enabled?: boolean }) {
     const record = this.findRecord(input.pluginId || input.pluginName || '');
     if (!record) return { ok: false, error: 'Plugin not found', registry: this.getRegistry() };
+    if (!record.installed) return { ok: false, error: '请先安装插件，再启用。', registry: this.getRegistry() };
     await this.configStore.setEnabled(record.id, Boolean(input.enabled));
     record.enabled = Boolean(input.enabled);
     this.refreshRecordDerivedState(record);
@@ -218,10 +228,18 @@ export class PluginService {
     }
 
     const binaryPath = path.join(installRoot, 'node_modules', '.bin', process.platform === 'win32' ? `${dependency.binary || dependency.id}.cmd` : dependency.binary || dependency.id);
-    await this.configStore.savePluginConfig(record.id, { ...this.configStore.getPluginConfig(record.id), cliPath: binaryPath });
+    const installedVersion = await this.readInstalledNpmVersion(installRoot, dependency.packageName);
+    await this.configStore.savePluginConfig(record.id, {
+      ...this.configStore.getPluginConfig(record.id),
+      cliPath: binaryPath,
+      runtimeDependencyVersions: {
+        ...((this.configStore.getPluginConfig(record.id).runtimeDependencyVersions as Record<string, string> | undefined) ?? {}),
+        [dependency.id]: installedVersion || dependency.version || 'latest'
+      }
+    });
     this.refreshRecordDerivedState(record);
-    await this.appendLog(record.id, `install dependency ok binary=${binaryPath}`);
-    return { ok: true, dependency, binaryPath, stdout: result.stdout, stderr: result.stderr, registry: this.getRegistry() };
+    await this.appendLog(record.id, `install dependency ok binary=${binaryPath} version=${installedVersion || 'unknown'}`);
+    return { ok: true, dependency, binaryPath, installedVersion, stdout: result.stdout, stderr: result.stderr, registry: this.getRegistry() };
   }
 
   async authorize(
@@ -427,12 +445,12 @@ export class PluginService {
 
   private refreshRecordDerivedState(record: PluginRecord) {
     const state = this.configStore.getState();
-    record.enabled = Boolean(state.enabled?.[record.id]);
+    record.enabled = Boolean(record.installed && state.enabled?.[record.id]);
     record.capabilities = computeCapabilities(record.manifest, record.id, state);
     const config = withConfigDefaults(record.manifest, state.config?.[record.id] ?? {});
     record.configured = isConfigured(record.manifest, config);
     record.authorized = this.isAuthorized(record);
-    if (record.status !== 'loaded' && record.status !== 'error') record.status = record.enabled ? this.computeConfigState(record) : 'disabled';
+    if (record.status !== 'loaded' && record.status !== 'error') record.status = !record.installed ? 'discovered' : record.enabled ? this.computeConfigState(record) : 'disabled';
   }
 
   private applyRegistrationToRecord(record: PluginRecord, registration: PluginRegistrationResult) {
@@ -449,6 +467,7 @@ export class PluginService {
 
   private computeConfigState(record: PluginRecord): PluginInstallState {
     if (record.validationErrors?.length) return 'error';
+    if (!record.installed) return 'discovered';
     if (!record.configured) return 'needs_config';
     if (!record.authorized) return 'needs_auth';
     return 'ready';
@@ -472,6 +491,31 @@ export class PluginService {
 
   private async ensureDirs() {
     await mkdir(this.logDir, { recursive: true });
+  }
+
+  private async installPluginPackage(manifestPath: string) {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { id?: string; name?: string };
+    const pluginId = safeFileName(String(manifest.id || manifest.name || path.basename(path.dirname(manifestPath))));
+    const sourceRoot = path.dirname(manifestPath);
+    const pluginsRoot = path.join(getOpenAgentHome(), 'plugins');
+    const destinationRoot = path.join(pluginsRoot, pluginId);
+    await mkdir(pluginsRoot, { recursive: true });
+    await cp(sourceRoot, destinationRoot, {
+      recursive: true,
+      force: true,
+      filter: (source) => !source.includes(`${path.sep}node_modules${path.sep}`) && !source.endsWith(`${path.sep}node_modules`)
+    });
+    return path.join(destinationRoot, path.basename(manifestPath));
+  }
+
+  private async readInstalledNpmVersion(installRoot: string, packageName: string) {
+    const packageJsonPath = path.join(installRoot, 'node_modules', ...packageName.split('/'), 'package.json');
+    try {
+      const pkg = JSON.parse(await readFile(packageJsonPath, 'utf8')) as { version?: string };
+      return typeof pkg.version === 'string' ? pkg.version : '';
+    } catch {
+      return '';
+    }
   }
 
   private async appendLog(pluginId: string, text: string) {

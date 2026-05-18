@@ -10,6 +10,15 @@ module.exports = {
     'dist/**/*',
     'skills/**/*',
     'package.json',
+    // Plugin packages should stay user/dev installed (for example under
+    // ~/.openagent/plugins or a user-selected plugins root), not bundled into
+    // desktop release artifacts. Keep dist/main/plugins: it is OpenAgent's
+    // plugin runtime/framework code imported by main, not a packaged plugin.
+    '!plugins{,/**/*}',
+    '!openagent-plugins{,/**/*}',
+    '!.agents/plugins{,/**/*}',
+    '!dist/plugins{,/**/*}',
+    '!dist/main/plugins/builtins{,/**/*}',
     // Electron is already bundled by electron-builder into the .app Frameworks.
     // Do not package the npm electron binary again under app.asar(.unpacked).
     '!node_modules/electron{,/**/*}',

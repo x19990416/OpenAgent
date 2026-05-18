@@ -206,7 +206,7 @@ export interface PluginRegistrySnapshot {
         capabilities?: Record<string, boolean>;
         tools?: Array<{ name: string; description?: string; risk?: string; [key: string]: unknown }>;
         policy?: Array<{ toolName: string; risk: string; requiresApproval: boolean; description?: string; [key: string]: unknown }>;
-        source?: 'builtin' | 'local' | string;
+        source?: 'builtin' | 'first_party' | 'local' | string;
         manifest: {
             id?: string;
             name?: string;
@@ -230,6 +230,7 @@ export interface PluginRegistrySnapshot {
         skills?: Array<{ name: string; description?: string; [key: string]: unknown }>;
         mcpServers?: Array<{ name: string; command?: string; [key: string]: unknown }>;
         error?: string;
+        installed?: boolean;
         [key: string]: unknown;
     }>;
     [key: string]: unknown;
@@ -331,6 +332,15 @@ export interface DesktopApi {
         threadId?: string;
     }) => Promise<any>;
     exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
+    saveImage?: (payload: {
+        dataUrl: string;
+        suggestedName?: string;
+    }) => Promise<{
+        ok: boolean;
+        cancelled?: boolean;
+        path?: string;
+        error?: string;
+    }>;
     deleteThread: (payload: any) => Promise<any>;
     resolveApproval: (payload: any) => Promise<any>;
     openPromptAttachment: (payload: any) => Promise<any>;

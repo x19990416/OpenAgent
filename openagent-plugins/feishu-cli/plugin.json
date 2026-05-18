@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "openagent.plugin.v1",
+  "id": "openagent-plugin-feishu-cli",
+  "name": "Feishu CLI",
+  "version": "0.1.0",
+  "description": "Feishu channel and tools integration backed by a local Feishu CLI adapter.",
+  "main": "index.mjs",
+  "capabilities": ["channel", "tools", "skills", "remote_ui", "settings", "policy"],
+  "interface": {
+    "displayName": "飞书 CLI",
+    "description": "通过本地飞书 CLI 适配飞书消息入口、回复和基础工具。",
+    "category": "Channel / Enterprise",
+    "brandColor": "#3370ff"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "secretSchema": {
+    "type": "object",
+    "properties": {
+      "appId": { "type": "string" },
+      "appSecret": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "tools": [
+    { "name": "feishu_agent", "description": "Plugin-provided Feishu subagent for all Feishu/Lark CLI tasks.", "risk": "read" },
+    { "name": "feishu.test_connection", "description": "Test Feishu CLI availability and plugin configuration.", "risk": "read" },
+    { "name": "feishu.calendar_list", "description": "List Feishu/Lark calendars visible to the authorized user.", "risk": "read" },
+    { "name": "feishu.calendar_agenda", "description": "View Feishu/Lark calendar agenda for a date range.", "risk": "read" },
+    { "name": "feishu.send_text_message", "description": "Send a text message to an allowed Feishu chat or user.", "risk": "external_send" },
+    { "name": "feishu.reply_to_current_chat", "description": "Reply to the current Feishu channel context.", "risk": "external_send" }
+  ],
+  "skills": [
+    { "name": "feishu-workspace", "description": "Use Feishu calendar and IM tools safely through OpenAgent policy." }
+  ],
+  "agents": [
+    {
+      "id": "feishu_agent",
+      "name": "飞书助手",
+      "description": "负责飞书 CLI 的所有任务，包括日程、消息、文档、云盘、多维表格、审批等能力；通过受控 lark-cli adapter 执行。",
+      "tools": ["feishu_agent", "feishu.test_connection", "feishu.calendar_list", "feishu.calendar_agenda", "feishu.send_text_message", "feishu.reply_to_current_chat"],
+      "routingHints": ["飞书", "Lark", "日程", "会议", "消息", "群聊", "文档", "云盘", "多维表格", "审批"],
+      "constraints": [
+        "优先通过 feishu_agent 委派飞书任务。",
+        "不能让主 Agent 自己查 .env 或环境变量来替代插件密钥。",
+        "不能绕过 OpenAgent ToolPolicy、approval、logs 和 UI event。"
+      ]
+    }
+  ],
+  "runtimeDependencies": [
+    {
+      "id": "lark-cli",
+      "type": "npm",
+      "packageName": "@larksuite/cli",
+      "binary": "lark-cli",
+      "version": "latest",
+      "description": "Official Lark/Feishu CLI used by the Feishu CLI plugin."
+    }
+  ]
+}
