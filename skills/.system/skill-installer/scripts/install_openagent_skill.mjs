@@ -80,7 +80,7 @@ function resolveSkillName(skillRoot) {
 
 function resolveDestinationRoot(target, input) {
   if (target === 'user') return path.join(input.openAgentRoot, 'skills');
-  if (target === 'workspace') return path.join(input.workspaceRoot, '.openagent', 'skills');
+  if (target === 'workspace') return path.join(input.workspaceRoot, 'skills');
   return path.join(input.openAgentRoot, 'agents', input.agentId, 'skills');
 }
 

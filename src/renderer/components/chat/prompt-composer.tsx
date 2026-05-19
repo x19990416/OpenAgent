@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, Mic, Package, Paperclip, Shield, Sparkles, Square, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type {
   LlmProviderCatalog,
   PromptAttachmentDescriptor,
@@ -35,6 +35,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
   const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string>('');
   const [skillPickerIndex, setSkillPickerIndex] = useState(0);
+  const lastSkillCatalogRefreshRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isRunActive = runStatus === 'running' || runStatus === 'waiting_approval';
@@ -62,8 +63,9 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
     activeProvider?.models.find((model) => model.id === workspace.model || model.name === workspace.model)?.id ??
     activeProvider?.defaultModel ??
     '';
-  const isSkillPickerOpen = value.startsWith('$');
-  const skillQuery = isSkillPickerOpen ? value.slice(1).trim().toLowerCase() : '';
+  const skillTrigger = getLeadingSkillTrigger(value);
+  const isSkillPickerOpen = skillTrigger.active;
+  const skillQuery = skillTrigger.query;
   const usableSkills = useMemo(
     () => skillCatalog.filter((skill) => skill.enabled && skill.state !== 'failed'),
     [skillCatalog]
@@ -104,19 +106,38 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
       });
   }, [workspace.providerId, workspace.model]);
 
-  useEffect(() => {
+  const loadSkillCatalog = useCallback(async (mode: 'list' | 'refresh' = 'list') => {
     const desktopApi = window.desktopApi;
     if (!desktopApi?.getSkillCatalog) {
       return;
     }
 
-    void desktopApi
-      .getSkillCatalog()
-      .then((nextCatalog) => setSkillCatalog(nextCatalog))
-      .catch((error) => {
-        console.error('getSkillCatalog failed', error);
-      });
+    try {
+      const nextCatalog =
+        mode === 'refresh' && desktopApi.refreshSkills ? await desktopApi.refreshSkills() : await desktopApi.getSkillCatalog();
+      setSkillCatalog(nextCatalog);
+    } catch (error) {
+      console.error(mode === 'refresh' ? 'refreshSkills failed' : 'getSkillCatalog failed', error);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadSkillCatalog();
+  }, [loadSkillCatalog]);
+
+  useEffect(() => {
+    if (!isSkillPickerOpen) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastSkillCatalogRefreshRef.current < 1000) {
+      return;
+    }
+
+    lastSkillCatalogRefreshRef.current = now;
+    void loadSkillCatalog('refresh');
+  }, [isSkillPickerOpen, loadSkillCatalog]);
 
   useEffect(() => {
     setSkillPickerIndex(0);
@@ -128,7 +149,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
       if (chosenSkill) {
         setSelectedSkillId(chosenSkill.id);
       }
-      setValue('');
+      setValue(skillTrigger.prompt);
       setSkillPickerIndex(0);
       return;
     }
@@ -207,9 +228,21 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
     textareaRef.current?.focus();
   }
 
+  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const nextValue = event.target.value;
+    const wasSkillPickerOpen = isSkillPickerOpen;
+    const nextSkillTrigger = getLeadingSkillTrigger(nextValue);
+
+    setValue(nextValue);
+
+    if (!wasSkillPickerOpen && nextSkillTrigger.active) {
+      setSkillPickerIndex(0);
+    }
+  }
+
   function selectSkill(skill: SkillCatalogItem) {
     setSelectedSkillId(skill.id);
-    setValue('');
+    setValue(skillTrigger.prompt);
     setSkillPickerIndex(0);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -374,7 +407,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
           ref={textareaRef}
           className="composer-textarea"
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={handlePromptChange}
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
           placeholder="输入一个任务，让 agent 开始运行"
@@ -541,7 +574,7 @@ export function PromptComposer({ onSubmitPrompt, onStopRun, onWorkspaceChange, r
           </div>
         </div>
         {runStatus === 'waiting_approval' && (
-          <div className="composer-hint mt-8">当前有待审批任务，请先到右侧「审阅」处理后再发送新消息。</div>
+          <div className="composer-hint mt-8">当前有待审批任务，请先到右侧「摘要」处理后再发送新消息。</div>
         )}
       </div>
     </div>
@@ -567,6 +600,22 @@ function readFileAsDataURL(file: File) {
 }
 
 const modelSupportedImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+function getLeadingSkillTrigger(input: string) {
+  if (!input.startsWith('$')) {
+    return { active: false, query: '', prompt: input };
+  }
+
+  const prompt = input.slice(1).replace(/^\s+/, '');
+  const firstNonSpace = prompt.at(0) ?? '';
+  const isLikelySkillSearch = /^[a-zA-Z0-9_-]$/.test(firstNonSpace);
+
+  return {
+    active: true,
+    query: isLikelySkillSearch ? prompt.trim().toLowerCase() : '',
+    prompt
+  };
+}
 
 async function normalizeImageDataUrlForModel(dataUrl: string, mimeType: string) {
   if (modelSupportedImageMimeTypes.has(mimeType)) {

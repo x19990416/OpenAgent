@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { RuntimeTool } from '../runtime-types.js';
+import type { RuntimeAttachment, RuntimeTool } from '../runtime-types.js';
 import { discoverSkillCandidates } from './skill-discovery.js';
 import { parseCandidate } from './skill-parser.js';
 import { buildSkillPromptBlock } from './skill-prompt.js';
-import { resolveRelevantSkills } from './skill-resolver.js';
+import { inferImplicitSelectedSkill, resolveRelevantSkills } from './skill-resolver.js';
 import { createSkillTools } from './skill-tools.js';
 import { DEFAULT_TRUST, SOURCE_PRIORITY } from './skill-types.js';
 import type { PluginSkillPackage, ResolvedSkillContext, SkillCatalogItem, SkillResolutionInput, SkillSettings } from './skill-types.js';
@@ -78,7 +78,15 @@ export class SkillService {
     return { ok: checks.every((check) => check.ok), skill, checks };
   }
 
-  installLocal(input: { sourceDir: string; target?: 'user' | 'agent'; overwrite?: boolean }) {
+  inferSelectedSkill(input: { prompt: string; attachments?: RuntimeAttachment[] }) {
+    return inferImplicitSelectedSkill({
+      skills: this.listSkills().filter((skill) => skill.enabled),
+      prompt: input.prompt || '',
+      attachments: input.attachments ?? []
+    });
+  }
+
+  installLocal(input: { sourceDir: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) {
     const result = installLocalSkill({
       ...input,
       agentId: this.options.agentId,

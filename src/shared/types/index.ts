@@ -103,6 +103,21 @@ export interface PromptSubmissionResult {
   [key: string]: unknown;
 }
 
+export interface OpenAgentAppSettings {
+  schemaVersion: 'openagent.settings.v1';
+  runtime: {
+    allowTextToolCallRecovery: boolean;
+  };
+  updatedAt: string;
+}
+
+export interface OpenAgentAppSettingsResult {
+  ok: boolean;
+  settings?: OpenAgentAppSettings;
+  configPath?: string;
+  error?: string;
+}
+
 export interface KnowledgeResult {
   id: string;
   title: string;
@@ -418,6 +433,7 @@ export interface DesktopApi {
   compactThread?: (payload?: { threadId?: string }) => Promise<any>;
   exportSession?: (payload: SessionExportInput) => Promise<SessionExportResult>;
   saveImage?: (payload: { dataUrl: string; suggestedName?: string; format?: 'png' | 'svg'; mimeType?: string }) => Promise<{ ok: boolean; cancelled?: boolean; path?: string; error?: string }>;
+  previewImage?: (payload: { path: string }) => Promise<{ ok: boolean; dataUrl?: string; path?: string; name?: string; size?: number; mimeType?: string; error?: string }>;
   deleteThread: (payload: any) => Promise<any>;
   resolveApproval: (payload: any) => Promise<any>;
   openPromptAttachment: (payload: any) => Promise<any>;
@@ -433,6 +449,8 @@ export interface DesktopApi {
   clearLlmProviderApiKey?: (payload: any) => Promise<any>;
   deleteLlmProvider?: (payload: any) => Promise<any>;
   setActiveLlmProvider?: (payload: any) => Promise<any>;
+  getAppSettings?: () => Promise<OpenAgentAppSettingsResult>;
+  updateAppSettings?: (payload: Partial<{ runtime: Partial<OpenAgentAppSettings['runtime']> }>) => Promise<OpenAgentAppSettingsResult>;
   listSkills?: () => Promise<SkillCatalogItem[]>;
   getSkillCatalog?: () => Promise<SkillCatalogItem[]>;
   refreshSkills?: () => Promise<SkillCatalogItem[]>;
@@ -440,7 +458,7 @@ export interface DesktopApi {
   setSkillEnabled?: (payload: { skillName?: string; skillId?: string; enabled: boolean }) => Promise<any>;
   testSkill?: (payload: { skillName?: string; skillId?: string }) => Promise<any>;
   chooseSkillDirectory?: () => Promise<{ ok: boolean; canceled?: boolean; directoryPath?: string; error?: string }>;
-  installLocalSkill?: (payload: { sourceDir: string; target?: 'user' | 'agent'; overwrite?: boolean }) => Promise<any>;
+  installLocalSkill?: (payload: { sourceDir: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) => Promise<any>;
   logDiagnostic?: (level: 'info' | 'warn' | 'error', message: string, meta?: unknown) => void;
   discoverPlugins?: () => Promise<any>;
   discoverPluginsInDirectory?: (payload: any) => Promise<any>;

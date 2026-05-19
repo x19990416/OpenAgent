@@ -10,7 +10,7 @@ export function discoverSkillCandidates(input: { agentId: string; workspaceRoot:
     { source: 'system', dir: path.join(openAgentRoot, 'skills', '.system') },
     { source: 'user', dir: path.join(openAgentRoot, 'skills') },
     { source: 'agent', dir: path.join(openAgentRoot, 'agents', input.agentId, 'skills') },
-    { source: 'workspace', dir: path.join(input.workspaceRoot, '.openagent', 'skills') }
+    { source: 'workspace', dir: path.join(input.workspaceRoot, 'skills') }
   ];
   const candidates: SkillCandidate[] = [];
   for (const root of roots) {

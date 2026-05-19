@@ -2,7 +2,7 @@
 
 OpenAgent discovers skills from these roots, with higher-priority sources overriding lower-priority skills of the same name:
 
-1. Workspace: `<workspace>/.openagent/skills/`
+1. Workspace: `<workspace>/skills/`
 2. Agent: `~/.openagent/agents/<agentId>/skills/`
 3. User: `~/.openagent/skills/`
 4. Plugin bundled skills
@@ -10,7 +10,7 @@ OpenAgent discovers skills from these roots, with higher-priority sources overri
 
 Default to `agent` scope for personal agent-specific installs.
 Use `user` only when the user wants the skill available to every OpenAgent agent.
-Use `workspace` only when the skill should travel with or be scoped to the current project.
+Use `workspace` only when the skill should travel with or be scoped to the current project. Workspace installs go in the visible `skills/` directory at the workspace root, not directly in the workspace root and not under `.openagent/skills`.
 
 Safety rules:
 

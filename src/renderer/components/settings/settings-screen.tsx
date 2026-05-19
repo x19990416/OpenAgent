@@ -52,6 +52,7 @@ import type {
   LlmProviderConfig,
   LlmProviderKindDefinition,
   LlmProviderKind,
+  OpenAgentAppSettings,
   PluginRegistrySnapshot,
   SkillCatalogItem,
   UpsertLlmProviderInput,
@@ -102,6 +103,7 @@ const navItems: Array<{
   icon: typeof Bot;
 }> = [
   { key: 'models', label: '模型', icon: Bot },
+  { key: 'config', label: '设置', icon: Settings2 },
   { key: 'plugins', label: '插件', icon: Puzzle },
   { key: 'skills', label: 'Skills', icon: WandSparkles },
   { key: 'knowledge', label: '知识库', icon: Database }
@@ -2867,7 +2869,7 @@ function SkillPanel() {
   const [testResult, setTestResult] = useState<{ ok?: boolean; checks?: Array<{ name: string; ok: boolean; message: string }>; error?: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
-  const [installTarget, setInstallTarget] = useState<'agent' | 'user'>('agent');
+  const [installTarget, setInstallTarget] = useState<'agent' | 'user' | 'workspace'>('agent');
   const [overwriteInstall, setOverwriteInstall] = useState(false);
 
   const selectedSkill = useMemo(() => {
@@ -2991,8 +2993,9 @@ function SkillPanel() {
           <div className="settings-skill-install-box">
             <div className="settings-skill-install-row">
               <label className="settings-provider-console-label" htmlFor="skill-install-target">安装位置</label>
-              <select id="skill-install-target" className="settings-provider-select" value={installTarget} onChange={(event) => setInstallTarget(event.target.value as 'agent' | 'user')}>
+              <select id="skill-install-target" className="settings-provider-select" value={installTarget} onChange={(event) => setInstallTarget(event.target.value as 'agent' | 'user' | 'workspace')}>
                 <option value="agent">当前 Agent</option>
+                <option value="workspace">当前工作区</option>
                 <option value="user">当前用户</option>
               </select>
             </div>
@@ -3807,6 +3810,118 @@ function PluginPanel() {
   );
 }
 
+function AppConfigPanel() {
+  const [settings, setSettings] = useState<OpenAgentAppSettings | null>(null);
+  const [configPath, setConfigPath] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const loadSettings = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.getAppSettings) {
+      setFeedback({ type: 'error', text: '当前环境未挂载应用设置接口，请先重启桌面应用。' });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await desktopApi.getAppSettings();
+      if (!result.ok || !result.settings) {
+        setFeedback({ type: 'error', text: `设置读取失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      setSettings(result.settings);
+      setConfigPath(result.configPath ?? '');
+      setFeedback(null);
+    } catch (error) {
+      setFeedback({ type: 'error', text: `设置读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSettings();
+  }, []);
+
+  const updateRuntimeSetting = async (runtime: Partial<OpenAgentAppSettings['runtime']>) => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.updateAppSettings) {
+      setFeedback({ type: 'error', text: '当前环境未挂载应用设置保存接口，请先重启桌面应用。' });
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const result = await desktopApi.updateAppSettings({ runtime });
+      if (!result.ok || !result.settings) {
+        setFeedback({ type: 'error', text: `设置保存失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      setSettings(result.settings);
+      setConfigPath(result.configPath ?? configPath);
+      setFeedback({ type: 'success', text: '设置已保存。' });
+    } catch (error) {
+      setFeedback({ type: 'error', text: `设置保存失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const allowTextToolCallRecovery = settings?.runtime.allowTextToolCallRecovery ?? true;
+
+  return (
+    <div className="settings-stack">
+      <section className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <div className="settings-section-title">OpenAgent 设置</div>
+            <div className="settings-section-description">这些设置会保存到本机配置文件，重启后继续生效。</div>
+          </div>
+          <button className="toolbar-button" type="button" onClick={() => void loadSettings()} disabled={loading || saving}>
+            <RefreshCw size={14} />
+            刷新
+          </button>
+        </div>
+
+        <div className="settings-card-row">
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <div className="settings-row-title">文本工具调用兼容恢复</div>
+              <div className="settings-row-description">
+                当模型把 `skill_script` 等工具调用输出成文本时，允许 OpenAgent 解析并按正常 ToolPolicy、审批、审计流程执行。关闭后会直接报错，要求模型支持结构化工具调用。
+              </div>
+            </div>
+            <button
+              className={`settings-switch ${allowTextToolCallRecovery ? 'is-on' : 'is-off'}`}
+              type="button"
+              aria-pressed={allowTextToolCallRecovery}
+              disabled={loading || saving || !settings}
+              onClick={() => void updateRuntimeSetting({ allowTextToolCallRecovery: !allowTextToolCallRecovery })}
+            >
+              <span className="settings-switch-knob" />
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-card-row is-last">
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <div className="settings-row-title">配置文件</div>
+              <div className="settings-row-description">{configPath || '尚未读取配置文件路径'}</div>
+            </div>
+            <span className="settings-provider-muted">{settings?.updatedAt ? `更新于 ${new Date(settings.updatedAt).toLocaleString()}` : '未加载'}</span>
+          </div>
+        </div>
+      </section>
+
+      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+    </div>
+  );
+}
+
 export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBack }: SettingsScreenProps) {
   const currentTab: SettingsTab = visibleSettingsTabs.has(activeTab) ? activeTab : 'models';
   const rows = pageRows[currentTab];
@@ -3845,6 +3960,8 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
             {currentTab === 'models' ? (
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
+            ) : currentTab === 'config' ? (
+              <AppConfigPanel />
             ) : currentTab === 'plugins' ? (
               <PluginPanel />
             ) : currentTab === 'skills' ? (

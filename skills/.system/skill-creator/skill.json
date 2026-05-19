@@ -6,7 +6,7 @@
   "description": "Create or update OpenAgent skills with SKILL.md, skill.json, resources, and governed scripts.",
   "risk": "write",
   "tags": ["skill", "authoring", "scaffolding"],
-  "allowedTools": ["skill_load", "skill_resource", "skill_script"],
+  "allowedTools": ["skill_load", "skill_resource", "skill_script", "write_file"],
   "scripts": [
     {
       "path": "scripts/init_skill.mjs",

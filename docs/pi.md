@@ -226,8 +226,8 @@ call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 
 处理规则：
 
-- 不允许通过正则或文本匹配把这类内容“补执行”为工具调用，避免模型文本绕过 ToolPolicy、审批和审计。
-- 文本工具调用恢复只能作为显式 debug 兼容开关存在，默认必须关闭。默认路径应记录 `unparsed_tool_call` 并失败返回，推动修复 provider tool schema / Pi event 适配，而不是把普通 assistant 文本升级成真实 tool call。
+- 文本工具调用恢复只允许作为兼容兜底，不能绕过 ToolPolicy、审批、审计、timeout、AbortSignal 或 UI event。
+- 默认允许对已注册 OpenAgent tool 做一次受控恢复，以兼容缺少结构化 tool calling 的模型；如需强制禁用，可设置 `OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY=0`。恢复失败或被 policy 拒绝时，仍应记录 `unparsed_tool_call` 并失败返回。
 - 如果最终 assistant 文本本身像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答；即使此前已经有其他结构化 tool result（例如先成功 `write_file`，最后又吐出伪 `shell_exec`）也不能放行。
 - run log 需要记录 `unparsed_tool_call` 诊断信息，包括 `runId`、`threadId`、模型、文本摘要和是否存在真实 tool results。
 - UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。
@@ -311,6 +311,10 @@ function toPiToolDefinitions(tools: OpenAgentTool[]): ToolDefinition[] {
 │       ├── USER.md
 │       └── skills/
 ├── settings/
+│   ├── openagent-settings.json
+│   ├── pi-model-config.json
+│   ├── pi-models.json
+│   └── pi-auth.json
 └── logs/
 ```
 
@@ -344,7 +348,9 @@ OpenAgent 不要把 provider/model 解析写死在 Pi Adapter 中。
 
 建议：
 
-- `settings/config.yml` 保存 provider、baseUrl、apiKey 引用、defaultModel。
+- `settings/openagent-settings.json` 保存 OpenAgent 应用级设置，例如 runtime 兼容开关。
+- `settings/pi-model-config.json` 保存当前 provider/model 选择。
+- `settings/pi-models.json` 保存 provider、baseUrl、apiKey 引用、defaultModel 与模型目录。
 - `model-config-store.ts` 负责读写配置。
 - `pi-model.ts` 只负责把 OpenAgent provider config 转为 Pi 的 `AuthStorage` + `ModelRegistry` + `Model`。
 - 支持 provider fallback，但第一期可以只做单 provider 明确失败。

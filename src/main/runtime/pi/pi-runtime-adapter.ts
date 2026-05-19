@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getOpenAgentAppSettings } from '../settings/openagent-settings.js';
 import type { AgentRuntimeAdapter, AgentRuntimeCompactInput, AgentRuntimeCompactResult, AgentRuntimeRunInput, AgentRuntimeRunResult, RuntimeMessage } from '../runtime-types.js';
 import { errorToMessage, isCancelledError } from '../errors.js';
 import { createPiModelContext, resolvePiThinkingLevel } from './pi-model-registry.js';
@@ -205,7 +206,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const promptResult = await promptOpenAgentPiSession({
+      let promptResult = await promptOpenAgentPiSession({
         session,
         prompt: requestBody,
         attachments: input.attachments ?? [],
@@ -216,9 +217,12 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         threadId: input.threadId,
         maxIterations: input.maxIterations
       });
-      const assistantText = promptResult.assistantText;
-      const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
-      if (unparsedToolCall) {
+      let assistantText = promptResult.assistantText;
+      let totalLoopCount = promptResult.loopCount;
+      let totalToolResultCount = promptResult.toolResultCount;
+      for (let recoveryAttempt = 0; recoveryAttempt < 5; recoveryAttempt += 1) {
+        const unparsedToolCall = detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
+        if (!unparsedToolCall) break;
         const recovery = parseUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name));
         const recoveryEnabled = allowTextToolCallRecovery();
         input.onLog?.({
@@ -233,13 +237,14 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             parsedArgs: recovery?.args,
             textToolCallRecoveryEnabled: recoveryEnabled,
             assistantText,
-            toolResultCount: promptResult.toolResultCount,
-            hadPriorToolResults: promptResult.toolResultCount > 0,
-            loopCount: promptResult.loopCount
+            toolResultCount: totalToolResultCount,
+            hadPriorToolResults: totalToolResultCount > 0,
+            loopCount: totalLoopCount,
+            recoveryAttempt: recoveryAttempt + 1
           }
         });
 
-        if (recoveryEnabled && recovery && promptResult.toolResultCount === 0) {
+        if (recoveryEnabled && recovery) {
           const toolCallId = `text-tool-${randomUUID()}`;
           const result = await toolExecutor.execute({
             toolName: recovery.toolName,
@@ -247,35 +252,87 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             args: recovery.args,
             signal: input.abortSignal
           });
-          const content = [
-            `已兼容执行模型文本工具调用：${recovery.toolName}`,
-            '',
-            result.content
-          ].join('\n');
-          const message: RuntimeMessage = {
-            id: `assistant-${randomUUID()}`,
-            role: 'assistant',
-            content,
-            createdAt: new Date().toISOString()
-          };
+          totalToolResultCount += 1;
           input.onLog?.({
             scope: 'agent-loop',
             message: 'unparsed_tool_call_recovered',
-            data: { runId: input.runId, threadId: input.threadId, toolName: recovery.toolName, toolCallId, ok: result.ok }
+            data: { runId: input.runId, threadId: input.threadId, toolName: recovery.toolName, toolCallId, ok: result.ok, recoveryAttempt: recoveryAttempt + 1 }
           });
-          return {
-            status: result.ok ? 'completed' : 'failed',
-            assistantMessage: result.ok ? message : undefined,
-            error: result.ok ? undefined : result.content,
-            summary: content
-          };
+          if (!result.ok) {
+            if (isRecoverableToolPolicyCorrection(result.data)) {
+              input.onLog?.({
+                scope: 'agent-loop',
+                message: 'unparsed_tool_call_recovery_policy_correction',
+                data: {
+                  runId: input.runId,
+                  threadId: input.threadId,
+                  toolName: recovery.toolName,
+                  toolCallId,
+                  recoveryAttempt: recoveryAttempt + 1,
+                  data: result.data
+                }
+              });
+              promptResult = await promptOpenAgentPiSession({
+                session,
+                prompt: buildRecoveredToolContinuationPrompt(recovery.toolName, recovery.args, result.content),
+                attachments: [],
+                abortSignal: input.abortSignal,
+                onLog: input.onLog,
+                emitUiEvent: input.emitUiEvent,
+                runId: input.runId,
+                threadId: input.threadId,
+                maxIterations: input.maxIterations
+              });
+              assistantText = promptResult.assistantText;
+              totalLoopCount += promptResult.loopCount;
+              totalToolResultCount += promptResult.toolResultCount;
+              continue;
+            }
+            const content = [
+              `已兼容执行模型文本工具调用：${recovery.toolName}`,
+              '',
+              result.content
+            ].join('\n');
+            return {
+              status: 'failed',
+              error: content,
+              summary: content,
+              loopCount: totalLoopCount,
+              toolResultCount: totalToolResultCount
+            };
+          }
+          promptResult = await promptOpenAgentPiSession({
+            session,
+            prompt: buildRecoveredToolContinuationPrompt(recovery.toolName, recovery.args, result.content),
+            attachments: [],
+            abortSignal: input.abortSignal,
+            onLog: input.onLog,
+            emitUiEvent: input.emitUiEvent,
+            runId: input.runId,
+            threadId: input.threadId,
+            maxIterations: input.maxIterations
+          });
+          assistantText = promptResult.assistantText;
+          totalLoopCount += promptResult.loopCount;
+          totalToolResultCount += promptResult.toolResultCount;
+          continue;
         }
 
-        const message = `模型最终返回了未解析的工具调用文本，工具未执行：${unparsedToolCall.toolName}`;
+        const message = `模型返回了未解析的工具调用文本，工具未执行。请重试，或切换/配置支持结构化工具调用的模型。工具：${unparsedToolCall.toolName}`;
         return {
           status: 'failed',
           error: message,
           summary: message
+        };
+      }
+      if (detectUnparsedToolCallText(assistantText, input.tools.map((tool) => tool.name))) {
+        const message = '模型连续返回文本形式工具调用，已达到兼容恢复上限。';
+        return {
+          status: 'failed',
+          error: message,
+          summary: message,
+          loopCount: totalLoopCount,
+          toolResultCount: totalToolResultCount
         };
       }
       const message: RuntimeMessage = {
@@ -297,7 +354,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       return {
         status: 'completed',
         assistantMessage: message,
-        summary: message.content
+        summary: message.content,
+        loopCount: totalLoopCount,
+        toolResultCount: totalToolResultCount
       };
     } catch (error) {
       if (isCancelledError(error)) {
@@ -321,12 +380,15 @@ function detectUnparsedToolCallText(text: string, toolNames: string[]) {
     return new RegExp(`^(?:<\\|tool_call>)?\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{`, 's').test(trimmed);
   });
 
-  return toolName ? { toolName } : null;
+  if (toolName) return { toolName };
+
+  const unknownToolName = /^(?:<\|tool_call>)?\s*(?:(?:thought)?call:|:?\s*)?([A-Za-z_$][A-Za-z0-9_$-]*)\s*\{/s.exec(trimmed)?.[1];
+  return { toolName: unknownToolName || 'unknown' };
 }
 
 
 function parseUnparsedToolCallText(text: string, toolNames: string[]) {
-  const normalized = text.trim().replaceAll('<|"|>', '"').replace(/<tool_call\|>\s*$/g, '').trim();
+  const normalized = text.trim().replace(/<tool_call\|>\s*$/g, '').trim();
   for (const toolName of toolNames) {
     const escaped = escapeRegExp(toolName);
     const match = new RegExp(`^(?:<\\|tool_call>)?\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{([\\s\\S]*)\\}\\s*$`, 's').exec(normalized);
@@ -338,7 +400,10 @@ function parseUnparsedToolCallText(text: string, toolNames: string[]) {
 }
 
 function parseLooseToolArgs(body: string): Record<string, unknown> | null {
-  const jsonLike = `{${body}}`
+  const markerArgs = parseMarkerDelimitedToolArgs(body);
+  if (markerArgs) return markerArgs;
+
+  const jsonLike = `{${body.replaceAll('<|"|>', '"')}}`
     .replace(/([,{]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":')
     .replace(/,\s*}/g, '}')
     .replace(/,\s*]/g, ']');
@@ -350,8 +415,107 @@ function parseLooseToolArgs(body: string): Record<string, unknown> | null {
   }
 }
 
+function parseMarkerDelimitedToolArgs(body: string): Record<string, unknown> | null {
+  if (!body.includes('<|"|>')) return null;
+  const result: Record<string, unknown> = {};
+  let index = 0;
+
+  while (index < body.length) {
+    index = skipToolArgDelimiters(body, index);
+    if (index >= body.length) break;
+
+    const keyMatch = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(body.slice(index));
+    if (!keyMatch) return null;
+    const key = keyMatch[0];
+    index += key.length;
+    index = skipWhitespace(body, index);
+    if (body[index] !== ':') return null;
+    index += 1;
+    index = skipWhitespace(body, index);
+
+    if (body.startsWith('<|"|>', index)) {
+      index += '<|"|>'.length;
+      const end = body.indexOf('<|"|>', index);
+      if (end < 0) return null;
+      result[key] = body.slice(index, end);
+      index = end + '<|"|>'.length;
+    } else {
+      const end = findNextTopLevelComma(body, index);
+      const rawValue = body.slice(index, end < 0 ? body.length : end).trim();
+      result[key] = coerceLooseToolValue(rawValue);
+      index = end < 0 ? body.length : end;
+    }
+
+    index = skipToolArgDelimiters(body, index);
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function skipToolArgDelimiters(value: string, index: number) {
+  let cursor = index;
+  while (cursor < value.length && /[\s,]/.test(value[cursor] ?? '')) cursor += 1;
+  return cursor;
+}
+
+function skipWhitespace(value: string, index: number) {
+  let cursor = index;
+  while (cursor < value.length && /\s/.test(value[cursor] ?? '')) cursor += 1;
+  return cursor;
+}
+
+function findNextTopLevelComma(value: string, index: number) {
+  const comma = value.indexOf(',', index);
+  return comma < 0 ? -1 : comma;
+}
+
+function coerceLooseToolValue(value: string) {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (value === 'null') return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
+  try {
+    return JSON.parse(value.replaceAll('<|"|>', '"'));
+  } catch {
+    return value;
+  }
+}
+
+function buildRecoveredToolContinuationPrompt(toolName: string, args: Record<string, unknown>, resultContent: string) {
+  return [
+    `OpenAgent host recovered and executed your previous text-form tool call: ${toolName}.`,
+    'Do not repeat that exact tool call. Continue the same user task from the returned result.',
+    'If more tools are needed, use structured tool calls. If you still emit text-form tool calls, OpenAgent may recover them but this is only a compatibility fallback.',
+    '',
+    'Recovered tool arguments:',
+    safeJsonStringify(args).slice(0, 4000),
+    '',
+    'Recovered tool result:',
+    resultContent.slice(0, 4000)
+  ].join('\n');
+}
+
+function safeJsonStringify(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function isRecoverableToolPolicyCorrection(value: unknown) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      (value as { recoverable?: unknown }).recoverable === true &&
+      (value as { recoveryKind?: unknown }).recoveryKind === 'selected_skill_routing'
+  );
+}
+
 function allowTextToolCallRecovery() {
-  return process.env.OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY === '1';
+  if (process.env.OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY === '0') return false;
+  if (process.env.OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY === '1') return true;
+  return getOpenAgentAppSettings().runtime.allowTextToolCallRecovery;
 }
 
 function escapeRegExp(value: string) {

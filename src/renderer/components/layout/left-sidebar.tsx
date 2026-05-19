@@ -1,4 +1,4 @@
-import { CircleUserRound, Clock3, LogOut, Bot, ChevronDown, ChevronUp, Plus, Puzzle, Settings, Trash2 } from 'lucide-react';
+import { CircleUserRound, Clock3, LogOut, Bot, ChevronDown, ChevronUp, FolderOpen, Plus, Puzzle, Settings, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkspaceMeta } from '@shared-types/events';
 import type { LeftSidebarTab, MainAgentBootstrapSnapshot, SettingsTab, ThreadListItem } from '@/types/workbench';
@@ -46,6 +46,7 @@ export function LeftSidebar({
   const sortedThreads = useMemo(() => sortThreadsForDisplay(threads), [threads]);
   const visibleThreads = showAllThreads ? sortedThreads : sortedThreads.slice(0, MAX_VISIBLE_RUNS);
   const hiddenThreadCount = Math.max(0, sortedThreads.length - MAX_VISIBLE_RUNS);
+  const workspaceRoot = workspace?.rootPath?.trim();
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -151,15 +152,30 @@ export function LeftSidebar({
                 {sessionsExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
               </button>
             </div>
-            <button
-              type="button"
-              className="sidebar-agent-create"
-              aria-label="新建 session"
-              title="新建 session"
-              onClick={() => void onCreateThread()}
-            >
-              <Plus size={16} />
-            </button>
+            <div className="sidebar-agent-actions">
+              <button
+                type="button"
+                className="sidebar-agent-workspace"
+                aria-label="打开 workspace 目录"
+                title={workspaceRoot ? `打开 workspace 目录：${workspaceRoot}` : '打开 workspace 目录'}
+                disabled={!workspaceRoot}
+                onClick={() => {
+                  if (!workspaceRoot) return;
+                  void window.desktopApi?.openPromptAttachment?.({ path: workspaceRoot, action: 'open' });
+                }}
+              >
+                <FolderOpen size={16} />
+              </button>
+              <button
+                type="button"
+                className="sidebar-agent-create"
+                aria-label="新建 session"
+                title="新建 session"
+                onClick={() => void onCreateThread()}
+              >
+                <Plus size={16} />
+              </button>
+            </div>
           </div>
 
           {sessionsExpanded ? (

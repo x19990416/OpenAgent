@@ -68,7 +68,7 @@ export function ConversationPane({ messages, threadTitle, onOpenSettings }: Conv
       const result = await window.desktopApi.exportSession({
         format,
         title: threadTitle || 'OpenAgent 会话',
-        html: buildExportHtml(content, threadTitle || 'OpenAgent 会话'),
+        html: buildExportHtml(content, threadTitle || 'OpenAgent 会话', messages),
         suggestedName: buildSuggestedName(threadTitle || 'openagent-session')
       });
 
@@ -109,9 +109,10 @@ export function ConversationPane({ messages, threadTitle, onOpenSettings }: Conv
   );
 }
 
-function buildExportHtml(content: HTMLElement, title: string) {
+function buildExportHtml(content: HTMLElement, title: string, messages: MessageItem[]) {
   const styles = collectDocumentStyles();
   const exportedAt = new Date().toLocaleString('zh-CN');
+  const exportedContentHtml = buildExportContentHtml(content, messages);
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -128,10 +129,46 @@ function buildExportHtml(content: HTMLElement, title: string) {
       <h1>${escapeHtml(title)}</h1>
       <div class="conversation-export-document-meta">导出时间：${escapeHtml(exportedAt)}</div>
     </header>
-    ${content.innerHTML}
+    ${exportedContentHtml}
   </main>
 </body>
 </html>`;
+}
+
+function buildExportContentHtml(content: HTMLElement, messages: MessageItem[]) {
+  const clone = content.cloneNode(true) as HTMLElement;
+  const messageCards = Array.from(clone.querySelectorAll<HTMLElement>('.message-card'));
+
+  messages.forEach((message, index) => {
+    if (message.role !== 'user') return;
+    const skillLabel = message.skillDisplayName || message.skillName;
+    if (!skillLabel) return;
+
+    const card = messageCards[index];
+    if (!card) return;
+
+    const existingMetaLine = card.querySelector<HTMLElement>('.message-meta-line');
+    if (existingMetaLine) {
+      existingMetaLine.dataset.exportRequired = 'true';
+      return;
+    }
+
+    const metaLine = document.createElement('div');
+    metaLine.className = 'message-meta-line';
+    metaLine.dataset.exportRequired = 'true';
+    metaLine.setAttribute('title', `已指定 Skill：${skillLabel}`);
+
+    const label = document.createElement('span');
+    label.textContent = '已指定 Skill：';
+
+    const strong = document.createElement('strong');
+    strong.textContent = skillLabel;
+
+    metaLine.append(label, strong);
+    card.appendChild(metaLine);
+  });
+
+  return clone.innerHTML;
 }
 
 

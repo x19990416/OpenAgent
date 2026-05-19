@@ -484,6 +484,17 @@ function applyStateSnapshot(
   snapshot: NonNullable<Awaited<ReturnType<typeof window.desktopApi.getStateSnapshot>>>
 ): WorkbenchViewModel {
   const nextRunStatus = mapRunStatus(snapshot.latestRun?.status);
+  const activeThreadId = snapshot.activeThread?.threadId ?? null;
+  const snapshotMessages = snapshot.messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: normalizeMessageContent(message.content),
+    createdAt: message.createdAt,
+    attachments: message.attachments ?? [],
+    skillId: message.skillId ?? null,
+    skillName: message.skillName ?? null,
+    skillDisplayName: message.skillDisplayName ?? message.skillName ?? null
+  }));
 
   return {
     ...prev,
@@ -510,18 +521,33 @@ function applyStateSnapshot(
       : [],
     threads: snapshot.threads,
     recentRuns: snapshot.recentRuns,
-    messages: snapshot.messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: normalizeMessageContent(message.content),
-      createdAt: message.createdAt,
-      attachments: message.attachments ?? [],
-      skillId: message.skillId ?? null,
-      skillName: message.skillName ?? null,
-      skillDisplayName: message.skillDisplayName ?? message.skillName ?? null
-    })),
-    activeThreadId: snapshot.activeThread?.threadId ?? null
+    messages: mergeSnapshotMessagesWithTransient(prev, snapshotMessages, nextRunStatus, activeThreadId),
+    activeThreadId
   };
+}
+
+function mergeSnapshotMessagesWithTransient(
+  prev: WorkbenchViewModel,
+  snapshotMessages: MessageItem[],
+  runStatus: RunStatus,
+  activeThreadId: string | null
+) {
+  if (prev.activeThreadId && activeThreadId && prev.activeThreadId !== activeThreadId) {
+    return snapshotMessages;
+  }
+  if (runStatus !== 'running' && runStatus !== 'waiting_approval') {
+    return snapshotMessages;
+  }
+
+  const snapshotIds = new Set(snapshotMessages.map((message) => message.id));
+  const transientMessages = prev.messages.filter((message) =>
+    message.role === 'assistant' &&
+    message.id.startsWith('assistant-stream-') &&
+    message.content.trim() &&
+    !snapshotIds.has(message.id)
+  );
+
+  return transientMessages.length > 0 ? [...snapshotMessages, ...transientMessages] : snapshotMessages;
 }
 
 function mapUiEvent(prev: WorkbenchViewModel, event: UiEvent): WorkbenchViewModel {

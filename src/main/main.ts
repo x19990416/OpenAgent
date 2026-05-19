@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { RuntimeService } from './runtime/runtime-service.js';
 import { PluginService } from './plugins/plugin-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
+import { getOpenAgentAppSettings, getOpenAgentAppSettingsPath, updateOpenAgentAppSettings } from './runtime/settings/openagent-settings.js';
 import {
   buildPiProviderCatalog,
   clearOpenAgentPiProviderApiKey,
@@ -231,6 +232,63 @@ async function exportSessionDocument(payload: { format?: unknown; title?: unknow
       // ignore temp cleanup failures
     }
   }
+}
+
+
+function getImageMimeType(filePath: string) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.avif') return 'image/avif';
+  if (ext === '.svg') return 'image/svg+xml';
+  return '';
+}
+
+function isPathInside(childPath: string, parentPath: string) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolvePreviewImagePath(requestedPath: unknown) {
+  const rawPath = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+  if (!rawPath) return null;
+
+  const candidates = path.isAbsolute(rawPath)
+    ? [rawPath]
+    : [path.resolve(workspace.rootPath, rawPath), path.resolve(process.cwd(), rawPath)];
+
+  const allowedRoots = [workspace.rootPath, process.cwd(), path.join(os.homedir(), '.openagent'), os.tmpdir()];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (!existsSync(resolved)) continue;
+    if (!allowedRoots.some((root) => isPathInside(resolved, root))) continue;
+    if (!getImageMimeType(resolved)) continue;
+    return resolved;
+  }
+  return null;
+}
+
+function readImagePreview(payload: { path?: unknown }) {
+  const filePath = resolvePreviewImagePath(payload?.path);
+  if (!filePath) return { ok: false, error: '未找到可预览的图片文件。' };
+
+  const stat = statSync(filePath);
+  const maxPreviewBytes = 15 * 1024 * 1024;
+  if (!stat.isFile()) return { ok: false, error: '预览目标不是文件。' };
+  if (stat.size > maxPreviewBytes) return { ok: false, error: '图片过大，已跳过聊天内预览。' };
+
+  const mimeType = getImageMimeType(filePath);
+  const dataUrl = `data:${mimeType};base64,${readFileSync(filePath).toString('base64')}`;
+  return {
+    ok: true,
+    path: filePath,
+    name: path.basename(filePath),
+    size: stat.size,
+    mimeType,
+    dataUrl
+  };
 }
 
 async function saveImageDocument(payload: { dataUrl?: unknown; suggestedName?: unknown; format?: unknown; mimeType?: unknown }) {
@@ -486,14 +544,19 @@ function registerIpc() {
   ipcMain.handle('threads:compact', (_event, payload) => runtimeService.compactThread(payload?.threadId));
   ipcMain.handle('threads:export', (_event, payload) => exportSessionDocument(payload ?? {}));
   ipcMain.handle('image:save', (_event, payload) => saveImageDocument(payload ?? {}));
+  ipcMain.handle('image:preview', (_event, payload) => readImagePreview(payload ?? {}));
   ipcMain.handle('threads:delete', (_event, payload) => runtimeService.deleteThread(payload.threadId));
   ipcMain.handle('approval:resolve', (_event, payload) => runtimeService.resolveApproval(payload ?? {}));
   ipcMain.handle('attachment:open', async (_event, payload) => {
+    const targetPath = typeof payload?.path === 'string' ? payload.path : '';
+    if (!targetPath) return { ok: false, error: 'Missing attachment path' };
+    if (!existsSync(targetPath)) return { ok: false, error: `文件不存在：${targetPath}` };
+
     if (payload.action === 'reveal') {
-      shell.showItemInFolder(payload.path);
+      shell.showItemInFolder(targetPath);
       return { ok: true };
     }
-    const result = await shell.openPath(payload.path);
+    const result = await shell.openPath(targetPath);
     return result ? { ok: false, error: result } : { ok: true };
   });
 
@@ -645,6 +708,16 @@ function registerIpc() {
       catalog: await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model })
     };
   });
+  ipcMain.handle('app-settings:get', () => ({
+    ok: true,
+    settings: getOpenAgentAppSettings(),
+    configPath: getOpenAgentAppSettingsPath()
+  }));
+  ipcMain.handle('app-settings:update', (_event, payload) => ({
+    ok: true,
+    settings: updateOpenAgentAppSettings(payload ?? {}),
+    configPath: getOpenAgentAppSettingsPath()
+  }));
   ipcMain.handle('skills:list', () => runtimeService.listSkills());
   ipcMain.handle('skills:refresh', () => runtimeService.refreshSkills());
   ipcMain.handle('skills:get', (_event, payload) => runtimeService.getSkill(String(payload?.skillName || payload?.skillId || payload || '')));

@@ -32,6 +32,7 @@ import { SkillService, type SkillCatalogItem } from './skills/skill-service.js';
 const MAX_RUN_CONTEXT_MESSAGES = 32;
 const AUTO_COMPACT_TRANSCRIPT_MESSAGES = 96;
 const AUTO_COMPACT_MIN_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_PROGRESS_CONTINUATION_ATTEMPTS = 3;
 
 export class RuntimeService {
   private activeThreadId = 'thread-welcome';
@@ -142,7 +143,7 @@ export class RuntimeService {
     return this.skillService.testSkill(input.skillName || input.skillId || '');
   }
 
-  installLocalSkill(input: { sourceDir?: string; target?: 'user' | 'agent'; overwrite?: boolean }) {
+  installLocalSkill(input: { sourceDir?: string; target?: 'user' | 'agent' | 'workspace'; overwrite?: boolean }) {
     this.syncPluginSkills();
     return this.skillService.installLocal({
       sourceDir: String(input.sourceDir || ''),
@@ -581,11 +582,26 @@ export class RuntimeService {
         }
       });
       this.syncPluginSkills();
-      const selectedSkill = this.resolveSelectedSkill(input.selectedSkillId ?? null);
+      const explicitSelectedSkill = this.resolveSelectedSkill(input.selectedSkillId ?? null);
+      const inferredSelectedSkill = explicitSelectedSkill ? null : this.skillService.inferSelectedSkill({ prompt, attachments });
+      const selectedSkill = explicitSelectedSkill ?? inferredSelectedSkill;
+      if (inferredSelectedSkill) {
+        appendRuntimeInfoLog({
+          scope: 'context',
+          message: 'implicit selected skill inferred',
+          data: {
+            runId,
+            threadId: thread.threadId,
+            skillName: inferredSelectedSkill.name,
+            skillId: inferredSelectedSkill.id,
+            reason: 'skill authoring intent'
+          }
+        });
+      }
       const skillContext = this.skillService.resolveForPrompt({
         prompt,
         attachments,
-        selectedSkillId: input.selectedSkillId ?? null
+        selectedSkillId: selectedSkill?.id ?? input.selectedSkillId ?? null
       });
       this.eventBus.emit('skill.resolved', {
         runId,
@@ -642,7 +658,11 @@ export class RuntimeService {
         },
         requestApproval: (request) => {
           this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户审批外部路径访问。' });
-          return this.requestToolApproval(request);
+          return this.requestToolApproval({
+            ...request,
+            runId,
+            threadId: thread.threadId
+          });
         },
         getPlanContext: () => toPlanExecutionContext(activePlan, selectedSkill) ?? toSelectedSkillExecutionContext(selectedSkill)
       });
@@ -731,6 +751,16 @@ export class RuntimeService {
               'Plan execution rule:',
               '- Follow the active plan goal and steps unless new evidence makes it unsafe or incorrect.',
               '- Use OpenAgent tools normally when needed; OpenAgent runtime owns approvals, logs, and plan status.',
+              ...(selectedSkill
+                ? [
+                    `- Selected skill ${selectedSkill.name} is the primary execution path for this run. For this selected-skill run, call skill_load / skill_resource / skill_script with exact structured tool calls before considering any generic coding agent.`,
+                    '- Do not call pi_coding_agent to reimplement or bypass the selected skill when a declared skill script/resource can satisfy the step.',
+                    '- For execute steps in this selected-skill run, prefer skill_script for declared scripts and write_file only for direct skill-package file writes.'
+                  ]
+                : [
+                    '- For execute steps that require coding, running scripts, generating files, or complex artifacts, you must call the appropriate OpenAgent tool such as pi_coding_agent instead of merely saying you will do it.'
+                  ]),
+              '- Do not end the run with future-tense progress text like “请稍等/我将/正在为你” when the next action requires a tool call; call the tool in the same turn.',
               '- If the plan is insufficient, explain the needed revision in the final answer rather than silently ignoring it.',
               ''
             ]
@@ -784,7 +814,97 @@ export class RuntimeService {
         '正在进入 agent loop 执行计划主体。'
       );
       appendProgressStep('调用模型并等待 agent loop 返回');
-      const result = await this.adapter.run(runInput);
+      let result = await this.adapter.run(runInput);
+      let continuationBaseMessages = runInput.messages;
+      if (shouldRetryPlanToolExecution(activePlan, result)) {
+        const retryReason = '计划执行需要实际工具调用，但模型上一轮只返回了说明文本；正在用更严格的工具执行指令重试一次。';
+        appendRuntimeInfoLog({
+          scope: 'agent-loop',
+          message: 'plan tool execution retry requested',
+          data: {
+            runId,
+            threadId: thread.threadId,
+            loopCount: result.loopCount,
+            toolResultCount: result.toolResultCount,
+            assistantMessageId: result.assistantMessage?.id
+          }
+        });
+        if (activePlan) this.emitPlan('plan.updated', activePlan, retryReason);
+        this.eventBus.emit('runtime.activity', {
+          id: `${runId}-plan-tool-retry`,
+          runId,
+          threadId: thread.threadId,
+          kind: 'tool',
+          status: 'running',
+          title: 'Retrying planned tool execution',
+          detail: retryReason,
+          createdAt: new Date().toISOString()
+        });
+        const planRetryMessages = result.assistantMessage ? [...runInput.messages, result.assistantMessage] : runInput.messages;
+        result = await this.adapter.run({
+          ...runInput,
+          prompt: buildPlanToolExecutionRetryPrompt(prompt, result.assistantMessage?.content || '', activePlan),
+          messages: planRetryMessages
+        });
+        continuationBaseMessages = planRetryMessages;
+        this.eventBus.emit('runtime.activity', {
+          id: `${runId}-plan-tool-retry`,
+          runId,
+          threadId: thread.threadId,
+          kind: 'tool',
+          status: result.status === 'completed' ? 'completed' : 'failed',
+          title: 'Retried planned tool execution',
+          detail: `toolResultCount=${result.toolResultCount ?? 0}`,
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString()
+        });
+      }
+      for (let continuationAttempt = 1; shouldContinueProgressOnlyReply(activePlan, result) && continuationAttempt <= MAX_PROGRESS_CONTINUATION_ATTEMPTS; continuationAttempt += 1) {
+        const previousAssistantContent = result.assistantMessage?.content || '';
+        const progressReason = '模型返回了“将继续/请稍等”等进度型文本但没有完成承诺的后续动作；OpenAgent 正在自动续跑同一任务。';
+        appendRuntimeInfoLog({
+          scope: 'agent-loop',
+          message: 'progress-only assistant continuation requested',
+          data: {
+            runId,
+            threadId: thread.threadId,
+            continuationAttempt,
+            maxAttempts: MAX_PROGRESS_CONTINUATION_ATTEMPTS,
+            loopCount: result.loopCount,
+            toolResultCount: result.toolResultCount,
+            assistantMessageId: result.assistantMessage?.id,
+            assistantTextPreview: previousAssistantContent.slice(0, 500)
+          }
+        });
+        this.eventBus.emit('runtime.activity', {
+          id: `${runId}-progress-continuation-${continuationAttempt}`,
+          runId,
+          threadId: thread.threadId,
+          kind: 'tool',
+          status: 'running',
+          title: 'Continuing unfinished assistant progress',
+          detail: progressReason,
+          createdAt: new Date().toISOString()
+        });
+        const nextMessages = result.assistantMessage ? [...continuationBaseMessages, result.assistantMessage] : continuationBaseMessages;
+        result = await this.adapter.run({
+          ...runInput,
+          prompt: buildProgressContinuationPrompt(prompt, previousAssistantContent, activePlan),
+          messages: nextMessages
+        });
+        continuationBaseMessages = nextMessages;
+        this.eventBus.emit('runtime.activity', {
+          id: `${runId}-progress-continuation-${continuationAttempt}`,
+          runId,
+          threadId: thread.threadId,
+          kind: 'tool',
+          status: result.status === 'completed' ? 'completed' : 'failed',
+          title: 'Continued unfinished assistant progress',
+          detail: `toolResultCount=${result.toolResultCount ?? 0}`,
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString()
+        });
+      }
       if (abortSignal.aborted) {
         const summary = '运行已停止。';
         if (activePlan) {
@@ -796,6 +916,41 @@ export class RuntimeService {
         return { ok: false, runId, status: 'cancelled', error: summary };
       }
       let summary = summarizeRunResult(result);
+
+      if (shouldContinueProgressOnlyReply(activePlan, result)) {
+        summary = '运行未完成：模型连续返回“请稍等/我将继续”等进度型文本，但没有真正执行后续工具调用。请重试，或切换/配置更稳定支持工具调用的模型。';
+        appendRuntimeInfoLog({
+          scope: 'agent-loop',
+          message: 'progress-only assistant continuation exhausted',
+          data: {
+            runId,
+            threadId: thread.threadId,
+            maxAttempts: MAX_PROGRESS_CONTINUATION_ATTEMPTS,
+            assistantMessageId: result.assistantMessage?.id,
+            assistantTextPreview: result.assistantMessage?.content.slice(0, 500)
+          }
+        });
+        if (activePlan) {
+          activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
+          this.emitPlan('plan.failed', activePlan, summary);
+        }
+        this.emitFailureAssistantMessage(thread, transcript, summary);
+        this.runState.finish(runId, { status: 'failed', summary });
+        this.eventBus.emit('run.failed', { summary, details: summary });
+        return { ok: false, runId, status: 'failed', error: summary };
+      }
+
+      if (isMissingRequiredPlanToolExecution(activePlan, result)) {
+        summary = '计划执行未完成：模型没有发起计划要求的 OpenAgent 工具调用。请重试，或让模型改用明确的工具调用完成任务。';
+        if (activePlan) {
+          activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
+          this.emitPlan('plan.failed', activePlan, summary);
+        }
+        this.emitFailureAssistantMessage(thread, transcript, summary);
+        this.runState.finish(runId, { status: 'failed', summary });
+        this.eventBus.emit('run.failed', { summary, details: summary });
+        return { ok: false, runId, status: 'failed', error: summary };
+      }
 
       if (result.status === 'completed' && result.assistantMessage) {
         const llmRawResponseLog = {
@@ -985,6 +1140,7 @@ export class RuntimeService {
         activePlan = planExecutor?.failCurrent(summary) ?? this.planService.markFailed(activePlan, summary);
         this.emitPlan('plan.failed', activePlan, summary);
       }
+      this.emitFailureAssistantMessage(thread, transcript, summary);
       this.runState.finish(runId, { status: 'failed', summary });
       this.eventBus.emit('run.failed', { summary, details: result.error });
       return { ok: false, runId, status: 'failed', error: summary };
@@ -1004,10 +1160,26 @@ export class RuntimeService {
         activePlan = planExecutor?.failCurrent(message) ?? this.planService.markFailed(activePlan, message);
         this.emitPlan('plan.failed', activePlan, message);
       }
+      this.emitFailureAssistantMessage(thread, transcript, message);
       this.runState.finish(runId, { status: 'failed', summary: message });
       this.eventBus.emit('run.failed', { summary: message, details: message });
       return { ok: false, runId, status: 'failed', error: message };
     }
+  }
+
+  private emitFailureAssistantMessage(thread: RuntimeThread, transcript: TranscriptStore, summary: string) {
+    const content = summary.trim();
+    if (!content) return;
+    const assistantMessage: RuntimeMessage = {
+      id: `assistant-${randomUUID()}`,
+      role: 'assistant',
+      content,
+      createdAt: new Date().toISOString()
+    };
+    this.messages.push(assistantMessage);
+    transcript.appendMessage(assistantMessage);
+    this.finishThread(thread, content);
+    this.eventBus.emit('message.completed', assistantMessage);
   }
 
   private emitPlan(type: 'plan.created' | 'plan.updated' | 'plan.completed' | 'plan.failed', plan: AgentPlan, reason?: string, changedStepId?: string) {
@@ -1352,6 +1524,109 @@ function summarizeProgressLogEntry(entry: RuntimeLogEntry) {
   return null;
 }
 
+
+function shouldRetryPlanToolExecution(plan: AgentPlan | null, result: { status: string; assistantMessage?: RuntimeMessage; toolResultCount?: number }) {
+  return isMissingRequiredPlanToolExecution(plan, result);
+}
+
+function isMissingRequiredPlanToolExecution(plan: AgentPlan | null, result: { status: string; assistantMessage?: RuntimeMessage; toolResultCount?: number }) {
+  if (!plan || result.status !== 'completed' || !result.assistantMessage) return false;
+  if ((result.toolResultCount ?? 0) > 0) return false;
+  return planRequiresToolExecution(plan);
+}
+
+function planRequiresToolExecution(plan: AgentPlan) {
+  return plan.steps.some((step) => {
+    if (step.kind !== 'execute') return false;
+    const tools = step.allowedTools ?? [];
+    if (step.requiresApproval) return true;
+    return tools.some((tool) => isExecutionToolName(tool));
+  });
+}
+
+function isExecutionToolName(toolName: string) {
+  const normalized = toolName.toLowerCase().replace(/[_-]/g, '-');
+  return [
+    'tool-executor',
+    'write-file',
+    'file-write',
+    'shell-exec',
+    'pi-coding-agent',
+    'skill-script'
+  ].includes(normalized);
+}
+
+function shouldContinueProgressOnlyReply(plan: AgentPlan | null, result: { status: string; assistantMessage?: RuntimeMessage; toolResultCount?: number }) {
+  if (result.status !== 'completed' || !result.assistantMessage) return false;
+  const content = stripOpenAgentMetadata(result.assistantMessage.content);
+  if (!content.trim()) return false;
+  if (hasUserBlockerRequest(content)) return false;
+  if (hasStrongFinalCompletionSignal(content) && !hasExplicitWaitOrContinueSignal(content)) return false;
+
+  const promisesFutureWork = /(?:我(?:将|会|现在|马上|立即)|接下来(?:我)?(?:将|会)?|下一步(?:我)?(?:将|会)?|继续(?:推进|执行|处理|完成)|开始(?:读取|编写|创建|更新|执行|处理|检查|重构)|正在(?:读取|编写|创建|更新|执行|处理|检查|重构)|I\s+(?:will|am going to)|I'll|Next,\s*I\s+will)/i.test(content);
+  if (!promisesFutureWork) return false;
+
+  if (hasExplicitWaitOrContinueSignal(content)) return true;
+
+  // Plan-mode execute steps already state that tool-backed work is expected; a future-tense
+  // assistant reply in that context should not be treated as final completion.
+  return Boolean(plan && planRequiresToolExecution(plan));
+}
+
+function stripOpenAgentMetadata(content: string) {
+  return content.replace(/<!--\s*openagent:metadata[\s\S]*?-->/g, '').trim();
+}
+
+function hasExplicitWaitOrContinueSignal(content: string) {
+  return /(?:请稍等|稍等|我将立即|我会继续|将继续|立即开始|马上开始|下一步执行计划|下一步计划|正在进行|正在(?:读取|编写|创建|更新|执行|处理|检查|重构)|继续推进|开始(?:读取|编写|创建|更新|执行|处理|检查|重构))/.test(content);
+}
+
+function hasUserBlockerRequest(content: string) {
+  return /(?:请问|是否可以|是否确认|请确认|需要您|请提供|等待您|待您|如果您(?:确认|提供|同意)|需要用户|人工确认)/.test(content);
+}
+
+function hasStrongFinalCompletionSignal(content: string) {
+  return /(?:任务已(?:经)?(?:圆满)?完成|已(?:经)?全部(?:开发)?完成|准备就绪|最终交付清单|如果您(?:还有|有)其他需求|随时告诉我|done\b|completed\b)/i.test(content);
+}
+
+function buildPlanToolExecutionRetryPrompt(originalPrompt: string, previousAssistantContent: string, plan: AgentPlan | null) {
+  return [
+    'OpenAgent runtime noticed that the active plan still requires actual tool execution, but the previous assistant turn returned only user-facing progress text and no OpenAgent tool result.',
+    '',
+    'You must continue the same user task now. Do not apologize and do not describe future work. Call the appropriate OpenAgent tool in this turn using the exact registered tool name.',
+    'If the active context has a selected skill with declared scripts/resources, use skill_load, skill_resource, or skill_script before any generic coding agent. Only use pi_coding_agent when no selected skill tool fits the step.',
+    '',
+    'Original user request:',
+    originalPrompt,
+    '',
+    'Active plan:',
+    plan ? formatPlanForPrompt(plan) : '(no active plan)',
+    '',
+    'Previous assistant text that did not execute a tool:',
+    previousAssistantContent.slice(0, 2000)
+  ].join('\n');
+}
+
+function buildProgressContinuationPrompt(originalPrompt: string, previousAssistantContent: string, plan: AgentPlan | null) {
+  return [
+    'OpenAgent runtime detected that your previous assistant message was progress-only or future-tense continuation text, not a final deliverable.',
+    '',
+    'Continue the same user task now.',
+    'Do not apologize. Do not say “请稍等”, “我将继续”, “正在处理”, or describe future work as the final answer.',
+    'If the next action requires reading, writing, running code, using a skill, or delegating to a child agent, call the appropriate structured OpenAgent tool in this turn.',
+    'Only return a final user-facing answer after the promised work has actually completed or a real blocker requires user input.',
+    '',
+    'Original user request:',
+    originalPrompt,
+    '',
+    'Active plan:',
+    plan ? formatPlanForPrompt(plan) : '(no active plan)',
+    '',
+    'Previous progress-only assistant text:',
+    previousAssistantContent.slice(0, 3000)
+  ].join('\n');
+}
+
 function toPlanExecutionContext(plan: AgentPlan | null, selectedSkill?: SkillCatalogItem | null): PlanExecutionContext | null {
   if (!plan) return null;
   const currentStep = plan.steps.find((step) => step.status === 'in_progress') ?? plan.steps.find((step) => step.status === 'pending');
@@ -1384,17 +1659,26 @@ function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {
     ? skill.scripts.map((script) => `- ${script.path} runtime=${script.runtime || 'unknown'} risk=${script.risk || 'read'} network=${script.network === true} writes=${script.writes === true}${script.description ? ` :: ${script.description}` : ''}`).join('\n')
     : '- (no declared scripts)';
   const resources = skill.resources.filter((resource) => resource.kind !== 'script').slice(0, 12).map((resource) => `- ${resource.kind}: ${resource.path}${resource.description ? ` :: ${resource.description}` : ''}`).join('\n') || '- (no declared resources)';
+  const creatorRules = skill.name === 'skill-creator'
+    ? [
+        'Skill creation destination rules:',
+        '- Create new skills only under ~/.openagent/agents/<agentId>/skills/<skill-name>/ by default.',
+        '- Never create a skill package under the workspace root, such as <workspace>/<skill-name>/ or <workspace>/skills/<skill-name>/.',
+        '- If writing files directly, all write_file paths must stay inside the current agent skill root.'
+      ]
+    : [];
   return [
     `The user explicitly selected skill ${skill.name} (${skill.id}). Treat this as the primary execution path for this run.`,
-    'Do not delegate to pi_coding_agent to reimplement the selected skill when a declared skill script/resource can satisfy the task.',
-    'If detailed instructions are needed, call skill_load with this exact skillName first.',
-    'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path.',
-    'If deterministic computation is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args.',
-    'Only avoid skill_script when no declared script is relevant or the user explicitly asks for code changes outside the selected skill.',
+    'Use the selected skill tools directly. Do not delegate to pi_coding_agent to reimplement, inspect, run, or bypass the selected skill when a declared skill script/resource can satisfy the task.',
+    'If detailed instructions are needed, call skill_load with this exact skillName first. Do not output text-form calls like call:skill_load{...}; use a real structured tool call.',
+    'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path. Do not use pi_coding_agent for this lookup.',
+    'If deterministic computation or scaffolding is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args. Do not run the skill script indirectly through pi_coding_agent or shell_exec.',
+    'Only avoid skill_script when no declared script is relevant or the user explicitly asks for code changes outside the selected skill; in that case explain why the selected skill path does not fit before choosing another tool.',
     'Declared scripts:',
     scripts,
     'Declared resources:',
-    resources
+    resources,
+    ...creatorRules
   ].join('\n');
 }
 

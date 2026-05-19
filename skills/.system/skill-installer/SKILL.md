@@ -29,7 +29,7 @@ Do not use this skill to execute a skill's task workflow. Install first, then us
 2. Determine the target scope:
    - `agent`: `~/.openagent/agents/<agentId>/skills/` for the current agent.
    - `user`: `~/.openagent/skills/` for all agents.
-   - `workspace`: `<workspace>/.openagent/skills/` for the current workspace.
+   - `workspace`: `<workspace>/skills/` for the current workspace.
 3. Prefer `agent` scope unless the user asks for global or workspace install.
 4. Use `scripts/install_openagent_skill.mjs` for deterministic installation.
 5. Do not overwrite an existing skill unless the user explicitly requests overwrite.

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { SkillCandidate, SkillCatalogItem, SkillResourceItem, SkillScriptDescriptor, SkillSettings } from './skill-types.js';
 import { DEFAULT_TRUST, SOURCE_LABELS } from './skill-types.js';
-import { firstParagraph, normalizeRisk, normalizeStringArray, titleize, unquote } from './skill-utils.js';
+import { firstParagraph, isAllowedSkillResourcePath, normalizeRisk, normalizeStringArray, titleize, unquote } from './skill-utils.js';
 
 export function parseCandidate(candidate: SkillCandidate, settings: SkillSettings): SkillCatalogItem {
   const skillFile = path.join(candidate.rootDir, 'SKILL.md');
@@ -144,6 +144,7 @@ function collectSkillResources(rootDir: string, skillJson: Record<string, unknow
     const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     const pathValue = String(record.path || '').trim();
     if (!pathValue) continue;
+    if (!isAllowedSkillResourcePath(pathValue)) continue;
     items.push({ path: pathValue, kind: normalizeResourceKind(record.type, pathValue), description: typeof record.description === 'string' ? record.description : undefined, size: getSize(rootDir, pathValue) });
   }
   for (const [dir, kind] of [['scripts', 'script'], ['templates', 'template'], ['references', 'reference'], ['examples', 'example'], ['assets', 'asset']] as const) {

@@ -218,7 +218,7 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
 
 function normalizeExecuteAllowedTools(allowedTools?: string[]) {
   const tools = allowedTools?.length ? Array.from(new Set(allowedTools)) : ['tool-executor'];
-  const canExecuteOrWrite = tools.some((tool) => ['tool-executor', 'write_file', 'file-write', 'shell_exec', 'shell-exec', 'pi_coding_agent', 'pi-coding', 'coding'].includes(tool));
+  const canExecuteOrWrite = tools.some((tool) => ['tool-executor', 'write_file', 'file-write', 'shell_exec', 'shell-exec', 'pi_coding_agent'].includes(tool));
   if (canExecuteOrWrite) return tools;
 
   return [...tools, 'tool-executor'];

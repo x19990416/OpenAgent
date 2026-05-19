@@ -9,8 +9,8 @@ function assert(condition, message) {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'openagent-skill-smoke-'));
-const workspaceRoot = path.join(tempRoot, 'workspace');
 const openAgentRoot = path.join(tempRoot, '.openagent');
+const workspaceRoot = path.join(openAgentRoot, 'agents', 'smoke-agent', 'workspace');
 mkdirSync(workspaceRoot, { recursive: true });
 mkdirSync(openAgentRoot, { recursive: true });
 process.env.OPENAGENT_HOME = openAgentRoot;
@@ -32,6 +32,16 @@ assert(skill.enabled, 'system skill markdown-report should be enabled by default
 assert(skill.scripts.some((script) => script.path === 'scripts/word_count.mjs' && script.risk === 'read'), 'declared read-only script should be indexed');
 assert(skill.resources.some((resource) => resource.path === 'templates/report.md' && resource.kind === 'template'), 'template resource should be indexed');
 
+const inferredSkillCreator = service.inferSelectedSkill({
+  prompt: '帮我创建一个叫做 email 的技能，用 POP3/SMTP 收发邮件'
+});
+assert(inferredSkillCreator?.name === 'skill-creator', 'skill authoring intent should implicitly select skill-creator');
+
+const nonAuthoringSkill = service.inferSelectedSkill({
+  prompt: '帮我使用 email 技能发送一封邮件'
+});
+assert(!nonAuthoringSkill, 'normal skill usage should not implicitly select skill-creator');
+
 const tools = service.createTools();
 const resourceTool = tools.find((tool) => tool.name === 'skill_resource');
 const scriptTool = tools.find((tool) => tool.name === 'skill_script');
@@ -48,6 +58,34 @@ assert(resourceResult.ok, `skill_resource should succeed: ${resourceResult.conte
 assert(resourceResult.content.includes('# {{title}}'), 'template content should be returned');
 
 const policy = new ToolPolicy(workspaceRoot);
+const selectedSkillWriteDecision = policy.decide(
+  { name: 'write_file', label: 'Write File', description: 'write file', parameters: {}, execute: async () => ({ ok: true, content: '' }) },
+  { path: path.join(openAgentRoot, 'agents', 'smoke-agent', 'skills', 'email', 'SKILL.md'), content: 'test' },
+  {
+    planId: 'selected-skill:skill-creator',
+    stepId: 'selected-skill-routing',
+    mode: 'executing',
+    allowedTools: ['read-only'],
+    selectedSkillName: 'skill-creator',
+    selectedSkillHasScripts: true
+  }
+);
+assert(selectedSkillWriteDecision.kind !== 'deny', 'skill-creator selected flow should allow write_file through plan allowlist');
+
+const badSkillRootWriteDecision = policy.decide(
+  { name: 'write_file', label: 'Write File', description: 'write file', parameters: {}, execute: async () => ({ ok: true, content: '' }) },
+  { path: 'skills/email/SKILL.md', content: 'test' },
+  {
+    planId: 'selected-skill:skill-creator',
+    stepId: 'selected-skill-routing',
+    mode: 'executing',
+    allowedTools: ['read-only'],
+    selectedSkillName: 'skill-creator',
+    selectedSkillHasScripts: true
+  }
+);
+assert(badSkillRootWriteDecision.kind === 'deny', 'skill-creator selected flow should deny writes directly under workspace root');
+
 const policyDecision = policy.decide(scriptTool, { skillName: 'markdown-report', scriptPath: 'scripts/word_count.mjs', args: ['hello world'] });
 assert(policyDecision.kind === 'requires_approval', 'skill_script should require approval');
 assert(policyDecision.approval.risk === 'low', `read-only skill script should be low risk, got ${policyDecision.approval.risk}`);

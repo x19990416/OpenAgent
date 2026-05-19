@@ -3,14 +3,15 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const args = parseArgs(process.argv.slice(2));
-if (args.help || !args.name || !args.description) {
+if (args.help || !args.name) {
   printHelp();
   process.exit(args.help ? 0 : 1);
 }
 
 const name = safeName(args.name);
 const displayName = args.displayName || titleize(name);
-const output = path.resolve(args.output || path.join(process.cwd(), name));
+const description = oneLine(args.description || `Provide ${displayName} skill guidance and reusable automation.`);
+const output = path.resolve(args.output || defaultOutputDir(name));
 const risk = normalizeRisk(args.risk || 'read');
 const tags = splitList(args.tags || 'skill');
 const allowedTools = splitList(args.allowedTools || 'skill_load,skill_resource');
@@ -20,14 +21,14 @@ if (existsSync(output) && !args.overwrite) {
 }
 mkdirSync(output, { recursive: true });
 
-const skillMd = `---\nname: ${name}\ndescription: ${oneLine(args.description)}\nversion: 0.1.0\ntags:\n${tags.map((tag) => `  - ${tag}`).join('\n')}\nrisk: ${risk}\nallowed-tools:\n${allowedTools.map((tool) => `  - ${tool}`).join('\n')}\n---\n\n# ${displayName}\n\n## When to use\n\nUse this skill when ${args.whenToUse || 'the user asks for this capability'}.\n\n## When not to use\n\nDo not use this skill for unrelated tasks or to bypass OpenAgent policies.\n\n## Instructions\n\n1. Load only the supporting files needed for the current task.\n2. Prefer deterministic scripts for fragile or repetitive operations.\n3. Keep outputs concise and verifiable.\n\n## Supporting files\n\n- Add templates, references, examples, assets, or scripts here as needed.\n\n## Output expectations\n\nState what changed and what validation was performed.\n`;
+const skillMd = `---\nname: ${name}\ndescription: ${description}\nversion: 0.1.0\ntags:\n${tags.map((tag) => `  - ${tag}`).join('\n')}\nrisk: ${risk}\nallowed-tools:\n${allowedTools.map((tool) => `  - ${tool}`).join('\n')}\n---\n\n# ${displayName}\n\n## When to use\n\nUse this skill when ${args.whenToUse || 'the user asks for this capability'}.\n\n## When not to use\n\nDo not use this skill for unrelated tasks or to bypass OpenAgent policies.\n\n## Instructions\n\n1. Load only the supporting files needed for the current task.\n2. Prefer deterministic scripts for fragile or repetitive operations.\n3. Load user-specific parameters, credentials, tokens, account/password values, endpoint URLs, and local configuration from \`.env\` in this skill's root directory from scripts only; do not hard-code them in skill files or outputs.\n4. Do not expose \`.env\` or \`.env.example\` through \`skill.json.resources\`; resources must live under \`templates/\`, \`references/\`, \`examples/\`, or \`assets/\`. If configuration guidance is needed, add a sanitized \`references/config.md\` with placeholder names only.\n5. Keep outputs concise and verifiable.\n\n## Supporting files\n\n- Add templates, references, examples, assets, or scripts here as needed.\n\n## Output expectations\n\nState what changed and what validation was performed.\n`;
 
 const skillJson = {
   schemaVersion: 'openagent.skill.v1',
   name,
   version: '0.1.0',
   displayName,
-  description: oneLine(args.description),
+  description,
   risk,
   tags,
   allowedTools,
@@ -55,5 +56,13 @@ function safeName(value) { return String(value).trim().toLowerCase().replace(/[^
 function titleize(value) { return value.split(/[-_\s]+/).filter(Boolean).map((part) => `${part[0].toUpperCase()}${part.slice(1)}`).join(' '); }
 function oneLine(value) { return String(value).replace(/\s+/g, ' ').trim(); }
 function normalizeRisk(value) { return ['read', 'write', 'network', 'external', 'destructive'].includes(value) ? value : 'read'; }
+function defaultOutputDir(name) {
+  const cwd = process.cwd();
+  const parent = path.dirname(cwd);
+  if (path.basename(cwd) === 'workspace' && path.basename(path.dirname(parent)) === 'agents') {
+    return path.join(parent, 'skills', name);
+  }
+  return path.join(cwd, 'skills', name);
+}
 function fail(message) { console.error(JSON.stringify({ ok: false, error: message }, null, 2)); process.exit(1); }
-function printHelp() { console.log('Usage: init_skill.mjs --name <skill-name> --description <text> [--output <dir>] [--tags a,b] [--risk read|write|network|external|destructive] [--allowedTools skill_load,skill_resource] [--overwrite]'); }
+function printHelp() { console.log('Usage: init_skill.mjs --name <skill-name> [--description <text>] [--output <dir>] [--tags a,b] [--risk read|write|network|external|destructive] [--allowedTools skill_load,skill_resource] [--overwrite]'); }

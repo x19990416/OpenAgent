@@ -176,6 +176,8 @@ export interface AgentRuntimeRunResult {
   assistantMessage?: RuntimeMessage;
   summary?: string;
   error?: string;
+  loopCount?: number;
+  toolResultCount?: number;
 }
 
 export interface AgentRuntimeCompactInput {

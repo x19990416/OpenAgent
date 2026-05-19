@@ -74,7 +74,9 @@ function createShellExecTool(workspaceRoot: string): RuntimeTool {
       const result = await runShellCommand(command, cwd, timeoutMs, signal);
       const stdout = truncateOutput(result.stdout);
       const stderr = truncateOutput(result.stderr);
+      const failureSummary = result.exitCode === 0 ? '' : summarizeShellExecFailure(command, stderr, stdout);
       const content = [
+        failureSummary,
         `exitCode: ${result.exitCode}`,
         stdout ? `stdout:\n${stdout}` : '',
         stderr ? `stderr:\n${stderr}` : ''
@@ -580,6 +582,30 @@ function truncateOutput(value: string) {
   return Buffer.byteLength(value, 'utf8') > MAX_SHELL_OUTPUT_BYTES
     ? `${value.slice(0, MAX_SHELL_OUTPUT_BYTES)}\n...[truncated]`
     : value;
+}
+
+function summarizeShellExecFailure(command: string, stderr: string, stdout: string) {
+  const output = (stderr || stdout || '').trim();
+  const missingPath = extractMissingPathFromShellOutput(output);
+  if (missingPath) {
+    return `命令执行失败：文件或目录不存在：${missingPath}`;
+  }
+  if (/No such file or directory/i.test(output)) {
+    return '命令执行失败：文件或目录不存在。';
+  }
+  if (/command not found/i.test(output)) {
+    const executable = command.trim().split(/\s+/)[0] || 'command';
+    return `命令执行失败：找不到可执行命令：${executable}`;
+  }
+  return '命令执行失败。';
+}
+
+function extractMissingPathFromShellOutput(output: string) {
+  const mvRenameMatch = /mv:\s+rename\s+(.+?)\s+to\s+(.+?):\s+No such file or directory/i.exec(output);
+  if (mvRenameMatch?.[1]) return mvRenameMatch[1].trim();
+  const genericMatch = /(?:ls|cat|cp|mv|rm|open):\s+(.+?):\s+No such file or directory/i.exec(output);
+  if (genericMatch?.[1]) return genericMatch[1].trim();
+  return null;
 }
 
 function normalizeLimit(value: unknown, fallback: number, max: number) {

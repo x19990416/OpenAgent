@@ -280,6 +280,7 @@ function RuntimeActivityList({ activities, embedded = false }: { activities: Run
 
   const collapseLimit = 3;
   const [isExpanded, setIsExpanded] = useState(false);
+  const [childSessionFeedback, setChildSessionFeedback] = useState<{ activityId: string; message: string; type: 'info' | 'error' } | null>(null);
 
   if (activities.length === 0) return null;
 
@@ -287,6 +288,39 @@ function RuntimeActivityList({ activities, embedded = false }: { activities: Run
   const visibleActivities = shouldCollapse && !isExpanded ? activities.slice(-collapseLimit) : activities;
   const hiddenCount = activities.length - visibleActivities.length;
   const summary = summarizeRuntimeActivities(activities);
+
+  async function handleOpenChildSession(activity: RuntimeActivityItem) {
+    const childSessionFile = typeof activity.meta?.childSessionFile === 'string' ? activity.meta.childSessionFile : '';
+    if (!childSessionFile) return;
+
+    try {
+      const result = await window.desktopApi?.openPromptAttachment?.({ path: childSessionFile, action: 'open' });
+      if (result?.ok) {
+        setChildSessionFeedback({ activityId: activity.id, message: '已打开子会话 transcript 文件', type: 'info' });
+        window.setTimeout(() => {
+          setChildSessionFeedback((current) => (current?.activityId === activity.id ? null : current));
+        }, 1800);
+        return;
+      }
+
+      const revealResult = await window.desktopApi?.openPromptAttachment?.({ path: childSessionFile, action: 'reveal' });
+      if (revealResult?.ok) {
+        setChildSessionFeedback({ activityId: activity.id, message: '已在 Finder 中定位子会话文件', type: 'info' });
+        window.setTimeout(() => {
+          setChildSessionFeedback((current) => (current?.activityId === activity.id ? null : current));
+        }, 1800);
+        return;
+      }
+
+      const message = result?.error || revealResult?.error || '打开子会话失败';
+      setChildSessionFeedback({ activityId: activity.id, message, type: 'error' });
+      window.desktopApi?.logDiagnostic?.('warn', 'open child session failed', { childSessionFile, error: message });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChildSessionFeedback({ activityId: activity.id, message, type: 'error' });
+      window.desktopApi?.logDiagnostic?.('warn', 'open child session exception', { childSessionFile, error: message });
+    }
+  }
 
   return (
     <div className={`runtime-activity-block${embedded ? ' embedded' : ''}`}>
@@ -320,13 +354,19 @@ function RuntimeActivityList({ activities, embedded = false }: { activities: Run
               </div>
               {activity.detail ? <div className="runtime-activity-detail">{activity.detail}</div> : null}
               {activity.meta?.childSessionFile ? (
-                <button
-                  type="button"
-                  className="runtime-activity-link"
-                  onClick={() => void window.desktopApi?.openPromptAttachment?.({ path: activity.meta?.childSessionFile, action: 'reveal' })}
-                >
-                  打开子会话
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="runtime-activity-link"
+                    onClick={() => void handleOpenChildSession(activity)}
+                    title={`打开 pi_coding_agent 子会话 transcript：${String(activity.meta.childSessionFile)}`}
+                  >
+                    打开子会话 transcript
+                  </button>
+                  {childSessionFeedback?.activityId === activity.id ? (
+                    <div className={`runtime-activity-feedback ${childSessionFeedback.type}`}>{childSessionFeedback.message}</div>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </div>

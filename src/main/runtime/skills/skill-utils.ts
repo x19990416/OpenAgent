@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SkillRisk } from './skill-types.js';
 
+export const ALLOWED_SKILL_RESOURCE_DIRS = ['templates', 'references', 'examples', 'assets'] as const;
+
 export function normalizeStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
   if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
@@ -69,6 +71,13 @@ export function escapeXml(value: string) {
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+export function isAllowedSkillResourcePath(requestedPath: string) {
+  const normalized = requestedPath.replace(/^\/+/, '');
+  if (!normalized || normalized.includes('\0')) return false;
+  const top = normalized.split(/[\\/]/)[0];
+  return ALLOWED_SKILL_RESOURCE_DIRS.includes(top as (typeof ALLOWED_SKILL_RESOURCE_DIRS)[number]);
 }
 
 export function throwIfAborted(signal: AbortSignal) {

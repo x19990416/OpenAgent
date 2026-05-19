@@ -1,3 +1,5 @@
+import { existsSync, realpathSync } from 'node:fs';
+import path from 'node:path';
 import type { PlanExecutionContext, RuntimeTool } from './runtime-types.js';
 import { classifyToolPathAccess } from './path-policy.js';
 
@@ -110,7 +112,7 @@ export class ToolPolicy {
     }
 
     if (FILE_WRITE_TOOLS.has(tool.name)) {
-      return this.decideFileWrite(tool, args);
+      return this.decideFileWrite(tool, args, planContext);
     }
 
     if (SHELL_EXEC_TOOLS.has(tool.name)) {
@@ -213,10 +215,21 @@ export class ToolPolicy {
     };
   }
 
-  private decideFileWrite(tool: RuntimeTool, args: unknown): ToolPolicyDecision {
+  private decideFileWrite(tool: RuntimeTool, args: unknown, planContext?: PlanExecutionContext | null): ToolPolicyDecision {
     const pathAccess = classifyToolPathAccess({ toolName: tool.name, args, workspaceRoot: this.workspaceRoot });
     if (!pathAccess) {
       return { kind: 'deny', reason: `Cannot classify target path for file write tool: ${tool.name}` };
+    }
+
+    if (planContext?.selectedSkillName === 'skill-creator' && !isInsideAllowedSkillCreationRoot(pathAccess.targetPath, this.workspaceRoot)) {
+      return {
+        kind: 'deny',
+        reason: [
+          `Refusing to create or edit a skill file outside the allowed skill roots: ${pathAccess.targetPath}`,
+          `Allowed roots: ${formatAllowedSkillCreationRoots(this.workspaceRoot).join(', ')}`,
+          'Create skills under the current agent skills directory or the workspace skills directory, not directly under the workspace root.'
+        ].join('\n')
+      };
     }
 
     if (isDangerousWritePath(pathAccess.targetPath)) {
@@ -294,6 +307,10 @@ export class ToolPolicy {
     }
 
     if (planContext.selectedSkillName && SKILL_TOOLS.has(tool.name)) {
+      return null;
+    }
+
+    if (planContext.selectedSkillName === 'skill-creator' && FILE_WRITE_TOOLS.has(tool.name)) {
       return null;
     }
 
@@ -436,7 +453,7 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
   if (allowedTools.includes('knowledge') && (toolName === 'knowledge_agent' || toolName.startsWith('knowledge_'))) return true;
   if (allowedTools.includes('file-write') && FILE_WRITE_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('shell-exec') && SHELL_EXEC_TOOLS.has(toolName)) return true;
-  if ((allowedTools.includes('pi-coding') || allowedTools.includes('coding')) && PI_CODING_TOOLS.has(toolName)) return true;
+  if (allowedTools.includes('pi_coding_agent') && PI_CODING_TOOLS.has(toolName)) return true;
   if ((allowedTools.includes('skill') || allowedTools.includes('skill-tools')) && SKILL_TOOLS.has(toolName)) return true;
   if (allowedTools.includes('tool-executor')) return true;
   return false;
@@ -474,6 +491,39 @@ function isDangerousWritePath(targetPath: string) {
     `${process.env.HOME ?? ''}/.ssh`,
     `${process.env.HOME ?? ''}/.gnupg`
   ].filter(Boolean).some((root) => normalized === root || normalized.startsWith(`${root}/`));
+}
+
+function formatAllowedSkillCreationRoots(workspaceRoot: string) {
+  return allowedSkillCreationRoots(workspaceRoot);
+}
+
+function isInsideAllowedSkillCreationRoot(targetPath: string, workspaceRoot: string) {
+  const normalizedTarget = normalizeForPathCompare(targetPath);
+  return allowedSkillCreationRoots(workspaceRoot).some((root) => {
+    const normalizedRoot = normalizeForPathCompare(root);
+    const relative = path.relative(normalizedRoot, normalizedTarget);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  });
+}
+
+function allowedSkillCreationRoots(workspaceRoot: string) {
+  const parent = path.dirname(workspaceRoot);
+  const agentSkillsRoot = path.basename(workspaceRoot) === 'workspace' && path.basename(path.dirname(parent)) === 'agents'
+    ? path.join(parent, 'skills')
+    : path.join(workspaceRoot, 'skills');
+  return [normalizeForPathCompare(agentSkillsRoot)];
+}
+
+function normalizeForPathCompare(value: string) {
+  const resolved = path.resolve(value);
+  try {
+    if (existsSync(resolved)) return realpathSync(resolved);
+    const parent = path.dirname(resolved);
+    if (existsSync(parent)) return path.join(realpathSync(parent), path.basename(resolved));
+  } catch {
+    return resolved;
+  }
+  return resolved;
 }
 
 function isLikelyDestructiveCommand(command: string) {

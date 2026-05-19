@@ -1,4 +1,4 @@
-import { Bot, Check, Copy, Download, File, FileImage, FileText, FolderOpen, Package, User } from 'lucide-react';
+import { Bot, Check, Copy, Download, File, FileImage, FileText, FolderOpen, ImageIcon, Package, User } from 'lucide-react';
 import { isValidElement, useEffect, useId, useState } from 'react';
 import type { MouseEvent, ReactElement, ReactNode } from 'react';
 import type { PromptAttachmentDescriptor } from '@shared-types/index';
@@ -24,6 +24,7 @@ export function MessageList({ messages, onOpenSettings }: { messages: MessageIte
         const isUser = message.role === 'user';
         const Icon = isUser ? User : Bot;
         const selectedSkillLabel = message.skillDisplayName || message.skillName || null;
+        const markdownContent = normalizeMarkdownContent(message.content);
 
         return (
           <article key={message.id} className={`message-card ${message.role}`}>
@@ -34,7 +35,7 @@ export function MessageList({ messages, onOpenSettings }: { messages: MessageIte
               <span>{formatTime(message.createdAt)}</span>
             </div>
             <div className="message-body markdown-content">
-              {normalizeMarkdownContent(message.content) ? (
+              {markdownContent ? (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
@@ -42,6 +43,18 @@ export function MessageList({ messages, onOpenSettings }: { messages: MessageIte
                       const mermaidChart = getMermaidChartFromPre(children);
                       if (mermaidChart) return <MermaidDiagram chart={mermaidChart} />;
                       return <CodeBlock>{children}</CodeBlock>;
+                    },
+                    code: ({ children, className, ...props }) => {
+                      const text = reactNodeToText(children).trim();
+                      const localPath = cleanLocalPathCandidate(text);
+                      if (!className && localPath) {
+                        return <LocalPathCode path={localPath} label={text} />;
+                      }
+                      return <code className={className} {...props}>{children}</code>;
+                    },
+                    img: ({ src, alt, ...props }) => {
+                      if (typeof src === 'string' && cleanImageCandidate(src)) return null;
+                      return <img src={src} alt={alt ?? ''} {...props} />;
                     },
                     a: ({ href, children, ...props }) => {
                       if (href === '#/settings/models' || href?.startsWith('#/settings/')) {
@@ -63,9 +76,10 @@ export function MessageList({ messages, onOpenSettings }: { messages: MessageIte
                     }
                   }}
                 >
-                  {normalizeMarkdownContent(message.content)}
+                  {markdownContent}
                 </ReactMarkdown>
               ) : null}
+              <LocalImagePreviewGallery content={markdownContent} />
               {message.attachments && message.attachments.length > 0 ? (
                 <div className="message-attachments">
                   {message.attachments.map((attachment) => (
@@ -109,6 +123,29 @@ function CodeBlock({ children }: { children: ReactNode }) {
       </button>
       <pre>{children}</pre>
     </div>
+  );
+}
+
+function LocalPathCode({ path, label }: { path: string; label: string }) {
+  async function revealLocalPath(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const result = await window.desktopApi?.openPromptAttachment?.({ path, action: 'reveal' });
+    if (result && !result.ok) {
+      window.desktopApi?.logDiagnostic?.('warn', 'reveal local path failed', { path, error: result.error });
+    }
+  }
+
+  return (
+    <button
+      className="markdown-local-path"
+      type="button"
+      title={`在 Finder 中显示：${path}`}
+      onClick={(event) => void revealLocalPath(event)}
+    >
+      <code>{label}</code>
+      <FolderOpen size={13} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -278,6 +315,143 @@ async function copyTextToClipboard(text: string) {
   textarea.select();
   document.execCommand('copy');
   document.body.removeChild(textarea);
+}
+
+
+interface LocalImagePreviewItem {
+  source: string;
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  dataUrl: string;
+}
+
+function LocalImagePreviewGallery({ content }: { content: string }) {
+  const candidates = extractLocalImageCandidates(content);
+  const [items, setItems] = useState<LocalImagePreviewItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreviews() {
+      if (!window.desktopApi?.previewImage || candidates.length === 0) {
+        setItems([]);
+        return;
+      }
+
+      const results = await Promise.all(
+        candidates.map(async (candidate) => {
+          try {
+            const result = await window.desktopApi?.previewImage?.({ path: candidate });
+            if (!result?.ok || !result.dataUrl || !result.path) return null;
+            return {
+              source: candidate,
+              path: result.path,
+              name: result.name || candidate.split(/[\\/]/).pop() || candidate,
+              size: result.size || 0,
+              mimeType: result.mimeType || 'image/*',
+              dataUrl: result.dataUrl
+            } satisfies LocalImagePreviewItem;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setItems(results.filter((item): item is LocalImagePreviewItem => Boolean(item)));
+      }
+    }
+
+    void loadPreviews();
+    return () => {
+      cancelled = true;
+    };
+  }, [candidates.join('\n')]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="message-local-image-previews" aria-label="图片预览">
+      {items.map((item) => (
+        <LocalImagePreviewCard key={item.path} item={item} />
+      ))}
+    </div>
+  );
+}
+
+function LocalImagePreviewCard({ item }: { item: LocalImagePreviewItem }) {
+  async function handleOpen() {
+    await window.desktopApi?.openPromptAttachment?.({ path: item.path, action: 'open' });
+  }
+
+  async function handleReveal(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    await window.desktopApi?.openPromptAttachment?.({ path: item.path, action: 'reveal' });
+  }
+
+  return (
+    <div
+      className="message-local-image-card"
+      role="button"
+      tabIndex={0}
+      title={item.path}
+      onClick={() => void handleOpen()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          void handleOpen();
+        }
+      }}
+    >
+      <div className="message-local-image-frame">
+        <img src={item.dataUrl} alt={item.name} />
+      </div>
+      <div className="message-local-image-footer">
+        <span className="message-local-image-name"><ImageIcon size={14} />{item.name}</span>
+        <span className="message-local-image-meta">{formatFileSize(item.size) || item.mimeType}</span>
+        <button className="message-attachment-action" type="button" onClick={(event) => void handleReveal(event)} title="在 Finder 中显示">
+          <FolderOpen size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function extractLocalImageCandidates(content: string) {
+  if (!content) return [];
+  const candidates = new Set<string>();
+  const imageExtPattern = String.raw`(?:png|jpe?g|gif|webp|avif|svg)`;
+  const quotedPattern = new RegExp(String.raw`[` + '`' + String.raw`"']([^` + '`' + String.raw`"'\n]+\.(?:${imageExtPattern}))(?:#[^` + '`' + String.raw`"'\n]*)?[` + '`' + String.raw`"']`, 'gi');
+  const markdownImagePattern = /!\[[^\]]*\]\(([^)]+)\)/g;
+  const absolutePattern = new RegExp(String.raw`((?:~|\/|[A-Za-z]:[\\/])[^\s)\]}>]+\.(?:${imageExtPattern}))`, 'gi');
+
+  for (const pattern of [markdownImagePattern, quotedPattern, absolutePattern]) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(content))) {
+      const value = cleanImageCandidate(match[1]);
+      if (value) candidates.add(value);
+    }
+  }
+
+  return Array.from(candidates).slice(0, 6);
+}
+
+function cleanImageCandidate(value: string) {
+  const cleaned = value.trim().replace(/^file:\/\//i, '').replace(/[.,;:，。；：]+$/u, '');
+  if (/^https?:\/\//i.test(cleaned) || /^data:/i.test(cleaned)) return '';
+  if (!/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(cleaned)) return '';
+  return cleaned;
+}
+
+function cleanLocalPathCandidate(value: string) {
+  const cleaned = value.trim().replace(/^file:\/\//i, '').replace(/[.,;:，。；：]+$/u, '');
+  if (/^https?:\/\//i.test(cleaned) || /^data:/i.test(cleaned)) return '';
+  if (!/^(?:~\/|\/|[A-Za-z]:[\\/])/.test(cleaned)) return '';
+  if (/\n/.test(cleaned) || cleaned.length > 500) return '';
+  return cleaned;
 }
 
 function PromptAttachmentCard({ attachment }: { attachment: PromptAttachmentDescriptor }) {

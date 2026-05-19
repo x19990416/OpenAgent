@@ -2,6 +2,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PiRuntimeAdapter } from '../pi/pi-runtime-adapter.js';
+import { resolvePiSessionFile } from '../pi/pi-session.js';
 import type { AgentRuntimeRunInput, PlanExecutionContext, RuntimeTool, RuntimeToolExecutionContext, RuntimeToolExecutionInput } from '../runtime-types.js';
 import type { PiCodingAgentTask, SubagentRunResult } from './subagent-types.js';
 
@@ -28,13 +29,15 @@ export class PiCodingAgent {
     const workingDirectory = await resolveWorkingDirectory(input.task.workingDirectory, workspaceRoot);
     const maxIterations = normalizeMaxIterations(input.task.maxIterations);
     const sessionFile = await resolveChildSessionFile(context.sessionFile, agentId, context.runId, input.toolCallId, workspaceRoot);
+    const childTranscriptFile = resolvePiSessionFile(sessionFile);
     const childMeta = {
       subagentId: 'pi_coding_agent',
       parentRunId: context.runId,
       parentThreadId: context.threadId,
       parentToolCallId: input.toolCallId,
       childRunId: runId,
-      childSessionFile: sessionFile,
+      childSessionFile: childTranscriptFile,
+      openAgentSessionFile: sessionFile,
       workingDirectory
     };
     const childTools = selectChildTools(context.tools ?? [], input.task.allowedTools, workingDirectory, workspaceRoot);
@@ -108,7 +111,7 @@ export class PiCodingAgent {
       status: result.status,
       rawSummary: result.summary || result.assistantMessage?.content || result.error || '',
       childRunId: runId,
-      sessionFile,
+      sessionFile: childTranscriptFile,
       workingDirectory,
       tools: childTools.map((tool) => tool.name)
     });
@@ -142,8 +145,8 @@ export class PiCodingAgent {
       ok,
       agentId: this.id,
       summary,
-      result: { status: result.status, sessionFile, childRunId: runId, assistantMessage: result.assistantMessage },
-      evidence: [`childRunId: ${runId}`, `sessionFile: ${sessionFile}`],
+      result: { status: result.status, sessionFile: childTranscriptFile, childRunId: runId, assistantMessage: result.assistantMessage },
+      evidence: [`childRunId: ${runId}`, `sessionFile: ${childTranscriptFile}`],
       error: ok ? undefined : result.error || summary
     };
   }

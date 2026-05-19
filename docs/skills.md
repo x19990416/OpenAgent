@@ -246,7 +246,7 @@ OpenAgent 支持多来源 Skill：
 System Skills     app 内置，只读
 User Skills       ~/.openagent/skills/
 Agent Skills      ~/.openagent/agents/<agentId>/skills/
-Workspace Skills  <workspace>/.openagent/skills/
+Workspace Skills  <workspace>/skills/
 Plugin Skills     plugin bundle 内声明并注册
 ```
 
@@ -355,6 +355,7 @@ Resolver 可以使用：
 - 如果声明脚本能完成确定性计算/转换，agent 应调用 `skill_script`，并把用户输入作为 `args` 传入。
 - selected skill 声明脚本时，OpenAgent policy 会允许 skill tools 穿过当前 Plan step 的 `allowedTools`，同时阻止把该任务绕到 `pi_coding_agent` 重新实现。
 - 只有当没有相关脚本，或用户明确要求做 selected skill 之外的代码/工程修改时，才考虑其他执行型工具。
+- 如果用户表达的是“创建/新建/生成/封装一个技能/skill”，但没有在 composer 中显式选择 `skill-creator`，Runtime 会把 `skill-creator` 推断为本轮 primary execution path，并注入 selected-skill routing rule；后续应优先走 `skill_load`、`skill_resource`、`skill_script` 和必要的 `write_file`，而不是先委托 `pi_coding_agent`。
 
 ## 10. Progressive Disclosure 工具
 
@@ -398,6 +399,7 @@ interface SkillResourceInput {
 
 - `path` 必须在该 Skill 根目录内。
 - 默认只允许读取 `templates/`、`references/`、`examples/`、`assets/`。
+- `.env` / `.env.example` 默认放在 Skill 根目录作为本地配置文件，不属于 `skill_resource` 资源；不要在 `skill.json.resources` 中声明它们。需要给模型读取配置说明时，使用脱敏的 `references/config.md`，只写变量名和占位示例，不写真实值。
 - 大文件返回摘要或分页，不直接塞满上下文。
 
 ### 10.4 `skill_script`
@@ -420,6 +422,7 @@ interface SkillScriptInput {
 - 禁止 `..` 路径逃逸和 symlink 逃逸。
 - 如果 `skill.json.scripts` 声明了脚本清单，则只允许执行清单内脚本；未声明脚本会被 policy 拒绝。
 - `skill.json.scripts[].risk/network/writes/timeoutMs/runtime/description` 是审批与审计的结构化来源，不能由模型调用参数伪造。
+- 脚本执行时会自动读取当前 Skill 根目录下的 `.env` 并注入子进程环境变量；涉及用户参数、账号密码、token、endpoint URL、本地配置等值时，只能由脚本从该 `.env` 获取，不要写入 `SKILL.md`、`skill.json`、脚本源码、模板、示例、resources 或模型输出。
 - 默认无网络。声明 `risk: network`、`risk: external` 或 `network: true` 时，审批 actionType 为 `skill.script.network`，风险至少为 medium。
 - 默认不允许写 Skill 目录自身。声明 `risk: write`、`risk: destructive` 或 `writes: true` 时，审批 access 为 write；destructive 风险为 high。
 - 写 workspace 文件必须走 OpenAgent write/edit tool 或额外审批。
@@ -797,7 +800,7 @@ type SkillUiEvent =
 
 - hash / mtime index。
 - 第三方来源提示和风险扫描。
-- 本地文件夹安装：Settings / Skills 选择包含 `SKILL.md` 的目录，可安装到 `~/.openagent/skills`、`~/.openagent/agents/<agentId>/skills` 或 `<workspace>/.openagent/skills`。
+- 本地文件夹安装：Settings / Skills 选择包含 `SKILL.md` 的目录，可安装到 `~/.openagent/skills`、`~/.openagent/agents/<agentId>/skills` 或 `<workspace>/skills`。
 - 安装确认流程。
 - Skill test runner。
 - `pnpm smoke:skills` 覆盖 SkillService/tool/policy/audit 的无 UI 闭环。
@@ -836,7 +839,7 @@ Settings / Skills 提供“从文件夹安装 Skill”：
 ```text
 agent:     ~/.openagent/agents/<agentId>/skills/<skillName>/
 user:      ~/.openagent/skills/<skillName>/
-workspace: <workspace>/.openagent/skills/<skillName>/
+workspace: <workspace>/skills/<skillName>/
 ```
 
 ### 23.2 npx / CLI 安装

@@ -82,6 +82,21 @@ export class ToolExecutor {
     if (decision.kind === 'deny') {
       const reason = decision.reason || `Tool blocked by OpenAgent policy: ${input.toolName}`;
       this.options.onLog?.({ scope: 'runtime', message: 'tool blocked by policy', data: { ...basePayload, reason } });
+      if (isRecoverableSelectedSkillRoutingDeny(input.toolName, planContext)) {
+        const summary = `已阻止通用编码子 Agent，改用选中的 ${planContext?.selectedSkillName ?? 'skill'} 工具继续。`;
+        this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', summary, { reason, recoverable: true, recoveryKind: 'selected_skill_routing', durationMs: 0 }));
+        return {
+          ok: false,
+          content: buildSelectedSkillRoutingCorrection(reason, planContext),
+          data: {
+            blockedByPolicy: true,
+            recoverable: true,
+            recoveryKind: 'selected_skill_routing',
+            reason,
+            selectedSkillName: planContext?.selectedSkillName
+          }
+        };
+      }
       this.options.emitUiEvent?.('tool.failed', makeUiPayload('failed', reason, { reason, durationMs: 0 }));
       throw new ToolExecutionError(reason, basePayload);
     }
@@ -268,4 +283,25 @@ function textArg(record: Record<string, unknown>, key: string) {
 
 function shorten(value: string, maxLength: number) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+function isRecoverableSelectedSkillRoutingDeny(toolName: string, planContext: PlanExecutionContext | null) {
+  return toolName === 'pi_coding_agent' && Boolean(planContext?.selectedSkillName && planContext.selectedSkillHasScripts);
+}
+
+function buildSelectedSkillRoutingCorrection(reason: string, planContext: PlanExecutionContext | null) {
+  const skillName = planContext?.selectedSkillName ?? 'selected skill';
+  return [
+    `OpenAgent policy blocked pi_coding_agent because ${skillName} is the selected skill and it declares its own scripts/resources.`,
+    '',
+    'This is a recoverable routing correction, not a final answer for the user.',
+    `Policy reason: ${reason}`,
+    '',
+    'Continue the same user task by using the selected skill tools directly:',
+    `1. Call skill_load with skillName="${skillName}" if the skill instructions are not loaded yet.`,
+    '2. Call skill_resource for any needed template/reference/example.',
+    '3. Call skill_script for a declared script that fits the task.',
+    '',
+    'Do not repeat the pi_coding_agent call unless no selected skill tool fits and you explain why.'
+  ].join('\n');
 }
