@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { AuthStorage, ModelRegistry } from '@mariozechner/pi-coding-agent';
+import { getOpenAgentPath } from '../openagent-home.js';
 
 export interface PiModelCatalogItem {
   id: string;
@@ -455,7 +455,7 @@ function applyRuntimeApiKeys(authStorage: ReturnType<typeof AuthStorage.create>,
 }
 
 function getOpenAgentSettingsDir() {
-  const settingsDir = path.join(os.homedir(), '.openagent', 'settings');
+  const settingsDir = getOpenAgentPath('settings');
   mkdirSync(settingsDir, { recursive: true });
   return settingsDir;
 }

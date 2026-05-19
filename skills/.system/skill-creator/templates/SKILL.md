@@ -1,7 +1,7 @@
 ---
 name: {{name}}
 description: {{description}}
-version: 0.1.0
+version: {{version}}
 tags:
   - {{tag}}
 risk: read

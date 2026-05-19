@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { PlanExecutionContext, RuntimeTool } from './runtime-types.js';
 import { classifyToolPathAccess } from './path-policy.js';
@@ -488,8 +489,8 @@ function isDangerousWritePath(targetPath: string) {
     '/Library',
     '/etc',
     '/private/etc',
-    `${process.env.HOME ?? ''}/.ssh`,
-    `${process.env.HOME ?? ''}/.gnupg`
+    path.join(os.homedir(), '.ssh'),
+    path.join(os.homedir(), '.gnupg')
   ].filter(Boolean).some((root) => normalized === root || normalized.startsWith(`${root}/`));
 }
 

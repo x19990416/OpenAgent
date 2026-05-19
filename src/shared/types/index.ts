@@ -107,6 +107,7 @@ export interface OpenAgentAppSettings {
   schemaVersion: 'openagent.settings.v1';
   runtime: {
     allowTextToolCallRecovery: boolean;
+    autoApproveRuntimeApprovals: boolean;
   };
   updatedAt: string;
 }

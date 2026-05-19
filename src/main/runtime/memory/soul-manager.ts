@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getOpenAgentHome } from '../openagent-home.js';
 
 export type SoulProposalStatus = 'pending_approval' | 'approved' | 'rejected' | 'applied';
 export type SoulProposalRisk = 'low' | 'medium' | 'high';
@@ -121,7 +121,7 @@ const MANAGED_START = '<!-- managed:start -->';
 const MANAGED_END = '<!-- managed:end -->';
 
 export class SoulManager {
-  private readonly openAgentRoot = path.join(os.homedir(), '.openagent');
+  private readonly openAgentRoot = getOpenAgentHome();
   private readonly agentsRoot = path.join(this.openAgentRoot, 'agents');
   private readonly agentRoot: string;
   private readonly soulPath: string;

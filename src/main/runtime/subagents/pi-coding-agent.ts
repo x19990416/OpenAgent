@@ -1,10 +1,10 @@
 import { mkdir, stat } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { PiRuntimeAdapter } from '../pi/pi-runtime-adapter.js';
 import { resolvePiSessionFile } from '../pi/pi-session.js';
 import type { AgentRuntimeRunInput, PlanExecutionContext, RuntimeTool, RuntimeToolExecutionContext, RuntimeToolExecutionInput } from '../runtime-types.js';
 import type { PiCodingAgentTask, SubagentRunResult } from './subagent-types.js';
+import { getOpenAgentPath } from '../openagent-home.js';
 
 const DEFAULT_CHILD_TOOL_NAMES = new Set(['ls', 'read', 'find', 'grep', 'count_files', 'write_file', 'shell_exec', 'current_time', 'list_directory', 'read_file']);
 const MAX_TASK_LENGTH = 8000;
@@ -220,7 +220,7 @@ function buildChildPlanContext(parentContext?: PlanExecutionContext | null): Pla
 async function resolveChildSessionFile(parentSessionFile: string | undefined, agentId: string, parentRunId: string | undefined, toolCallId: string, workspaceRoot: string) {
   const baseDir = parentSessionFile
     ? path.join(path.dirname(parentSessionFile), 'subagents', 'pi-coding')
-    : path.join(os.homedir(), '.openagent', 'agents', agentId, 'sessions', 'subagents', 'pi-coding');
+    : getOpenAgentPath('agents', agentId, 'sessions', 'subagents', 'pi-coding');
   await mkdir(baseDir, { recursive: true });
   const prefix = parentRunId ? `${sanitizeFilePart(parentRunId)}-` : '';
   return path.join(baseDir, `${prefix}${sanitizeFilePart(toolCallId)}.jsonl`);

@@ -1,7 +1,8 @@
 # OpenAgent Skill Design Checklist
 
 - `SKILL.md` is the model-readable entrypoint and must include clear trigger conditions.
-- `skill.json` is optional but preferred for UI, indexing, policy, declared scripts, and resources.
+- `skill.json` is optional but preferred for UI, indexing, policy, declared scripts, resources, and version display.
+- Declare `version` in both `SKILL.md` frontmatter and `skill.json`; keep them identical. Default new skills to `0.1.0` unless the user provides a version.
 - Use progressive disclosure: summarize core workflow in `SKILL.md`; move long details to `references/`, `examples/`, and `templates/`.
 - Scripts must live under `scripts/` and be declared in `skill.json` before `skill_script` can run them.
 - Declare script metadata honestly: runtime, risk, timeout, network, and writes.

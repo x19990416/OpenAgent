@@ -11,6 +11,7 @@ import type { PluginSkillPackage, ResolvedSkillContext, SkillCatalogItem, SkillR
 import { isSafeRealpath } from './skill-utils.js';
 import { installLocalSkill } from './skill-installer.js';
 import { ensureOpenAgentSystemSkills } from './system-skill-bootstrap.js';
+import { getOpenAgentHome } from '../openagent-home.js';
 
 export type { PluginSkillPackage, ResolvedSkillContext, SkillCatalogItem, SkillResolutionInput, SkillRisk, SkillSource } from './skill-types.js';
 
@@ -20,7 +21,7 @@ export class SkillService {
   private readonly stateDir: string;
 
   constructor(private readonly options: { agentId: string; workspaceRoot: string; appRoot?: string; openAgentRoot?: string }) {
-    const openAgentRoot = options.openAgentRoot ?? process.env.OPENAGENT_HOME ?? path.join(process.env.HOME ?? '', '.openagent');
+    const openAgentRoot = options.openAgentRoot ?? getOpenAgentHome();
     ensureOpenAgentSystemSkills(openAgentRoot, options.appRoot);
     this.settingsPath = path.join(openAgentRoot, 'settings', 'skills.json');
     this.stateDir = path.join(openAgentRoot, 'state');

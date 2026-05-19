@@ -15,6 +15,6 @@ Use `workspace` only when the skill should travel with or be scoped to the curre
 Safety rules:
 
 - Do not overwrite existing skills unless the user explicitly asks for overwrite.
-- Do not install packages without a `SKILL.md` at the root or one level below the source root.
+- Do not install packages without a `SKILL.md` at the root or one level below the source root. Preserve `version` from `skill.json` or `SKILL.md` frontmatter and include it in install reports when available.
 - Ignore `.git`, `node_modules`, `__pycache__`, and `.DS_Store` during copy.
 - Treat Git installs as network + write operations requiring approval.

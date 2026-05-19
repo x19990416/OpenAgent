@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getOpenAgentPath } from './openagent-home.js';
 
 export type ScheduledTaskFrequency = 'once' | 'interval' | 'daily';
 export type ScheduledTaskStatus = 'active' | 'paused';
@@ -56,7 +56,7 @@ export class ScheduledTaskService {
   private readonly tasks = new Map<string, ScheduledTaskRecord>();
 
   constructor(private readonly options: ScheduledTaskServiceOptions) {
-    this.storageFile = options.storageFile ?? path.join(os.homedir(), '.openagent', 'state', 'scheduled-tasks.json');
+    this.storageFile = options.storageFile ?? getOpenAgentPath('state', 'scheduled-tasks.json');
     this.load();
     this.rescheduleAll();
   }

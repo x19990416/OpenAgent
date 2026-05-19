@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AgentPlan } from './plan-types.js';
+import { getOpenAgentPath } from '../openagent-home.js';
 
 interface PlanIndex {
   activeByThread: Record<string, string | undefined>;
@@ -12,7 +12,7 @@ export class PlanStore {
   private readonly indexPath: string;
 
   constructor(private readonly agentId: string) {
-    this.rootDir = path.join(os.homedir(), '.openagent', 'agents', agentId, 'sessions', 'plans');
+    this.rootDir = getOpenAgentPath('agents', agentId, 'sessions', 'plans');
     this.indexPath = path.join(this.rootDir, 'plans-index.json');
   }
 

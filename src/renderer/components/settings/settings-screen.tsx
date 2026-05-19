@@ -3816,6 +3816,7 @@ function AppConfigPanel() {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showAutoApproveRiskDialog, setShowAutoApproveRiskDialog] = useState(false);
 
   const loadSettings = async () => {
     const desktopApi = window.desktopApi;
@@ -3871,6 +3872,20 @@ function AppConfigPanel() {
   };
 
   const allowTextToolCallRecovery = settings?.runtime.allowTextToolCallRecovery ?? true;
+  const autoApproveRuntimeApprovals = settings?.runtime.autoApproveRuntimeApprovals ?? false;
+
+  const handleAutoApproveToggle = () => {
+    if (autoApproveRuntimeApprovals) {
+      void updateRuntimeSetting({ autoApproveRuntimeApprovals: false });
+      return;
+    }
+    setShowAutoApproveRiskDialog(true);
+  };
+
+  const confirmEnableAutoApprove = () => {
+    setShowAutoApproveRiskDialog(false);
+    void updateRuntimeSetting({ autoApproveRuntimeApprovals: true });
+  };
 
   return (
     <div className="settings-stack">
@@ -3906,6 +3921,26 @@ function AppConfigPanel() {
           </div>
         </div>
 
+        <div className="settings-card-row">
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <div className="settings-row-title">自动通过运行审批</div>
+              <div className="settings-row-description">
+                开启后，OpenAgent 会自动批准运行中的工具审批请求，包括执行命令、访问外部路径、写入知识库、执行 Agent Plan 等需要人工确认的操作。默认关闭。
+              </div>
+            </div>
+            <button
+              className={`settings-switch ${autoApproveRuntimeApprovals ? 'is-on' : 'is-off'}`}
+              type="button"
+              aria-pressed={autoApproveRuntimeApprovals}
+              disabled={loading || saving || !settings}
+              onClick={handleAutoApproveToggle}
+            >
+              <span className="settings-switch-knob" />
+            </button>
+          </div>
+        </div>
+
         <div className="settings-card-row is-last">
           <div className="settings-row">
             <div className="settings-row-copy">
@@ -3918,6 +3953,44 @@ function AppConfigPanel() {
       </section>
 
       {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+
+      {showAutoApproveRiskDialog ? (
+        <div className="settings-modal-backdrop" role="presentation" onClick={() => setShowAutoApproveRiskDialog(false)}>
+          <div className="settings-modal panel panel-strong settings-risk-modal" role="dialog" aria-modal="true" aria-labelledby="auto-approve-risk-title" onClick={(event) => event.stopPropagation()}>
+            <div className="settings-modal-header">
+              <div className="settings-risk-title">
+                <AlertCircle size={18} />
+                <div>
+                  <div id="auto-approve-risk-title" className="settings-section-title">确认开启自动通过审批？</div>
+                  <div className="settings-section-description">开启后将减少打断，但会显著降低人工确认保护。</div>
+                </div>
+              </div>
+              <button className="settings-modal-close" type="button" onClick={() => setShowAutoApproveRiskDialog(false)} aria-label="关闭">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="settings-modal-body">
+              <div className="settings-risk-callout">
+                <div className="text-strong">风险说明</div>
+                <ul>
+                  <li>Agent 可能自动执行 shell 命令、脚本或插件工具，不再等待你逐次确认。</li>
+                  <li>Agent 可能自动读取或写入工作区外部路径、生成文件、修改本地知识库。</li>
+                  <li>如果模型理解错误、提示词被污染或工具参数有误，错误操作会更快发生。</li>
+                </ul>
+              </div>
+              <div className="body-copy-soft">
+                建议只在你信任当前模型、任务和工作区，并且已经做好备份或可回滚时开启。你可以随时回到系统设置关闭该开关。
+              </div>
+            </div>
+            <div className="settings-modal-footer">
+              <button className="ghost-button" type="button" onClick={() => setShowAutoApproveRiskDialog(false)}>取消</button>
+              <button className="danger-button" type="button" onClick={confirmEnableAutoApprove} disabled={saving}>
+                我理解风险，仍然开启
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

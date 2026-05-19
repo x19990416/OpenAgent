@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { getOpenAgentHome } from '../openagent-home.js';
 
 export interface SkillExecutionAuditEntry {
   ts?: string;
@@ -26,8 +27,7 @@ export interface SkillExecutionAuditEntry {
 }
 
 export function getSkillExecutionLogPath() {
-  const openAgentRoot = process.env.OPENAGENT_HOME ?? path.join(process.env.HOME ?? '', '.openagent');
-  return path.join(openAgentRoot, 'logs', 'skill-execution.jsonl');
+  return path.join(getOpenAgentHome(), 'logs', 'skill-execution.jsonl');
 }
 
 export function appendSkillExecutionAuditLog(entry: SkillExecutionAuditEntry) {

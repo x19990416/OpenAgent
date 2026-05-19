@@ -1311,6 +1311,10 @@ button {
   width: min(860px, calc(100vw - 48px));
 }
 
+.settings-risk-modal {
+  width: min(640px, calc(100vw - 48px));
+}
+
 .settings-modal-header,
 .settings-modal-footer {
   display: flex;
@@ -1343,6 +1347,34 @@ button {
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+}
+
+.settings-risk-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-risk-title svg {
+  color: var(--warning);
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.settings-risk-callout {
+  border: 1px solid rgba(217, 119, 6, 0.24);
+  background: rgba(217, 119, 6, 0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--text);
+}
+
+.settings-risk-callout ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-soft);
+  line-height: 1.55;
+  font-size: var(--font-size-sm);
 }
 
 .settings-add-provider-body {

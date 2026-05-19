@@ -2,9 +2,10 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PluginSkillPackage, SkillCandidate, SkillSource } from './skill-types.js';
 import { safeFileName, safeIsDirectory, safeReaddir } from './skill-utils.js';
+import { getOpenAgentHome } from '../openagent-home.js';
 
 export function discoverSkillCandidates(input: { agentId: string; workspaceRoot: string; appRoot?: string; openAgentRoot?: string; stateDir: string; pluginSkills: PluginSkillPackage[] }): SkillCandidate[] {
-  const openAgentRoot = input.openAgentRoot ?? process.env.OPENAGENT_HOME ?? path.join(process.env.HOME ?? '', '.openagent');
+  const openAgentRoot = input.openAgentRoot ?? getOpenAgentHome();
   const roots: Array<{ source: SkillSource; dir: string }> = [
     { source: 'system', dir: path.resolve(input.appRoot ?? process.cwd(), 'skills') },
     { source: 'system', dir: path.join(openAgentRoot, 'skills', '.system') },

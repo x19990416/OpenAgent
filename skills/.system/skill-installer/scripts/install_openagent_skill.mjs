@@ -27,7 +27,8 @@ try {
 
   const installed = [];
   for (const skillRoot of skillRoots) {
-    const skillName = resolveSkillName(skillRoot);
+    const metadata = resolveSkillMetadata(skillRoot);
+    const skillName = metadata.name;
     const destinationDir = path.join(destinationRoot, skillName);
     if (existsSync(destinationDir)) {
       if (!args.overwrite) fail(`Skill already exists: ${destinationDir}. Pass --overwrite to replace it.`);
@@ -38,7 +39,7 @@ try {
       dereference: false,
       filter: (entry) => shouldCopy(skillRoot, entry)
     });
-    installed.push({ name: skillName, source: skillRoot, destination: destinationDir });
+    installed.push({ name: skillName, version: metadata.version, source: skillRoot, destination: destinationDir });
   }
 
   console.log(JSON.stringify({ ok: true, target, openAgentRoot, workspaceRoot, agentId, installed }, null, 2));
@@ -72,10 +73,12 @@ function discoverSkillRoots(root) {
   return results;
 }
 
-function resolveSkillName(skillRoot) {
+function resolveSkillMetadata(skillRoot) {
   const skillJson = readJson(path.join(skillRoot, 'skill.json'));
   const frontmatter = parseFrontmatter(readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8'));
-  return safeName(String(skillJson.name || frontmatter.name || path.basename(skillRoot)).trim() || path.basename(skillRoot));
+  const name = safeName(String(skillJson.name || frontmatter.name || path.basename(skillRoot)).trim() || path.basename(skillRoot));
+  const version = String(skillJson.version || frontmatter.version || '').trim() || null;
+  return { name, version };
 }
 
 function resolveDestinationRoot(target, input) {

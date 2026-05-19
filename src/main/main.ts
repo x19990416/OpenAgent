@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { RuntimeService } from './runtime/runtime-service.js';
 import { PluginService } from './plugins/plugin-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
+import { getOpenAgentPath } from './runtime/openagent-home.js';
 import { getOpenAgentAppSettings, getOpenAgentAppSettingsPath, updateOpenAgentAppSettings } from './runtime/settings/openagent-settings.js';
 import {
   buildPiProviderCatalog,
@@ -132,7 +133,7 @@ function markScheduledTaskThreads(tasks: Array<{ threadId?: string | null; lastR
 function resolveDefaultAgentWorkspaceRoot(agentId: string) {
   // OpenAgent 的默认 workspace 属于具体 agent，而不是开发时启动 app 的 repo cwd。
   // 保留环境变量 OPENAGENT_WORKSPACE_ROOT 作为调试/测试覆盖入口；正式默认落在 ~/.openagent/agents/<agentId>/workspace。
-  const workspaceRoot = path.join(os.homedir(), '.openagent', 'agents', agentId, 'workspace');
+  const workspaceRoot = getOpenAgentPath('agents', agentId, 'workspace');
   mkdirSync(workspaceRoot, { recursive: true });
   return workspaceRoot;
 }
@@ -259,7 +260,7 @@ function resolvePreviewImagePath(requestedPath: unknown) {
     ? [rawPath]
     : [path.resolve(workspace.rootPath, rawPath), path.resolve(process.cwd(), rawPath)];
 
-  const allowedRoots = [workspace.rootPath, process.cwd(), path.join(os.homedir(), '.openagent'), os.tmpdir()];
+  const allowedRoots = [workspace.rootPath, process.cwd(), getOpenAgentPath(), os.tmpdir()];
   for (const candidate of candidates) {
     const resolved = path.resolve(candidate);
     if (!existsSync(resolved)) continue;
@@ -713,11 +714,18 @@ function registerIpc() {
     settings: getOpenAgentAppSettings(),
     configPath: getOpenAgentAppSettingsPath()
   }));
-  ipcMain.handle('app-settings:update', (_event, payload) => ({
-    ok: true,
-    settings: updateOpenAgentAppSettings(payload ?? {}),
-    configPath: getOpenAgentAppSettingsPath()
-  }));
+  ipcMain.handle('app-settings:update', (_event, payload) => {
+    const settings = updateOpenAgentAppSettings(payload ?? {});
+    const autoApproved = settings.runtime.autoApproveRuntimeApprovals
+      ? runtimeService.autoApprovePendingApprovals('app-settings:update')
+      : { ok: true, approvedCount: 0 };
+    return {
+      ok: true,
+      settings,
+      configPath: getOpenAgentAppSettingsPath(),
+      autoApproved
+    };
+  });
   ipcMain.handle('skills:list', () => runtimeService.listSkills());
   ipcMain.handle('skills:refresh', () => runtimeService.refreshSkills());
   ipcMain.handle('skills:get', (_event, payload) => runtimeService.getSkill(String(payload?.skillName || payload?.skillId || payload || '')));

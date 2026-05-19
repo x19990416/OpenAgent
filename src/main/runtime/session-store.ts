@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { RuntimeMessage, RuntimeThread } from './runtime-types.js';
+import { getOpenAgentPath } from './openagent-home.js';
 
 interface SessionsIndex {
   threads: RuntimeThread[];
@@ -18,7 +18,7 @@ export class SessionStore {
   private readonly indexPath: string;
 
   constructor(private readonly agentId: string) {
-    this.sessionsDir = path.join(os.homedir(), '.openagent', 'agents', agentId, 'sessions');
+    this.sessionsDir = getOpenAgentPath('agents', agentId, 'sessions');
     this.indexPath = path.join(this.sessionsDir, 'sessions.json');
   }
 

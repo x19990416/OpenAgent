@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getOpenAgentPath } from './openagent-home.js';
 
 export interface RuntimeInfoLogInput {
   scope: string;
@@ -21,11 +21,11 @@ export function appendLlmResponseLog(input: RuntimeInfoLogInput) {
 }
 
 export function getRuntimeInfoLogPath() {
-  return path.join(os.homedir(), '.openagent', 'logs', 'runtime-info.log');
+  return getOpenAgentPath('logs', 'runtime-info.log');
 }
 
 export function getLlmResponseLogPath() {
-  return path.join(os.homedir(), '.openagent', 'logs', 'llm-response.log');
+  return getOpenAgentPath('logs', 'llm-response.log');
 }
 
 export function formatRuntimeInfoLogLine(input: RuntimeInfoLogInput) {

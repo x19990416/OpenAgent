@@ -157,7 +157,7 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
       const cwd = resolveWorkspaceCwd(input.workspaceRoot, String(args.cwd || '.'));
       const cwdStat = await stat(cwd).catch(() => null);
       if (!cwdStat?.isDirectory()) return { ok: false, content: `cwd is not a directory: ${cwd}` };
-      const scriptArgs = Array.isArray(args.args) ? args.args.map((item) => String(item)) : [];
+      const scriptArgs = Array.isArray(args.args) ? args.args.map((item) => normalizeSkillScriptArg(String(item))) : [];
       const timeoutMs = normalizePositiveInt(args.timeoutMs ?? scriptDescriptor?.timeoutMs, DEFAULT_SCRIPT_TIMEOUT_MS, MAX_SCRIPT_TIMEOUT_MS);
       const startedAuditLogPath = appendSkillExecutionAuditLog({
         runId: context?.runId,
@@ -352,6 +352,26 @@ function safeResolveWorkspaceCwd(workspaceRoot: string, cwdInput: string) {
   }
 }
 
+function normalizeSkillScriptArg(value: string) {
+  let normalized = value.trim();
+  const quoteMarkers = ['<|"|', "<|'|"];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const marker of quoteMarkers) {
+      if (normalized.startsWith(marker)) {
+        normalized = normalized.slice(marker.length);
+        changed = true;
+      }
+      if (normalized.endsWith(marker)) {
+        normalized = normalized.slice(0, -marker.length);
+        changed = true;
+      }
+    }
+  }
+  return normalized;
+}
+
 function enforceSkillAllowedTool(skill: SkillCatalogItem, toolName: string) {
   if (skill.allowedTools.length === 0) return null;
   if (skill.allowedTools.includes(toolName)) return null;
@@ -369,5 +389,8 @@ function enforceSkillAllowedTool(skill: SkillCatalogItem, toolName: string) {
 
 function formatSkillList(skills: SkillCatalogItem[]) {
   if (skills.length === 0) return 'No skills found';
-  return skills.map((skill) => `- ${skill.name} [${skill.source}, ${skill.risk}, ${skill.enabled ? 'enabled' : 'disabled'}]: ${skill.description}`).join('\n');
+  return skills.map((skill) => {
+    const version = skill.version ? `, v${skill.version}` : '';
+    return `- ${skill.name} [${skill.source}, ${skill.risk}${version}, ${skill.enabled ? 'enabled' : 'disabled'}]: ${skill.description}`;
+  }).join('\n');
 }

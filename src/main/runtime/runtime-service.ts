@@ -23,6 +23,7 @@ import { KnowledgeService } from './knowledge/knowledge-service.js';
 import { createKnowledgeTools } from './knowledge/knowledge-tools.js';
 import { KnowledgeContextRouter } from './knowledge/knowledge-context-router.js';
 import { getOpenAgentHome } from './knowledge/knowledge-paths.js';
+import { getOpenAgentAppSettings } from './settings/openagent-settings.js';
 import { PlanService } from './planning/plan-service.js';
 import { PlanExecutor } from './planning/plan-executor.js';
 import type { AgentPlan, PlanUpdatedPayload } from './planning/plan-types.js';
@@ -251,12 +252,72 @@ export class RuntimeService {
   }
 
   private async requestToolApproval(request: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
-    const { request: approvalRequest, decision } = this.approvalService.requestApproval(request);
+    const approvalRequest = this.approvalService.createRequest(request);
     if (this.approvalService.isRequestApproved(approvalRequest)) {
       return 'approved' as const;
     }
+    if (shouldAutoApproveRuntimeApprovals()) {
+      appendRuntimeInfoLog({
+        scope: 'approval',
+        message: 'runtime approval auto-approved by settings',
+        data: {
+          approvalId: approvalRequest.id,
+          actionType: approvalRequest.actionType,
+          risk: approvalRequest.risk,
+          targetPath: approvalRequest.targetPath,
+          runId: approvalRequest.runId,
+          threadId: approvalRequest.threadId
+        }
+      });
+      if (approvalRequest.runId) {
+        this.runState.update(approvalRequest.runId, {
+          status: 'running',
+          summary: `已按设置自动通过审批：${approvalRequest.title}`
+        });
+      }
+      this.eventBus.emit('approval.resolved', {
+        approvalId: approvalRequest.id,
+        decision: 'approved',
+        scope: 'once',
+        summary: `已按设置自动通过审批：${approvalRequest.title}`
+      });
+      return 'approved' as const;
+    }
+    const { decision } = this.approvalService.requestApproval(approvalRequest);
     this.eventBus.emit('approval.required', approvalRequest);
     return decision;
+  }
+
+  autoApprovePendingApprovals(reason = 'settings') {
+    const approved = this.approvalService.approveAllPending();
+    for (const request of approved) {
+      if (request.runId) {
+        this.runState.update(request.runId, {
+          status: 'running',
+          summary: `已按设置自动通过审批：${request.title}`
+        });
+      }
+      appendRuntimeInfoLog({
+        scope: 'approval',
+        message: 'pending approval auto-approved by settings',
+        data: {
+          reason,
+          approvalId: request.id,
+          actionType: request.actionType,
+          risk: request.risk,
+          targetPath: request.targetPath,
+          runId: request.runId,
+          threadId: request.threadId
+        }
+      });
+      this.eventBus.emit('approval.resolved', {
+        approvalId: request.id,
+        decision: 'approved',
+        scope: 'once',
+        summary: `已按设置自动通过审批：${request.title}`
+      });
+    }
+    return { ok: true, approvedCount: approved.length };
   }
 
   getSnapshot(): RuntimeSnapshot {
@@ -1722,6 +1783,14 @@ function createDefaultAdapter() {
     return new PiRuntimeAdapter();
   }
   return new PiRuntimeAdapter();
+}
+
+function shouldAutoApproveRuntimeApprovals() {
+  try {
+    return getOpenAgentAppSettings().runtime.autoApproveRuntimeApprovals;
+  } catch {
+    return false;
+  }
 }
 
 function sortThreadsForDisplay(threads: RuntimeThread[]) {

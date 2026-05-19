@@ -1,9 +1,9 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { parseSkillMarkdown } from './skill-parser.js';
 import { safeFileName } from './skill-utils.js';
 import type { SkillSource } from './skill-types.js';
+import { getOpenAgentHome } from '../openagent-home.js';
 
 export interface InstallLocalSkillInput {
   sourceDir: string;
@@ -59,7 +59,7 @@ export function installLocalSkill(input: InstallLocalSkillInput & { agentId: str
 }
 
 export function resolveInstallRoot(target: SkillSource, input: { agentId: string; workspaceRoot: string; openAgentRoot?: string }) {
-  const openAgentRoot = input.openAgentRoot ?? process.env.OPENAGENT_HOME ?? path.join(os.homedir(), '.openagent');
+  const openAgentRoot = input.openAgentRoot ?? getOpenAgentHome();
   if (target === 'user') return path.join(openAgentRoot, 'skills');
   if (target === 'workspace') return path.join(input.workspaceRoot, 'skills');
   return path.join(openAgentRoot, 'agents', input.agentId, 'skills');

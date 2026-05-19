@@ -25,7 +25,7 @@ Do not use this skill to execute a skill's task workflow. Install first, then us
 
 ## Instructions
 
-1. Determine the install source: local directory, Git URL, or repository folder that contains one or more `SKILL.md` files.
+1. Determine the install source: local directory, Git URL, or repository folder that contains one or more `SKILL.md` files. Read each skill name and version from `skill.json.version` or `SKILL.md` frontmatter `version`.
 2. Determine the target scope:
    - `agent`: `~/.openagent/agents/<agentId>/skills/` for the current agent.
    - `user`: `~/.openagent/skills/` for all agents.
@@ -43,4 +43,4 @@ Do not use this skill to execute a skill's task workflow. Install first, then us
 
 ## Output expectations
 
-Report installed skill names, target scope, destination paths, whether overwrite was used, and any refresh/restart note.
+Report installed skill names, versions, target scope, destination paths, whether overwrite was used, and any refresh/restart note.

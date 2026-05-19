@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getOpenAgentPath } from '../openagent-home.js';
 
 export interface OpenAgentAppSettings {
   schemaVersion: 'openagent.settings.v1';
   runtime: {
     allowTextToolCallRecovery: boolean;
+    autoApproveRuntimeApprovals: boolean;
   };
   updatedAt: string;
 }
@@ -13,7 +14,8 @@ export interface OpenAgentAppSettings {
 const DEFAULT_SETTINGS: OpenAgentAppSettings = {
   schemaVersion: 'openagent.settings.v1',
   runtime: {
-    allowTextToolCallRecovery: true
+    allowTextToolCallRecovery: true,
+    autoApproveRuntimeApprovals: false
   },
   updatedAt: new Date().toISOString()
 };
@@ -43,14 +45,14 @@ export function getOpenAgentAppSettings(): OpenAgentAppSettings {
 
 export function updateOpenAgentAppSettings(input: Partial<{ runtime: Partial<OpenAgentAppSettings['runtime']> }>) {
   const current = getOpenAgentAppSettings();
-  const next: OpenAgentAppSettings = {
+  const next = normalizeOpenAgentAppSettings({
     ...current,
     runtime: {
       ...current.runtime,
       ...(input.runtime ?? {})
     },
     updatedAt: new Date().toISOString()
-  };
+  });
   writeOpenAgentAppSettings(next);
   return next;
 }
@@ -61,7 +63,10 @@ function normalizeOpenAgentAppSettings(input: Partial<OpenAgentAppSettings>): Op
     runtime: {
       allowTextToolCallRecovery: typeof input.runtime?.allowTextToolCallRecovery === 'boolean'
         ? input.runtime.allowTextToolCallRecovery
-        : DEFAULT_SETTINGS.runtime.allowTextToolCallRecovery
+        : DEFAULT_SETTINGS.runtime.allowTextToolCallRecovery,
+      autoApproveRuntimeApprovals: typeof input.runtime?.autoApproveRuntimeApprovals === 'boolean'
+        ? input.runtime.autoApproveRuntimeApprovals
+        : DEFAULT_SETTINGS.runtime.autoApproveRuntimeApprovals
     },
     updatedAt: normalizeUpdatedAt(input.updatedAt)
   };
@@ -79,8 +84,7 @@ function writeOpenAgentAppSettings(settings: OpenAgentAppSettings) {
 }
 
 function getOpenAgentSettingsDir() {
-  const openAgentHome = process.env.OPENAGENT_HOME || path.join(os.homedir(), '.openagent');
-  const settingsDir = path.join(openAgentHome, 'settings');
+  const settingsDir = getOpenAgentPath('settings');
   mkdirSync(settingsDir, { recursive: true });
   return settingsDir;
 }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "openagent.skill.v1",
   "name": "{{name}}",
-  "version": "0.1.0",
+  "version": "{{version}}",
   "displayName": "{{displayName}}",
   "description": "{{description}}",
   "risk": "read",

@@ -18,8 +18,9 @@ export function buildSkillPromptBlock(skills: SkillCatalogItem[]) {
 }
 
 function formatSkillSummary(skill: SkillCatalogItem) {
+  const versionAttr = skill.version ? ` version="${escapeXml(skill.version)}"` : '';
   const lines = [
-    `  <skill name="${escapeXml(skill.name)}" source="${skill.source}" risk="${skill.risk}">`,
+    `  <skill name="${escapeXml(skill.name)}" source="${skill.source}" risk="${skill.risk}"${versionAttr}>`,
     `    <description>${escapeXml(skill.description)}</description>`
   ];
 

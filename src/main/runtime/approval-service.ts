@@ -44,12 +44,16 @@ export class ApprovalService {
     return ['shell', 'git.push', 'git.reset', 'external-path-read', 'external-path-write', 'destructive'].includes(actionType);
   }
 
-  requestApproval(input: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
-    const request: RuntimeApprovalRequest = {
+  createRequest(input: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
+    return {
       ...input,
       id: input.id || `approval-${randomUUID()}`,
       scope: input.scope || 'once'
     };
+  }
+
+  requestApproval(input: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
+    const request = this.createRequest(input);
 
     if (this.isRequestApproved(request)) {
       return { request, decision: Promise.resolve('approved' as const) };
@@ -106,6 +110,16 @@ export class ApprovalService {
       scope: pending.request.scope,
       payloadPreview: pending.request.payloadPreview || pending.request.description
     };
+  }
+
+  approveAllPending() {
+    const approved: RuntimeApprovalRequest[] = [];
+    for (const [approvalId, pending] of this.pending.entries()) {
+      this.pending.delete(approvalId);
+      pending.resolve('approved');
+      approved.push(pending.request);
+    }
+    return approved;
   }
 
   rejectPendingForRun(runId?: string) {
