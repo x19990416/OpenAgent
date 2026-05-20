@@ -80,7 +80,7 @@ docs/
 
 1. **UI 与 runtime 解耦**：Renderer 不感知 Pi、OpenAI、Codex 等具体 agent engine。
 2. **Runtime Adapter 优先**：先定义 OpenAgent 自己的 `AgentRuntimeAdapter`，Pi 只是其中一种实现。
-3. **不要包壳 Pi CLI**：优先嵌入 `@mariozechner/pi-coding-agent`，通过 `createAgentSession()` 管理 agent loop。
+3. **不要包壳 Pi CLI**：优先嵌入 `@earendil-works/pi-coding-agent`，通过 `createAgentSession()` 管理 agent loop。
 4. **工具统一由 OpenAgent 管理**：不要直接暴露 Pi 默认工具绕过 OpenAgent 的审批、sandbox、日志和 UI 状态。
 5. **事件必须可观测**：run、message、tool、approval、patch、terminal、memory 都要能映射到 UI event。
 6. **session 可恢复**：thread/session transcript 应落地到 JSONL，并由 UI 元数据建立索引。

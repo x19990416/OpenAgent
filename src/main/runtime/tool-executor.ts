@@ -291,16 +291,21 @@ function isRecoverableSelectedSkillRoutingDeny(toolName: string, planContext: Pl
 
 function buildSelectedSkillRoutingCorrection(reason: string, planContext: PlanExecutionContext | null) {
   const skillName = planContext?.selectedSkillName ?? 'selected skill';
+  const selectedSkillTools = 'skill_load, skill_resource, skill_script';
   return [
     `OpenAgent policy blocked pi_coding_agent because ${skillName} is the selected skill and it declares its own scripts/resources.`,
     '',
     'This is a recoverable routing correction, not a final answer for the user.',
-    `Policy reason: ${reason}`,
+    `Policy reason: Selected skill ${skillName} is the primary route. Use selected-skill tools instead of generic coding delegation.`,
+    reason.includes('Allowed:')
+      ? `Note: plan allowedTools were stale or too narrow (${reason}); selected-skill tools remain the intended route for this correction.`
+      : `Detailed policy reason: ${reason}`,
     '',
     'Continue the same user task by using the selected skill tools directly:',
     `1. Call skill_load with skillName="${skillName}" if the skill instructions are not loaded yet.`,
     '2. Call skill_resource for any needed template/reference/example.',
     '3. Call skill_script for a declared script that fits the task.',
+    `Allowed selected-skill tools for this correction: ${selectedSkillTools}.`,
     '',
     'Do not repeat the pi_coding_agent call unless no selected skill tool fits and you explain why.'
   ].join('\n');

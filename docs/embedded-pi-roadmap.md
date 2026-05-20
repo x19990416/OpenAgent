@@ -578,7 +578,7 @@ pnpm typecheck
 
 已完成：
 
-- 确认当前 `@mariozechner/pi-coding-agent@0.64.0` 已导出 compaction 能力：
+- 确认当前 `@earendil-works/pi-coding-agent@0.75.3` 已导出 compaction 能力：
   - `AgentSession.compact(customInstructions?)`
   - `AgentSession.abortCompaction()`
   - `compaction_start` / `compaction_end` session event

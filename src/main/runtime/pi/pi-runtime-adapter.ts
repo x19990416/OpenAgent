@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { getOpenAgentAppSettings } from '../settings/openagent-settings.js';
 import type { AgentRuntimeAdapter, AgentRuntimeCompactInput, AgentRuntimeCompactResult, AgentRuntimeRunInput, AgentRuntimeRunResult, RuntimeMessage } from '../runtime-types.js';
 import { errorToMessage, isCancelledError } from '../errors.js';
@@ -150,7 +151,8 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         modelRegistry,
         selectedModel,
         customTools,
-        thinkingLevel
+        thinkingLevel,
+        onLog: input.onLog
       });
       session.setActiveToolsByName?.(input.tools.map((tool) => tool.name));
 
@@ -243,6 +245,69 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             recoveryAttempt: recoveryAttempt + 1
           }
         });
+
+        const repairSessionFile = buildRepairSessionFile(input.sessionFile, input.runId);
+        const { session: repairSession, piSessionFile: repairPiSessionFile } = await createOpenAgentPiSession({
+          workspaceRoot: input.workspaceRoot,
+          openAgentSessionFile: repairSessionFile,
+          authStorage,
+          modelRegistry,
+          selectedModel,
+          customTools,
+          thinkingLevel,
+          systemPromptOverride: buildStructuredToolRepairSystemPrompt(),
+          onLog: input.onLog
+        });
+        repairSession.setActiveToolsByName?.(input.tools.map((tool) => tool.name));
+        let structuredRetry;
+        try {
+          structuredRetry = await promptOpenAgentPiSession({
+            session: repairSession,
+            prompt: buildStructuredToolRetryPrompt(unparsedToolCall.toolName, recovery?.args),
+            attachments: [],
+            abortSignal: input.abortSignal,
+            onLog: input.onLog,
+            emitUiEvent: input.emitUiEvent,
+            runId: input.runId,
+            threadId: input.threadId,
+            maxIterations: 2
+          });
+        } finally {
+          repairSession.dispose?.();
+        }
+        input.onLog?.({
+          scope: 'agent-loop',
+          message: 'unparsed_tool_call_structured_retry_completed',
+          data: {
+            runId: input.runId,
+            threadId: input.threadId,
+            toolName: unparsedToolCall.toolName,
+            repairSessionFile,
+            repairPiSessionFile,
+            retryToolResultCount: structuredRetry.toolResultCount,
+            retryLoopCount: structuredRetry.loopCount,
+            recoveryAttempt: recoveryAttempt + 1
+          }
+        });
+        totalLoopCount += structuredRetry.loopCount;
+        totalToolResultCount += structuredRetry.toolResultCount;
+        if (structuredRetry.toolResultCount > 0) {
+          promptResult = await promptOpenAgentPiSession({
+            session,
+            prompt: buildStructuredRepairContinuationPrompt(unparsedToolCall.toolName, structuredRetry.toolResults),
+            attachments: [],
+            abortSignal: input.abortSignal,
+            onLog: input.onLog,
+            emitUiEvent: input.emitUiEvent,
+            runId: input.runId,
+            threadId: input.threadId,
+            maxIterations: input.maxIterations
+          });
+          assistantText = promptResult.assistantText;
+          totalLoopCount += promptResult.loopCount;
+          totalToolResultCount += promptResult.toolResultCount;
+          continue;
+        }
 
         if (recoveryEnabled && recovery) {
           const toolCallId = `text-tool-${randomUUID()}`;
@@ -373,30 +438,40 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
 function detectUnparsedToolCallText(text: string, toolNames: string[]) {
   const trimmed = text.trim();
-  if (!trimmed || !trimmed.includes('<tool_call|>')) return null;
+  if (!trimmed) return null;
 
   const toolName = toolNames.find((name) => {
     const escaped = escapeRegExp(name);
-    return new RegExp(`^(?:<\\|tool_call>)?\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{`, 's').test(trimmed);
+    return new RegExp(`^${TEXT_TOOL_CALL_MARKER_PATTERN}\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{`, 's').test(trimmed);
   });
 
   if (toolName) return { toolName };
 
-  const unknownToolName = /^(?:<\|tool_call>)?\s*(?:(?:thought)?call:|:?\s*)?([A-Za-z_$][A-Za-z0-9_$-]*)\s*\{/s.exec(trimmed)?.[1];
-  return { toolName: unknownToolName || 'unknown' };
+  const unknownToolName = new RegExp(`^${TEXT_TOOL_CALL_MARKER_PATTERN}\\s*(?:(?:thought)?call:|:?\\s*)?([A-Za-z_$][A-Za-z0-9_$-]*)\\s*\\{`, 's').exec(trimmed)?.[1];
+  return unknownToolName ? { toolName: unknownToolName } : null;
 }
 
 
 function parseUnparsedToolCallText(text: string, toolNames: string[]) {
-  const normalized = text.trim().replace(/<tool_call\|>\s*$/g, '').trim();
+  const normalized = stripTextToolCallMarkers(text);
   for (const toolName of toolNames) {
     const escaped = escapeRegExp(toolName);
-    const match = new RegExp(`^(?:<\\|tool_call>)?\\s*(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{([\\s\\S]*)\\}\\s*$`, 's').exec(normalized);
+    const match = new RegExp(`^(?:(?:thought)?call:|:?\\s*)?${escaped}\\s*\\{([\\s\\S]*)\\}\\s*$`, 's').exec(normalized);
     if (!match) continue;
     const args = parseLooseToolArgs(match[1]);
     if (args) return { toolName, args };
   }
   return null;
+}
+
+const TEXT_TOOL_CALL_MARKER_PATTERN = String.raw`(?:(?:<\|tool_call>)|(?:<tool_call\|>))?`;
+
+function stripTextToolCallMarkers(text: string) {
+  return text
+    .trim()
+    .replace(/^(?:<\|tool_call>|<tool_call\|>)\s*/g, '')
+    .replace(/\s*(?:<\|tool_call>|<tool_call\|>)$/g, '')
+    .trim();
 }
 
 function parseLooseToolArgs(body: string): Record<string, unknown> | null {
@@ -479,6 +554,36 @@ function coerceLooseToolValue(value: string) {
   } catch {
     return value;
   }
+}
+
+function buildStructuredToolRepairSystemPrompt() {
+  return [
+    'You are OpenAgent tool-call protocol repair.',
+    'Your only job is to emit exactly one real structured tool call using the available tool-calling interface.',
+    'Do not solve the user task. Do not answer in natural language. Do not output text-form calls such as call:tool{...}.'
+  ].join('\n');
+}
+
+function buildStructuredToolRetryPrompt(toolName: string, parsedArgs?: Record<string, unknown>) {
+  const target = { toolName, args: parsedArgs ?? {} };
+  return safeJsonStringify(target).slice(0, 4000);
+}
+
+function buildStructuredRepairContinuationPrompt(toolName: string, toolResults: unknown[]) {
+  return [
+    `A short isolated repair session re-issued the previous text-form pseudo tool call as a structured tool call: ${toolName}.`,
+    'Continue the original user task using these tool results. Do not repeat the same tool call unless more information is required.',
+    'If more tools are needed, use structured tool calls only.',
+    '',
+    'Tool results:',
+    safeJsonStringify(toolResults).slice(0, 8000)
+  ].join('\n');
+}
+
+function buildRepairSessionFile(openAgentSessionFile: string, runId?: string) {
+  const sessionDir = path.dirname(openAgentSessionFile);
+  const safeRunId = (runId || 'run').replace(/[^A-Za-z0-9_.-]/g, '-');
+  return path.join(sessionDir, `.repair-${safeRunId}-${randomUUID()}.jsonl`);
 }
 
 function buildRecoveredToolContinuationPrompt(toolName: string, args: Record<string, unknown>, resultContent: string) {

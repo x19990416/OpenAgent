@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentPlan, AgentPlanStep, PlanRiskLevel } from './plan-types.js';
 import { PlanStore } from './plan-store.js';
-import { PlanLlmGenerator, type LlmPlanDraft, type LlmPlanningIntentDecision } from './plan-llm.js';
+import { PlanLlmGenerator, type LlmPlanDraft, type LlmPlanningIntentDecision, type LlmPlanSelectedSkillContext, type LlmPlanStepDraft } from './plan-llm.js';
 
 export interface CreateDraftPlanInput {
   runId: string;
@@ -9,6 +9,7 @@ export interface CreateDraftPlanInput {
   agentId: string;
   prompt: string;
   intent: PlanningIntentDecision;
+  selectedSkill?: LlmPlanSelectedSkillContext | null;
   now?: string;
 }
 
@@ -46,7 +47,7 @@ export class PlanService {
   async createDraftPlan(input: CreateDraftPlanInput) {
     const now = input.now || new Date().toISOString();
     const riskLevel = input.intent.riskLevel;
-    const llmDraft = await this.llm.generate({ prompt: input.prompt, riskLevel }).catch(() => null);
+    const llmDraft = await this.llm.generate({ prompt: input.prompt, riskLevel, selectedSkill: input.selectedSkill }).catch(() => null);
     const plan: AgentPlan = {
       id: `plan-${randomUUID()}`,
       runId: input.runId,
@@ -61,7 +62,7 @@ export class PlanService {
       approvalReason: input.intent.approvalRequired
         ? (llmDraft?.approvalReason || input.intent.reason || 'Plan Mode 已为该任务生成执行计划；需要用户确认后再进入执行阶段。')
         : (input.intent.reason || llmDraft?.approvalReason),
-      steps: buildDraftSteps(riskLevel, llmDraft),
+      steps: buildDraftSteps(riskLevel, llmDraft, input.selectedSkill),
       revision: 0,
       source: llmDraft ? 'llm' : 'runtime',
       riskLevel,
@@ -154,7 +155,7 @@ export class PlanService {
   }
 }
 
-function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | null): AgentPlanStep[] {
+function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | null, selectedSkill?: LlmPlanSelectedSkillContext | null): AgentPlanStep[] {
   const steps: AgentPlanStep[] = [
     {
       id: 'plan-step-inspect',
@@ -177,23 +178,26 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
   ];
 
   const executeSteps = llmDraft?.steps?.length
-    ? llmDraft.steps.map((step, index): AgentPlanStep => ({
-        id: `plan-step-execute-${index + 1}`,
-        title: step.title,
-        description: step.description,
-        status: 'pending',
-        allowedTools: normalizeExecuteAllowedTools(step.allowedTools),
-        requiresApproval: Boolean(step.requiresApproval),
-        approvalReason: step.requiresApproval ? 'LLM 计划标记该步骤需要审批。' : undefined,
-        riskLevel: step.riskLevel || riskLevel,
-        kind: 'execute'
-      }))
+    ? llmDraft.steps.map((step, index): AgentPlanStep => {
+        const sanitizedStep = sanitizeSelectedSkillPlanStep(step, selectedSkill);
+        return {
+          id: `plan-step-execute-${index + 1}`,
+          title: sanitizedStep.title,
+          description: sanitizedStep.description,
+          status: 'pending',
+          allowedTools: normalizeExecuteAllowedTools(sanitizedStep.allowedTools, selectedSkill),
+          requiresApproval: Boolean(sanitizedStep.requiresApproval),
+          approvalReason: sanitizedStep.requiresApproval ? 'LLM 计划标记该步骤需要审批。' : undefined,
+          riskLevel: sanitizedStep.riskLevel || riskLevel,
+          kind: 'execute'
+        };
+      })
     : [{
         id: 'plan-step-execute-1',
         title: '按计划进入 agent loop，并通过 OpenAgent tools 执行任务',
         description: 'AgentSession 负责推理循环；工具调用仍由 OpenAgent ToolExecutor、审批、日志和 UI 事件统一管理。',
         status: 'pending',
-        allowedTools: ['tool-executor'],
+        allowedTools: normalizeExecuteAllowedTools(['tool-executor'], selectedSkill),
         requiresApproval: riskLevel !== 'low',
         approvalReason: riskLevel !== 'low' ? '该步骤可能调用工具或影响当前工作区。' : undefined,
         riskLevel,
@@ -216,12 +220,39 @@ function buildDraftSteps(riskLevel: PlanRiskLevel, llmDraft?: LlmPlanDraft | nul
   return steps;
 }
 
-function normalizeExecuteAllowedTools(allowedTools?: string[]) {
+function normalizeExecuteAllowedTools(allowedTools?: string[], selectedSkill?: LlmPlanSelectedSkillContext | null) {
   const tools = allowedTools?.length ? Array.from(new Set(allowedTools)) : ['tool-executor'];
+  if (selectedSkill) {
+    const next = new Set(tools.filter((tool) => !(selectedSkill.hasScripts && tool === 'pi_coding_agent')));
+    next.add('read-only');
+    next.add('skill-tools');
+    next.add('shell_exec');
+    if (selectedSkill.name === 'skill-creator') next.add('write_file');
+    return Array.from(next);
+  }
+
   const canExecuteOrWrite = tools.some((tool) => ['tool-executor', 'write_file', 'file-write', 'shell_exec', 'shell-exec', 'pi_coding_agent'].includes(tool));
   if (canExecuteOrWrite) return tools;
 
   return [...tools, 'tool-executor'];
+}
+
+function sanitizeSelectedSkillPlanStep(step: LlmPlanStepDraft, selectedSkill?: LlmPlanSelectedSkillContext | null): LlmPlanStepDraft {
+  if (!selectedSkill?.hasScripts) return step;
+
+  return {
+    ...step,
+    title: replacePiCodingAgentInstruction(step.title),
+    description: replacePiCodingAgentInstruction(step.description ?? ''),
+    allowedTools: step.allowedTools?.filter((tool) => tool !== 'pi_coding_agent')
+  };
+}
+
+function replacePiCodingAgentInstruction(value: string) {
+  return value
+    .replace(/pi_coding_agent/g, 'selected skill tools')
+    .replace(/使用\s*selected skill tools\s*编写/g, '使用 skill_script/write_file 创建')
+    .replace(/使用\s*selected skill tools/g, '使用 skill_script/write_file');
 }
 
 function normalizeIntentDecision(decision: LlmPlanningIntentDecision): PlanningIntentDecision {

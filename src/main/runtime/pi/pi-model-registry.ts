@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { AuthStorage, ModelRegistry } from '@mariozechner/pi-coding-agent';
+import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import { getOpenAgentPath } from '../openagent-home.js';
 
 export interface PiModelCatalogItem {

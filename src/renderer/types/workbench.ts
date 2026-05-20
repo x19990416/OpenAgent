@@ -19,6 +19,7 @@ export type SettingsTab =
   | 'plugins'
   | 'skills'
   | 'knowledge'
+  | 'logs'
   | 'config'
   | 'personalization'
   | 'account'

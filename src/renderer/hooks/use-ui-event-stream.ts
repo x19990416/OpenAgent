@@ -452,8 +452,12 @@ export function useUiEventStream() {
 
 function makeSkillActivity(event: UiEvent, status: RuntimeActivityItem['status'], title: string, detail?: string, meta?: Record<string, unknown>): RuntimeActivityItem {
   const payload = asRecord(event.payload);
+  const runKey = String(payload.runId || payload.threadId || 'run');
+  const activityId = typeof payload.scriptPath === 'string'
+    ? `skill-script-${runKey}-${String(payload.skillName || 'skill')}-${payload.scriptPath}`
+    : `${event.type}-${String(payload.skillName || 'skill')}-${String(payload.mode || event.id)}`;
   return {
-    id: `${event.type}-${String(payload.skillName || 'skill')}-${String(payload.scriptPath || payload.mode || event.id)}`,
+    id: activityId,
     runId: typeof payload.runId === 'string' ? payload.runId : undefined,
     threadId: typeof payload.threadId === 'string' ? payload.threadId : undefined,
     kind: 'skill',

@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export HTTP_PROXY=http://127.0.0.1:7890
-export HTTPS_PROXY=http://127.0.0.1:7890
-export ALL_PROXY=socks5://127.0.0.1:7890
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
@@ -25,6 +21,8 @@ Options:
 
 Environment:
   OPENAGENT_WIN_ARCH=x64|arm64  Default arch when --arch is not provided.
+  OPENAGENT_USE_LOCAL_PROXY=1    Opt in to the local 127.0.0.1:7890 proxy for
+                                 local packaging only. Do not set this in CI.
 
 Output:
   release/*Setup*.exe
@@ -74,6 +72,12 @@ esac
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pnpm is required but was not found in PATH." >&2
   exit 1
+fi
+
+if [[ "${OPENAGENT_USE_LOCAL_PROXY:-0}" == "1" ]]; then
+  export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7890}"
+  export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7890}"
+  export ALL_PROXY="${ALL_PROXY:-socks5://127.0.0.1:7890}"
 fi
 
 if [[ ! -d node_modules ]]; then

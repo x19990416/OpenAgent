@@ -54,6 +54,10 @@ export class ToolPolicy {
   constructor(private readonly workspaceRoot: string) {}
 
   decide(tool: RuntimeTool, args: unknown, planContext?: PlanExecutionContext | null): ToolPolicyDecision {
+    if (PI_CODING_TOOLS.has(tool.name) && planContext?.selectedSkillName && planContext.selectedSkillHasScripts) {
+      return decidePiCodingAgent(args, planContext);
+    }
+
     const planDecision = this.decidePlanContext(tool, planContext);
     if (planDecision) return planDecision;
 

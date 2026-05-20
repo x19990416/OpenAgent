@@ -1,10 +1,20 @@
 import type { AgentRuntimeRunInput, RuntimeAttachment } from '../runtime-types.js';
 import { CancelledError } from '../errors.js';
+import { appendLlmResponseLog } from '../runtime-info-logger.js';
+
+export interface PiPromptToolResult {
+  toolCallId?: string;
+  name?: string;
+  isError?: boolean;
+  content?: unknown;
+  contentLength?: number;
+}
 
 export interface PiPromptSessionResult {
   assistantText: string;
   loopCount: number;
   toolResultCount: number;
+  toolResults: PiPromptToolResult[];
 }
 
 export async function promptOpenAgentPiSession(input: {
@@ -23,6 +33,7 @@ export async function promptOpenAgentPiSession(input: {
   let loopCount = 0;
   let activeLoop = 0;
   let toolResultCount = 0;
+  const toolResults: PiPromptToolResult[] = [];
   let maxIterationsExceeded = false;
   let thinkingTextLength = 0;
   let lastThinkingActivityLength = 0;
@@ -63,6 +74,7 @@ export async function promptOpenAgentPiSession(input: {
       }
       if (Array.isArray(event.toolResults)) {
         toolResultCount += event.toolResults.length;
+        toolResults.push(...event.toolResults.map((item: any) => summarizeToolResult(item)));
       }
       emitPiRuntimeActivity(emitUiEvent, {
         id: `pi-turn-${resolvedLoop}`,
@@ -130,6 +142,29 @@ export async function promptOpenAgentPiSession(input: {
       return;
     }
 
+    if (event.type === 'message_update' && isToolCallAssistantEvent(event.assistantMessageEvent)) {
+      appendLlmResponseLog({
+        scope: 'agent-loop',
+        message: `Pi assistant tool-call event (${event.assistantMessageEvent.type})`,
+        data: {
+          runId,
+          threadId,
+          loopNumber: activeLoop || loopCount || 1,
+          assistantMessageEvent: event.assistantMessageEvent
+        }
+      });
+      onLog?.({
+        scope: 'agent-loop',
+        message: `Pi assistant tool-call event (${event.assistantMessageEvent.type})`,
+        data: {
+          runId,
+          threadId,
+          loopNumber: activeLoop || loopCount || 1
+        }
+      });
+      return;
+    }
+
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
       const delta = String(event.assistantMessageEvent.delta ?? '');
       assistantText += delta;
@@ -171,10 +206,15 @@ export async function promptOpenAgentPiSession(input: {
       }
     });
     const imageContents = getImageContents(attachments);
-    const promptPromise = imageContents.length > 0 && typeof session.sendUserMessage === 'function'
-      ? session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents])
-      : session.prompt(prompt);
-    await raceWithAbort(promptPromise, abortSignal, session);
+    const restoreProviderFetchLogger = installProviderHttpLogger({ runId, threadId, onLog });
+    try {
+      const promptPromise = imageContents.length > 0 && typeof session.sendUserMessage === 'function'
+        ? session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents])
+        : session.prompt(prompt);
+      await raceWithAbort(promptPromise, abortSignal, session);
+    } finally {
+      restoreProviderFetchLogger();
+    }
     emitPiRuntimeActivity(emitUiEvent, {
       id: 'pi-prompt',
       runId,
@@ -212,7 +252,8 @@ export async function promptOpenAgentPiSession(input: {
   return {
     assistantText: cleanProviderChannelMarkers(assistantText).trim(),
     loopCount,
-    toolResultCount
+    toolResultCount,
+    toolResults
   };
 }
 
@@ -299,6 +340,258 @@ function stopPiSession(session: any) {
       return;
     }
   }
+}
+
+function isToolCallAssistantEvent(event: any) {
+  return event?.type === 'toolcall_start' || event?.type === 'toolcall_delta' || event?.type === 'toolcall_end';
+}
+
+function installProviderHttpLogger(input: {
+  runId?: string;
+  threadId?: string;
+  onLog?: AgentRuntimeRunInput['onLog'];
+}) {
+  if (typeof globalThis.fetch !== 'function') return () => undefined;
+
+  if (providerFetchLoggerState) {
+    providerFetchLoggerState.contexts.push(input);
+    return () => removeProviderHttpLoggerContext(input);
+  }
+
+  const originalFetch = globalThis.fetch.bind(globalThis);
+  const wrappedFetch = async (resource: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const activeContext = providerFetchLoggerState?.contexts.at(-1);
+    if (!activeContext) {
+      return originalFetch(resource, init);
+    }
+
+    const requestId = `provider-http-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = Date.now();
+    const requestSnapshot = await buildFetchRequestSnapshot(resource, init);
+
+    appendLlmResponseLog({
+      scope: 'provider-http',
+      message: 'Provider HTTP request',
+      data: {
+        runId: activeContext.runId,
+        threadId: activeContext.threadId,
+        requestId,
+        ...requestSnapshot
+      }
+    });
+    activeContext.onLog?.({
+      scope: 'agent-loop',
+      message: 'Provider HTTP request saved to llm-response.log',
+      data: {
+        runId: activeContext.runId,
+        threadId: activeContext.threadId,
+        requestId,
+        method: requestSnapshot.method,
+        url: requestSnapshot.url,
+        bodyLength: requestSnapshot.bodyText?.length ?? 0
+      }
+    });
+
+    try {
+      const response = await originalFetch(resource, init);
+      const responseSnapshot = {
+        runId: activeContext.runId,
+        threadId: activeContext.threadId,
+        requestId,
+        url: response.url || requestSnapshot.url,
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers: sanitizeHeaders(response.headers),
+        durationMs: Date.now() - startedAt
+      };
+      appendLlmResponseLog({
+        scope: 'provider-http',
+        message: 'Provider HTTP response headers',
+        data: responseSnapshot
+      });
+
+      response.clone().text().then((rawText) => {
+        appendLlmResponseLog({
+          scope: 'provider-http',
+          message: 'Provider HTTP raw response body',
+          data: {
+            ...responseSnapshot,
+            rawText,
+            rawTextLength: rawText.length
+          }
+        });
+      }).catch((error) => {
+        appendLlmResponseLog({
+          scope: 'provider-http',
+          message: 'Provider HTTP raw response body unavailable',
+          data: {
+            ...responseSnapshot,
+            error: error instanceof Error ? error.message : String(error)
+          }
+        });
+      });
+
+      return response;
+    } catch (error) {
+      appendLlmResponseLog({
+        scope: 'provider-http',
+        message: 'Provider HTTP request failed',
+        data: {
+          runId: activeContext.runId,
+          threadId: activeContext.threadId,
+          requestId,
+          method: requestSnapshot.method,
+          url: requestSnapshot.url,
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+      throw error;
+    }
+  };
+
+  providerFetchLoggerState = {
+    originalFetch,
+    wrappedFetch,
+    contexts: [input]
+  };
+  globalThis.fetch = wrappedFetch as typeof fetch;
+  return () => removeProviderHttpLoggerContext(input);
+}
+
+let providerFetchLoggerState: {
+  originalFetch: typeof fetch;
+  wrappedFetch: typeof fetch;
+  contexts: Array<{
+    runId?: string;
+    threadId?: string;
+    onLog?: AgentRuntimeRunInput['onLog'];
+  }>;
+} | undefined;
+
+function removeProviderHttpLoggerContext(input: {
+  runId?: string;
+  threadId?: string;
+  onLog?: AgentRuntimeRunInput['onLog'];
+}) {
+  if (!providerFetchLoggerState) return;
+  providerFetchLoggerState.contexts = providerFetchLoggerState.contexts.filter((item) => item !== input);
+  if (providerFetchLoggerState.contexts.length > 0) return;
+
+  if (globalThis.fetch === providerFetchLoggerState.wrappedFetch) {
+    globalThis.fetch = providerFetchLoggerState.originalFetch;
+  }
+  providerFetchLoggerState = undefined;
+}
+
+async function buildFetchRequestSnapshot(resource: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+  const request = isRequestLike(resource) ? resource : undefined;
+  const url = request?.url ?? String(resource);
+  const method = String(init?.method ?? request?.method ?? 'GET').toUpperCase();
+  const headers = mergeHeaders(request?.headers, init?.headers);
+  const sanitizedHeaders = sanitizeHeaders(headers);
+  const curlHeaders = buildCurlHeaders(headers);
+  const bodyText = await readFetchRequestBody(resource, init);
+
+  return {
+    url,
+    method,
+    headers: sanitizedHeaders,
+    bodyText,
+    bodyJson: parseJsonOrUndefined(bodyText),
+    curlCommand: buildCurlCommand({ url, method, headers: curlHeaders, bodyText })
+  };
+}
+
+function isRequestLike(value: unknown): value is Request {
+  return Boolean(value && typeof value === 'object' && 'url' in value && 'method' in value && 'headers' in value);
+}
+
+function mergeHeaders(...inputs: Array<HeadersInit | undefined>) {
+  const headers = new Headers();
+  for (const input of inputs) {
+    if (!input) continue;
+    new Headers(input).forEach((value, key) => headers.set(key, value));
+  }
+  return headers;
+}
+
+function sanitizeHeaders(headersInput: HeadersInit | undefined) {
+  const result: Record<string, string> = {};
+  if (!headersInput) return result;
+  new Headers(headersInput).forEach((value, key) => {
+    result[key] = isSensitiveHeader(key) ? redactHeaderValue(key, value) : value;
+  });
+  return result;
+}
+
+function buildCurlHeaders(headersInput: HeadersInit | undefined) {
+  const result: Record<string, string> = {};
+  if (!headersInput) return result;
+  new Headers(headersInput).forEach((value, key) => {
+    result[key] = isSensitiveHeader(key) ? placeholderHeaderValue(key, value) : value;
+  });
+  return result;
+}
+
+function isSensitiveHeader(key: string) {
+  return /authorization|api[-_]?key|x[-_]?api[-_]?key|cookie|token|secret/i.test(key);
+}
+
+function redactHeaderValue(key: string, value: string) {
+  if (/authorization/i.test(key) && /^bearer\s+/i.test(value)) return 'Bearer ***';
+  return '***';
+}
+
+function placeholderHeaderValue(key: string, value: string) {
+  if (/authorization/i.test(key) && /^bearer\s+/i.test(value)) return 'Bearer $OPENAGENT_PROVIDER_API_KEY';
+  if (/api[-_]?key/i.test(key)) return '$OPENAGENT_PROVIDER_API_KEY';
+  return '***';
+}
+
+async function readFetchRequestBody(resource: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+  const initBody = init?.body;
+  if (typeof initBody === 'string') return initBody;
+  if (initBody instanceof URLSearchParams) return initBody.toString();
+  if (initBody instanceof Blob) return initBody.text();
+  if (initBody instanceof ArrayBuffer) return new TextDecoder().decode(initBody);
+  if (ArrayBuffer.isView(initBody)) return new TextDecoder().decode(initBody);
+
+  if (isRequestLike(resource)) {
+    try {
+      return await resource.clone().text();
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function parseJsonOrUndefined(value?: string) {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function buildCurlCommand(input: { url: string; method: string; headers: Record<string, string>; bodyText?: string }) {
+  const parts = ['curl', '-sS', '-X', shellQuote(input.method)];
+  for (const [key, value] of Object.entries(input.headers)) {
+    parts.push('-H', shellQuote(`${key}: ${value}`));
+  }
+  if (input.bodyText !== undefined) {
+    parts.push('--data-raw', shellQuote(input.bodyText));
+  }
+  parts.push(shellQuote(input.url));
+  return parts.join(' ');
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 type PiPromptContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
