@@ -7,7 +7,7 @@ import { appendLlmResponseLog } from '../runtime-info-logger.js';
 import { ToolExecutor } from '../tool-executor.js';
 import { toPiToolDefinitions } from './pi-tools.js';
 import { createOpenAgentPiSession } from './pi-session.js';
-import { MAX_RECENT_TRANSCRIPT_MESSAGES, buildPiPrompt } from './pi-system-prompt.js';
+import { MAX_RECENT_TRANSCRIPT_MESSAGES, buildPiPrompt, sanitizePiSessionMessages } from './pi-system-prompt.js';
 import { promptOpenAgentPiSession } from './pi-events.js';
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
@@ -152,6 +152,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         customTools,
         thinkingLevel
       });
+      sanitizeRestoredPiSession(session, input.onLog);
       session.setActiveToolsByName?.(input.tools.map((tool) => tool.name));
 
       input.onLog?.({
@@ -206,6 +207,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
+      const appSettings = getOpenAgentAppSettings();
       let promptResult = await promptOpenAgentPiSession({
         session,
         prompt: requestBody,
@@ -215,7 +217,13 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         emitUiEvent: input.emitUiEvent,
         runId: input.runId,
         threadId: input.threadId,
-        maxIterations: input.maxIterations
+        providerId: input.providerId,
+        model: input.model,
+        maxIterations: input.maxIterations,
+        toolLoopGuard: {
+          maxConsecutiveSameToolCalls: appSettings.runtime.maxConsecutiveSameToolCalls,
+          maxConsecutiveSameToolResults: appSettings.runtime.maxConsecutiveSameToolResults
+        }
       });
       let assistantText = promptResult.assistantText;
       let totalLoopCount = promptResult.loopCount;
@@ -281,7 +289,13 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
                 emitUiEvent: input.emitUiEvent,
                 runId: input.runId,
                 threadId: input.threadId,
-                maxIterations: input.maxIterations
+                providerId: input.providerId,
+                model: input.model,
+                maxIterations: input.maxIterations,
+                toolLoopGuard: {
+                  maxConsecutiveSameToolCalls: appSettings.runtime.maxConsecutiveSameToolCalls,
+                  maxConsecutiveSameToolResults: appSettings.runtime.maxConsecutiveSameToolResults
+                }
               });
               assistantText = promptResult.assistantText;
               totalLoopCount += promptResult.loopCount;
@@ -310,7 +324,13 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
             emitUiEvent: input.emitUiEvent,
             runId: input.runId,
             threadId: input.threadId,
-            maxIterations: input.maxIterations
+            providerId: input.providerId,
+            model: input.model,
+            maxIterations: input.maxIterations,
+            toolLoopGuard: {
+              maxConsecutiveSameToolCalls: appSettings.runtime.maxConsecutiveSameToolCalls,
+              maxConsecutiveSameToolResults: appSettings.runtime.maxConsecutiveSameToolResults
+            }
           });
           assistantText = promptResult.assistantText;
           totalLoopCount += promptResult.loopCount;
@@ -369,6 +389,27 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       };
     }
   }
+}
+
+function sanitizeRestoredPiSession(session: any, onLog?: AgentRuntimeRunInput['onLog']) {
+  const messages = session?.agent?.state?.messages ?? session?.state?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) return;
+
+  const before = safeJsonStringify(messages);
+  const sanitized = sanitizePiSessionMessages(messages);
+  const after = safeJsonStringify(sanitized);
+  if (before === after) return;
+
+  session?.agent?.replaceMessages?.(sanitized);
+  onLog?.({
+    scope: 'agent-loop',
+    message: 'sanitized restored Pi session replay context',
+    data: {
+      messageCount: messages.length,
+      beforeLength: before.length,
+      afterLength: after.length
+    }
+  });
 }
 
 function detectUnparsedToolCallText(text: string, toolNames: string[]) {

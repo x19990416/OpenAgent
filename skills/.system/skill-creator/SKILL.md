@@ -39,7 +39,9 @@ Do not use it for normal task execution inside an existing domain skill, or for 
 9. Do not add secrets, machine-local credentials, or hidden policy bypasses to a skill.
 10. If a skill needs user-specific parameters, credentials, tokens, account/password values, endpoint URLs, or other local configuration, require the skill script to read them from `.env` in that skill's root directory. Do not hard-code these values in `SKILL.md`, `skill.json`, scripts, templates, examples, or generated output.
 11. Treat root `.env` and `.env.example` as private/local config files, not progressive-disclosure resources. Do not add them to `skill.json.resources`; only declare resources whose paths are under `templates/`, `references/`, `examples/`, or `assets/`. If the agent needs readable config guidance, create a sanitized file such as `references/config.md` with placeholder names only.
-12. Skill scripts must be declared in `skill.json`; mark `network`, `writes`, `risk`, and `timeoutMs` honestly.
+12. Skill scripts must be declared in `skill.json`; mark `runtime`, `network`, `writes`, `risk`, and `timeoutMs` honestly.
+13. If a script needs public packages, declare them as structured dependencies in `skill.json.scripts[].dependencies` (for example `pip: ["pypdf"]` or `npm: ["some-package"]`) and optionally add `requirements.txt` / package metadata. Do not use `.env` for public package dependencies.
+14. `skill-creator` is the governed authoring path for skill packages. Do not delegate skill creation/scaffolding to `pi_coding_agent`; use this skill's templates/scripts and `write_file` inside the allowed skill root.
 
 ## Supporting files
 

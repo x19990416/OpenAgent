@@ -45,9 +45,10 @@ export async function createOpenAgentPiSession(input: OpenAgentPiSessionInput): 
     sessionManager,
     settingsManager,
     resourceLoader,
-    // OpenAgent intentionally disables Pi built-in tools. All tool execution must
-    // cross the OpenAgent ToolExecutor/Policy/Approval/Event boundary.
-    tools: [],
+    // OpenAgent intentionally allows only its managed custom tools here.
+    // In Pi SDK, `tools` is the allow-list for all tools, including customTools;
+    // passing [] filters customTools out as well.
+    tools: input.customTools.map((tool) => tool.name) as any,
     customTools: input.customTools,
     thinkingLevel: (input.thinkingLevel ?? 'off') as any
   });

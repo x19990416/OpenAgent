@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AgentRuntimeAdapter, PlanExecutionContext, PromptSubmissionInput, RuntimeAttachment, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from './runtime-types.js';
+import type { AgentRuntimeAdapter, PlanExecutionContext, PromptSubmissionInput, RuntimeAttachment, RuntimeLogEntry, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread, RuntimeTool } from './runtime-types.js';
 import { RuntimeEventBus } from './event-bus.js';
 import { RunStateStore } from './run-state.js';
 import { SessionStore } from './session-store.js';
@@ -682,6 +682,8 @@ export class RuntimeService {
           transcriptMessageCount: runMessages.length
         }
       });
+      const availableTools = [...this.toolRegistry.list(), ...pluginContext.tools];
+      const runTools = filterToolsForSelectedSkill(availableTools, selectedSkill);
       const runInput = buildRunInput({
         runId,
         threadId: thread.threadId,
@@ -693,7 +695,7 @@ export class RuntimeService {
         model: this.options.model,
         messages: runMessages,
         attachments,
-        tools: [...this.toolRegistry.list(), ...pluginContext.tools],
+        tools: runTools,
         abortSignal,
         onLog: (entry) => {
           appendRuntimeInfoLog(entry);
@@ -735,7 +737,13 @@ export class RuntimeService {
           threadId: thread.threadId,
           elapsedMs: Date.now() - startedAt,
           messageCount: runMessages.length,
-          toolCount: runInput.tools.length
+          toolCount: runInput.tools.length,
+          selectedSkill: selectedSkill ? {
+            name: selectedSkill.name,
+            allowedTools: selectedSkill.allowedTools,
+            originalToolCount: availableTools.length,
+            exposedToolNames: runInput.tools.map((tool) => tool.name)
+          } : undefined
         }
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
@@ -814,9 +822,16 @@ export class RuntimeService {
               '- Use OpenAgent tools normally when needed; OpenAgent runtime owns approvals, logs, and plan status.',
               ...(selectedSkill
                 ? [
-                    `- Selected skill ${selectedSkill.name} is the primary execution path for this run. For this selected-skill run, call skill_load / skill_resource / skill_script with exact structured tool calls before considering any generic coding agent.`,
-                    '- Do not call pi_coding_agent to reimplement or bypass the selected skill when a declared skill script/resource can satisfy the step.',
-                    '- For execute steps in this selected-skill run, prefer skill_script for declared scripts and write_file only for direct skill-package file writes.'
+                    formatSelectedSkillPlanRule(selectedSkill),
+                    ...(selectedSkill.name === 'skill-creator'
+                      ? [
+                          '- Do not call pi_coding_agent for skill-creator runs; use skill_load, skill_resource, skill_script, and necessary write_file calls so skill authoring stays on the governed scaffold path.'
+                        ]
+                      : [
+                          '- Do not call pi_coding_agent merely to reimplement a declared skill script that can satisfy the step.',
+                          '- For normal selected-skill runs, prefer skill_script first; pi_coding_agent may be used for real blockers such as missing dependencies, runtime/environment diagnosis, script failures, or requested skill/package fixes.'
+                        ]),
+                    '- All shell execution, dependency installation, and file writes still must go through OpenAgent policy and approval.'
                   ]
                 : [
                     '- For execute steps that require coding, running scripts, generating files, or complex artifacts, you must call the appropriate OpenAgent tool such as pi_coding_agent instead of merely saying you will do it.'
@@ -1715,11 +1730,42 @@ function toSelectedSkillExecutionContext(selectedSkill?: SkillCatalogItem | null
   };
 }
 
+function filterToolsForSelectedSkill(tools: RuntimeTool[], selectedSkill?: SkillCatalogItem | null) {
+  if (!selectedSkill || selectedSkill.allowedTools.length === 0) return tools;
+  const allowed = new Set(selectedSkill.allowedTools);
+  if (selectedSkill.name !== 'skill-creator') {
+    allowed.add('pi_coding_agent');
+  }
+  const alwaysAllowedReadOnlyTools = new Set([
+    'ls',
+    'list_directory',
+    'read',
+    'read_file',
+    'find',
+    'grep',
+    'count_files',
+    'current_time'
+  ]);
+  return tools.filter((tool) => allowed.has(tool.name) || alwaysAllowedReadOnlyTools.has(tool.name));
+}
+
+function formatSelectedSkillPlanRule(skill: SkillCatalogItem) {
+  const allowedSkillTools = getAllowedSelectedSkillTools(skill);
+  if (allowedSkillTools.length > 0) {
+    return `- Selected skill ${skill.name} is the primary execution path for this run. Start with these available structured skill tools: ${allowedSkillTools.join(', ')}.`;
+  }
+  return `- Selected skill ${skill.name} is the primary execution path for this run. Start with available structured skill tools before considering other execution tools.`;
+}
+
 function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {
   const scripts = skill.scripts.length > 0
-    ? skill.scripts.map((script) => `- ${script.path} runtime=${script.runtime || 'unknown'} risk=${script.risk || 'read'} network=${script.network === true} writes=${script.writes === true}${script.description ? ` :: ${script.description}` : ''}`).join('\n')
+    ? skill.scripts.map((script) => `- ${script.path} runtime=${script.runtime || 'unknown'} risk=${script.risk || 'read'} network=${script.network === true} writes=${script.writes === true}${formatScriptDependencies(script)}${script.description ? ` :: ${script.description}` : ''}`).join('\n')
     : '- (no declared scripts)';
   const resources = skill.resources.filter((resource) => resource.kind !== 'script').slice(0, 12).map((resource) => `- ${resource.kind}: ${resource.path}${resource.description ? ` :: ${resource.description}` : ''}`).join('\n') || '- (no declared resources)';
+  const allowedSkillTools = getAllowedSelectedSkillTools(skill);
+  const shouldMentionLoad = isSelectedSkillToolAllowed(skill, 'skill_load');
+  const shouldMentionResource = isSelectedSkillToolAllowed(skill, 'skill_resource');
+  const shouldMentionScript = isSelectedSkillToolAllowed(skill, 'skill_script');
   const creatorRules = skill.name === 'skill-creator'
     ? [
         'Skill creation destination rules:',
@@ -1730,17 +1776,50 @@ function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {
     : [];
   return [
     `The user explicitly selected skill ${skill.name} (${skill.id}). Treat this as the primary execution path for this run.`,
-    'Use the selected skill tools directly. Do not delegate to pi_coding_agent to reimplement, inspect, run, or bypass the selected skill when a declared skill script/resource can satisfy the task.',
-    'If detailed instructions are needed, call skill_load with this exact skillName first. Do not output text-form calls like call:skill_load{...}; use a real structured tool call.',
-    'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path. Do not use pi_coding_agent for this lookup.',
-    'If deterministic computation or scaffolding is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args. Do not run the skill script indirectly through pi_coding_agent or shell_exec.',
-    'Only avoid skill_script when no declared script is relevant or the user explicitly asks for code changes outside the selected skill; in that case explain why the selected skill path does not fit before choosing another tool.',
+    skill.name === 'skill-creator'
+      ? 'Use the selected skill-creator tools directly. Do not delegate to pi_coding_agent to create, inspect, scaffold, run, or bypass skill-creator; skill authoring must stay on the governed skill-creator path.'
+      : 'Use the selected skill tools directly first. Do not delegate to pi_coding_agent merely to reimplement or bypass a declared skill script/resource that can satisfy the task; pi_coding_agent is allowed for real blockers such as dependency/runtime diagnosis, script failures, or requested skill/package fixes.',
+    allowedSkillTools.length > 0
+      ? `For this selected-skill run, the only exposed structured skill tool(s) are: ${allowedSkillTools.join(', ')}. Do not call or mention unavailable skill tools.`
+      : 'Use only structured tool calls that are actually exposed in this run. Do not call or mention unavailable skill tools.',
+    shouldMentionLoad
+      ? 'If detailed instructions are needed, call skill_load with this exact skillName first.'
+      : 'Do not call skill_load for this selected skill; it is not available in this run.',
+    shouldMentionResource
+      ? 'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path.'
+      : 'Do not call skill_resource for this selected skill; it is not available in this run.',
+    shouldMentionScript
+      ? 'If deterministic computation or scaffolding is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args. Do not run the skill script indirectly through pi_coding_agent or shell_exec.'
+      : 'Do not call skill_script unless it is exposed as an available structured tool in this run.',
+    'Never output text-form tool calls such as _script{...}<tool_call|>, call:skill_script{...}, or <|tool_call>...; use a real structured tool call with the exact tool name.',
+    skill.name === 'skill-creator'
+      ? 'Only avoid skill_script when no declared skill-creator script is relevant; explain why and use governed skill tools/write_file rather than pi_coding_agent.'
+      : 'Only avoid skill_script when no declared script is relevant, the script hits a real dependency/runtime blocker, the script fails and needs diagnosis/fix, or the user explicitly asks for code changes outside the selected skill; explain why before choosing another tool.',
     'Declared scripts:',
     scripts,
     'Declared resources:',
     resources,
     ...creatorRules
   ].join('\n');
+}
+
+function formatScriptDependencies(script: SkillCatalogItem['scripts'][number]) {
+  const parts = [
+    script.dependencies?.pip?.length ? `pip=[${script.dependencies.pip.join(',')}]` : '',
+    script.dependencies?.npm?.length ? `npm=[${script.dependencies.npm.join(',')}]` : '',
+    script.dependencies?.system?.length ? `system=[${script.dependencies.system.join(',')}]` : ''
+  ].filter(Boolean);
+  return parts.length > 0 ? ` deps=${parts.join(' ')}` : '';
+}
+
+function getAllowedSelectedSkillTools(skill: SkillCatalogItem) {
+  const skillTools = ['skill_list', 'skill_load', 'skill_resource', 'skill_script'];
+  if (skill.allowedTools.length === 0) return skillTools;
+  return skillTools.filter((tool) => skill.allowedTools.includes(tool));
+}
+
+function isSelectedSkillToolAllowed(skill: SkillCatalogItem, toolName: string) {
+  return skill.allowedTools.length === 0 || skill.allowedTools.includes(toolName);
 }
 
 function formatPlanForPrompt(plan: AgentPlan) {

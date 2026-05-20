@@ -94,6 +94,8 @@ export interface OpenAgentAppSettings {
     runtime: {
         allowTextToolCallRecovery: boolean;
         autoApproveRuntimeApprovals: boolean;
+        maxConsecutiveSameToolCalls: number;
+        maxConsecutiveSameToolResults: number;
     };
     updatedAt: string;
 }

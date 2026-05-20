@@ -7,6 +7,8 @@ export interface OpenAgentAppSettings {
   runtime: {
     allowTextToolCallRecovery: boolean;
     autoApproveRuntimeApprovals: boolean;
+    maxConsecutiveSameToolCalls: number;
+    maxConsecutiveSameToolResults: number;
   };
   updatedAt: string;
 }
@@ -15,7 +17,9 @@ const DEFAULT_SETTINGS: OpenAgentAppSettings = {
   schemaVersion: 'openagent.settings.v1',
   runtime: {
     allowTextToolCallRecovery: true,
-    autoApproveRuntimeApprovals: false
+    autoApproveRuntimeApprovals: false,
+    maxConsecutiveSameToolCalls: 5,
+    maxConsecutiveSameToolResults: 3
   },
   updatedAt: new Date().toISOString()
 };
@@ -66,10 +70,27 @@ function normalizeOpenAgentAppSettings(input: Partial<OpenAgentAppSettings>): Op
         : DEFAULT_SETTINGS.runtime.allowTextToolCallRecovery,
       autoApproveRuntimeApprovals: typeof input.runtime?.autoApproveRuntimeApprovals === 'boolean'
         ? input.runtime.autoApproveRuntimeApprovals
-        : DEFAULT_SETTINGS.runtime.autoApproveRuntimeApprovals
+        : DEFAULT_SETTINGS.runtime.autoApproveRuntimeApprovals,
+      maxConsecutiveSameToolCalls: normalizePositiveInteger(
+        input.runtime?.maxConsecutiveSameToolCalls,
+        DEFAULT_SETTINGS.runtime.maxConsecutiveSameToolCalls,
+        2,
+        20
+      ),
+      maxConsecutiveSameToolResults: normalizePositiveInteger(
+        input.runtime?.maxConsecutiveSameToolResults,
+        DEFAULT_SETTINGS.runtime.maxConsecutiveSameToolResults,
+        2,
+        20
+      )
     },
     updatedAt: normalizeUpdatedAt(input.updatedAt)
   };
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function normalizeUpdatedAt(value: unknown) {

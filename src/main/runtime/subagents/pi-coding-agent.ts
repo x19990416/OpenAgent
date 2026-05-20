@@ -5,6 +5,7 @@ import { resolvePiSessionFile } from '../pi/pi-session.js';
 import type { AgentRuntimeRunInput, PlanExecutionContext, RuntimeTool, RuntimeToolExecutionContext, RuntimeToolExecutionInput } from '../runtime-types.js';
 import type { PiCodingAgentTask, SubagentRunResult } from './subagent-types.js';
 import { getOpenAgentPath } from '../openagent-home.js';
+import { sanitizeModelReplayText } from '../pi/pi-system-prompt.js';
 
 const DEFAULT_CHILD_TOOL_NAMES = new Set(['ls', 'read', 'find', 'grep', 'count_files', 'write_file', 'shell_exec', 'current_time', 'list_directory', 'read_file']);
 const MAX_TASK_LENGTH = 8000;
@@ -154,7 +155,7 @@ export class PiCodingAgent {
 
 
 function formatChildSummary(input: { ok: boolean; status: string; rawSummary: string; childRunId: string; sessionFile: string; workingDirectory: string; tools: string[] }) {
-  const raw = input.rawSummary.trim() || (input.ok ? 'coding agent completed.' : 'coding agent failed.');
+  const raw = sanitizeModelReplayText(input.rawSummary).trim() || (input.ok ? 'coding agent completed.' : 'coding agent failed.');
   return [
     input.ok ? 'coding agent completed.' : 'coding agent failed.',
     '',

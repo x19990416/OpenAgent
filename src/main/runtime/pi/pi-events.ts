@@ -1,5 +1,6 @@
 import type { AgentRuntimeRunInput, RuntimeAttachment } from '../runtime-types.js';
 import { CancelledError } from '../errors.js';
+import { installPiHttpLogger } from './pi-http-logger.js';
 
 export interface PiPromptSessionResult {
   assistantText: string;
@@ -16,17 +17,30 @@ export async function promptOpenAgentPiSession(input: {
   emitUiEvent?: AgentRuntimeRunInput['emitUiEvent'];
   runId?: string;
   threadId?: string;
+  providerId?: string;
+  model?: string;
   maxIterations?: number;
+  toolLoopGuard?: {
+    maxConsecutiveSameToolCalls?: number;
+    maxConsecutiveSameToolResults?: number;
+  };
 }): Promise<PiPromptSessionResult> {
-  const { session, prompt, attachments, abortSignal, onLog, emitUiEvent, runId, threadId } = input;
+  const { session, prompt, attachments, abortSignal, onLog, emitUiEvent, runId, threadId, providerId, model } = input;
   let assistantText = '';
   let loopCount = 0;
   let activeLoop = 0;
   let toolResultCount = 0;
   let maxIterationsExceeded = false;
+  let forcedStopError = '';
   let thinkingTextLength = 0;
   let lastThinkingActivityLength = 0;
+  let visibleAssistantText = '';
+  const inlineThinkFilter = createInlineThinkStreamFilter();
   const maxLoopCount = normalizeMaxIterations(input.maxIterations);
+  const toolLoopGuard = createToolLoopGuard({
+    maxConsecutiveSameToolCalls: input.toolLoopGuard?.maxConsecutiveSameToolCalls,
+    maxConsecutiveSameToolResults: input.toolLoopGuard?.maxConsecutiveSameToolResults
+  });
   const unsubscribe = session.subscribe((event: any) => {
     if (event.type === 'turn_start') {
       activeLoop = typeof event.turnIndex === 'number' ? event.turnIndex + 1 : loopCount + 1;
@@ -63,6 +77,39 @@ export async function promptOpenAgentPiSession(input: {
       }
       if (Array.isArray(event.toolResults)) {
         toolResultCount += event.toolResults.length;
+      }
+      const repeatedToolCall = toolLoopGuard.recordTurn(event?.message, event?.toolResults);
+      if (repeatedToolCall) {
+        forcedStopError = [
+          `检测到模型连续重复执行相同工具调用，已停止当前 run 以避免 Agent loop。`,
+          `工具：${repeatedToolCall.toolName}`,
+          `连续次数：${repeatedToolCall.count}`,
+          repeatedToolCall.sameResultCount > 1 ? `相同结果连续次数：${repeatedToolCall.sameResultCount}` : '',
+          `参数：${repeatedToolCall.argumentsJson}`
+        ].filter(Boolean).join('\n');
+        emitPiRuntimeActivity(emitUiEvent, {
+          id: `pi-turn-${resolvedLoop}-repeated-tool-loop`,
+          runId,
+          threadId,
+          kind: 'thinking',
+          status: 'failed',
+          title: 'Stopped repeated tool-call loop',
+          detail: forcedStopError
+        });
+        onLog?.({
+          scope: 'agent-loop',
+          message: 'pi prompt loop: stopped repeated tool-call loop',
+          data: {
+            loopNumber: resolvedLoop,
+            toolName: repeatedToolCall.toolName,
+            count: repeatedToolCall.count,
+            sameResultCount: repeatedToolCall.sameResultCount,
+            arguments: repeatedToolCall.arguments,
+            argumentsJson: repeatedToolCall.argumentsJson,
+            resultPreview: repeatedToolCall.resultPreview
+          }
+        });
+        stopPiSession(session);
       }
       emitPiRuntimeActivity(emitUiEvent, {
         id: `pi-turn-${resolvedLoop}`,
@@ -133,8 +180,47 @@ export async function promptOpenAgentPiSession(input: {
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
       const delta = String(event.assistantMessageEvent.delta ?? '');
       assistantText += delta;
-      const displayText = cleanProviderChannelMarkers(assistantText);
-      const displayDelta = cleanProviderChannelMarkers(delta);
+      const inlineThink = inlineThinkFilter.push(delta);
+      if (inlineThink.thinkingStarted) {
+        emitPiRuntimeActivity(emitUiEvent, {
+          id: `pi-turn-${activeLoop || loopCount || 1}-inline-thinking`,
+          runId,
+          threadId,
+          kind: 'thinking',
+          status: 'running',
+          title: 'Model inline thinking stream started',
+          detail: 'Provider is streaming <think> content inside assistant text.'
+        });
+      }
+      if (inlineThink.thinkingChars > 0) {
+        thinkingTextLength += inlineThink.thinkingChars;
+        if (thinkingTextLength - lastThinkingActivityLength >= 256) {
+          lastThinkingActivityLength = thinkingTextLength;
+          emitPiRuntimeActivity(emitUiEvent, {
+            id: `pi-turn-${activeLoop || loopCount || 1}-inline-thinking`,
+            runId,
+            threadId,
+            kind: 'thinking',
+            status: 'running',
+            title: 'Model inline thinking stream in progress',
+            detail: `${thinkingTextLength} inline thinking characters hidden.`
+          });
+        }
+      }
+      if (inlineThink.thinkingEnded) {
+        emitPiRuntimeActivity(emitUiEvent, {
+          id: `pi-turn-${activeLoop || loopCount || 1}-inline-thinking`,
+          runId,
+          threadId,
+          kind: 'thinking',
+          status: 'completed',
+          title: 'Model inline thinking stream completed',
+          detail: `${thinkingTextLength} inline thinking characters hidden.`
+        });
+      }
+      const displayDelta = cleanProviderChannelMarkers(inlineThink.visibleDelta);
+      visibleAssistantText += displayDelta;
+      const displayText = cleanProviderChannelMarkers(visibleAssistantText);
       if (displayDelta) {
         emitUiEvent?.('message.delta', {
           id: `assistant-stream-${runId ?? 'run'}`,
@@ -171,10 +257,15 @@ export async function promptOpenAgentPiSession(input: {
       }
     });
     const imageContents = getImageContents(attachments);
-    const promptPromise = imageContents.length > 0 && typeof session.sendUserMessage === 'function'
-      ? session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents])
-      : session.prompt(prompt);
-    await raceWithAbort(promptPromise, abortSignal, session);
+    const uninstallHttpLogger = installPiHttpLogger({ runId, threadId, providerId, model });
+    try {
+      const promptPromise = imageContents.length > 0 && typeof session.sendUserMessage === 'function'
+        ? session.sendUserMessage([{ type: 'text', text: prompt }, ...imageContents])
+        : session.prompt(prompt);
+      await raceWithAbort(promptPromise, abortSignal, session);
+    } finally {
+      uninstallHttpLogger();
+    }
     emitPiRuntimeActivity(emitUiEvent, {
       id: 'pi-prompt',
       runId,
@@ -200,6 +291,10 @@ export async function promptOpenAgentPiSession(input: {
     throw new Error(`agent session exceeded maxIterations=${maxLoopCount}`);
   }
 
+  if (forcedStopError) {
+    throw new Error(forcedStopError);
+  }
+
   if (!assistantText.trim()) {
     const lastAssistant = session.state?.messages?.filter((message: any) => message.role === 'assistant').at(-1);
     assistantText = coerceAssistantText(lastAssistant?.content);
@@ -210,10 +305,14 @@ export async function promptOpenAgentPiSession(input: {
   }
 
   return {
-    assistantText: cleanProviderChannelMarkers(assistantText).trim(),
+    assistantText: cleanProviderVisibleText(assistantText).trim(),
     loopCount,
     toolResultCount
   };
+}
+
+function cleanProviderVisibleText(value: string) {
+  return cleanThinkTags(cleanProviderChannelMarkers(value));
 }
 
 function cleanProviderChannelMarkers(value: string) {
@@ -224,6 +323,283 @@ function cleanProviderChannelMarkers(value: string) {
     .replace(/<channel\|>/g, '')
     .replace(/<\|channel>/g, '')
     .trimStart();
+}
+
+function cleanThinkTags(value: string) {
+  return value
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/^[\s\S]*?<\/think>/gi, '')
+    .trimStart();
+}
+
+function createInlineThinkStreamFilter() {
+  let inThink = false;
+  let pending = '';
+
+  return {
+    push(delta: string) {
+      const input = pending + delta;
+      pending = '';
+      let index = 0;
+      let visibleDelta = '';
+      let thinkingChars = 0;
+      let thinkingStarted = false;
+      let thinkingEnded = false;
+
+      while (index < input.length) {
+        if (inThink) {
+          const closeIndex = indexOfIgnoreCase(input, '</think>', index);
+          if (closeIndex < 0) {
+            thinkingChars += input.length - index;
+            index = input.length;
+            break;
+          }
+          thinkingChars += closeIndex - index;
+          inThink = false;
+          thinkingEnded = true;
+          index = closeIndex + '</think>'.length;
+          continue;
+        }
+
+        const nextLt = input.indexOf('<', index);
+        if (nextLt < 0) {
+          visibleDelta += input.slice(index);
+          break;
+        }
+
+        visibleDelta += input.slice(index, nextLt);
+        const remaining = input.slice(nextLt);
+        if (startsWithIgnoreCase(remaining, '<think>')) {
+          inThink = true;
+          thinkingStarted = true;
+          index = nextLt + '<think>'.length;
+          continue;
+        }
+        if (startsWithIgnoreCase(remaining, '</think>')) {
+          thinkingEnded = true;
+          index = nextLt + '</think>'.length;
+          continue;
+        }
+        if (isPotentialThinkTagPrefix(remaining)) {
+          pending = remaining;
+          break;
+        }
+
+        visibleDelta += input[nextLt];
+        index = nextLt + 1;
+      }
+
+      return { visibleDelta, thinkingChars, thinkingStarted, thinkingEnded };
+    }
+  };
+}
+
+function startsWithIgnoreCase(value: string, prefix: string) {
+  return value.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase();
+}
+
+function indexOfIgnoreCase(value: string, search: string, fromIndex: number) {
+  return value.toLowerCase().indexOf(search.toLowerCase(), fromIndex);
+}
+
+function isPotentialThinkTagPrefix(value: string) {
+  const lower = value.toLowerCase();
+  return '<think>'.startsWith(lower) || '</think>'.startsWith(lower);
+}
+
+type ToolLoopGuardHit = {
+  toolName: string;
+  arguments: unknown;
+  argumentsJson: string;
+  count: number;
+  sameResultCount: number;
+  resultPreview: string;
+};
+
+const DEFAULT_MAX_CONSECUTIVE_SAME_TOOL_CALLS = 5;
+const DEFAULT_MAX_CONSECUTIVE_SAME_TOOL_RESULTS = 3;
+
+function createToolLoopGuard(options?: {
+  maxConsecutiveSameToolCalls?: number;
+  maxConsecutiveSameToolResults?: number;
+}) {
+  const maxConsecutiveSameToolCalls = normalizeLoopGuardLimit(
+    options?.maxConsecutiveSameToolCalls,
+    DEFAULT_MAX_CONSECUTIVE_SAME_TOOL_CALLS
+  );
+  const maxConsecutiveSameToolResults = normalizeLoopGuardLimit(
+    options?.maxConsecutiveSameToolResults,
+    DEFAULT_MAX_CONSECUTIVE_SAME_TOOL_RESULTS
+  );
+  let lastKey = '';
+  let lastResultKey = '';
+  let count = 0;
+  let sameResultCount = 0;
+
+  return {
+    recordTurn(message: unknown, toolResults: unknown): ToolLoopGuardHit | null {
+      const calls = extractToolCalls(message);
+      if (calls.length === 0) return null;
+      const resultsByCallId = indexToolResultsByCallId(toolResults);
+
+      for (const call of calls) {
+        if (shouldIgnoreToolLoopGuard(call.toolName)) {
+          reset();
+          continue;
+        }
+
+        const argumentsJson = stableJsonStringify(call.arguments);
+        const key = `${call.toolName}:${argumentsJson}`;
+        const resultText = stringifyToolResultContent(resultsByCallId.get(call.id));
+        const resultKey = `${key}:${resultText}`;
+
+        if (key === lastKey) {
+          count += 1;
+        } else {
+          lastKey = key;
+          count = 1;
+        }
+
+        if (resultKey === lastResultKey) {
+          sameResultCount += 1;
+        } else {
+          lastResultKey = resultKey;
+          sameResultCount = resultText ? 1 : 0;
+        }
+
+        if (count >= maxConsecutiveSameToolCalls || (resultText && sameResultCount >= maxConsecutiveSameToolResults)) {
+          return {
+            toolName: call.toolName,
+            arguments: call.arguments,
+            argumentsJson,
+            count,
+            sameResultCount,
+            resultPreview: resultText.slice(0, 1000)
+          };
+        }
+      }
+
+      return null;
+    }
+  };
+
+  function reset() {
+    lastKey = '';
+    lastResultKey = '';
+    count = 0;
+    sameResultCount = 0;
+  }
+}
+
+function normalizeLoopGuardLimit(value: unknown, fallback: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(2, Math.min(20, Math.floor(value)));
+}
+
+function extractToolCalls(message: unknown) {
+  const calls: Array<{ id: string; toolName: string; arguments: unknown }> = [];
+  if (!message || typeof message !== 'object') return calls;
+  const record = message as Record<string, unknown>;
+
+  if (Array.isArray(record.content)) {
+    for (const item of record.content) {
+      if (!item || typeof item !== 'object') continue;
+      const content = item as Record<string, unknown>;
+      if (content.type !== 'toolCall') continue;
+      const toolName = typeof content.name === 'string' ? content.name : '';
+      if (!toolName) continue;
+      calls.push({
+        id: typeof content.id === 'string' ? content.id : '',
+        toolName,
+        arguments: content.arguments
+      });
+    }
+  }
+
+  if (Array.isArray(record.tool_calls)) {
+    for (const item of record.tool_calls) {
+      if (!item || typeof item !== 'object') continue;
+      const call = item as Record<string, unknown>;
+      const fn = call.function;
+      const fnRecord = fn && typeof fn === 'object' ? fn as Record<string, unknown> : {};
+      const toolName = typeof fnRecord.name === 'string' ? fnRecord.name : '';
+      if (!toolName) continue;
+      calls.push({
+        id: typeof call.id === 'string' ? call.id : '',
+        toolName,
+        arguments: parseToolArguments(fnRecord.arguments)
+      });
+    }
+  }
+
+  return calls;
+}
+
+function indexToolResultsByCallId(toolResults: unknown) {
+  const map = new Map<string, unknown>();
+  if (!Array.isArray(toolResults)) return map;
+  for (const result of toolResults) {
+    if (!result || typeof result !== 'object') continue;
+    const record = result as Record<string, unknown>;
+    const id = typeof record.toolCallId === 'string'
+      ? record.toolCallId
+      : typeof record.tool_call_id === 'string'
+        ? record.tool_call_id
+        : '';
+    if (id) map.set(id, record.content);
+  }
+  return map;
+}
+
+function stringifyToolResultContent(content: unknown) {
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string') return String((item as { text: string }).text);
+        if (item && typeof item === 'object' && typeof (item as { content?: unknown }).content === 'string') return String((item as { content: string }).content);
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  return content == null ? '' : stableJsonStringify(content);
+}
+
+function parseToolArguments(value: unknown) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function stableJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(sortJsonValue(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sortJsonValue(item));
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return Object.keys(record).sort().reduce<Record<string, unknown>>((acc, key) => {
+      acc[key] = sortJsonValue(record[key]);
+      return acc;
+    }, {});
+  }
+  return value;
+}
+
+function shouldIgnoreToolLoopGuard(toolName: string) {
+  return toolName === 'current_time';
 }
 
 

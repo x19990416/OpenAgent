@@ -18,6 +18,11 @@ export interface SkillScriptDescriptor {
   timeoutMs?: number;
   network?: boolean;
   writes?: boolean;
+  dependencies?: {
+    pip?: string[];
+    npm?: string[];
+    system?: string[];
+  };
 }
 
 export interface SkillCatalogItem {

@@ -3,6 +3,8 @@ import type { RuntimeAttachment, RuntimeMessage } from '../runtime-types.js';
 export const MAX_RECENT_TRANSCRIPT_MESSAGES = 16;
 export const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
 export const MAX_TEXT_ATTACHMENT_PREVIEW_CHARS = 2_000;
+const INVALID_TEXT_TOOL_CALL_SUMMARY = '[OpenAgent note: a previous assistant message contained an invalid text-form tool invocation. The text was removed from replay context; no tool executed from that text.]';
+const TOOL_ARGUMENT_REPAIR_SUMMARY = '[OpenAgent note: a previous structured tool call had unsafe or invalid arguments. The verbose repair prompt was removed from replay context.]';
 
 export function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: RuntimeMessage[], attachments: RuntimeAttachment[]) {
   const recentTranscript = formatRecentTranscript(messages, userPrompt);
@@ -52,7 +54,7 @@ function formatRecentTranscript(messages: RuntimeMessage[], currentPrompt: strin
   return recentMessages
     .map((message) => {
       const role = message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user';
-      const content = truncateText(message.content.trim(), MAX_TRANSCRIPT_MESSAGE_CHARS);
+      const content = truncateText(sanitizeModelReplayText(message.content).trim(), MAX_TRANSCRIPT_MESSAGE_CHARS);
       const attachments = formatTranscriptAttachments(message.attachments ?? []);
       if (!content && !attachments) return '';
       return `<message role="${role}">\n${content}${attachments ? `\n${attachments}` : ''}\n</message>`;
@@ -81,4 +83,103 @@ function formatTranscriptAttachments(attachments: RuntimeAttachment[]) {
 
 function truncateText(value: string, maxChars: number) {
   return value.length > maxChars ? `${value.slice(0, maxChars)}…` : value;
+}
+
+export function sanitizeModelReplayText(value: string) {
+  let text = String(value || '');
+
+  if (containsTextFormToolInvocation(text)) {
+    return summarizeInvalidToolText(text);
+  }
+
+  if (isToolArgumentRepairPrompt(text)) {
+    return TOOL_ARGUMENT_REPAIR_SUMMARY;
+  }
+
+  text = stripOpenAgentWrappedPrompt(text);
+  text = stripOpenAgentMetadata(text);
+  text = stripInlineThinkTags(text);
+  text = redactProviderMarkerTokens(text);
+  return text;
+}
+
+export function sanitizePiSessionMessages(messages: unknown[]) {
+  return messages.map((message) => sanitizePiSessionMessage(message));
+}
+
+function sanitizePiSessionMessage(message: unknown) {
+  if (!message || typeof message !== 'object') return message;
+  const record = { ...(message as Record<string, unknown>) };
+  record.content = sanitizePiMessageContent(record.content);
+  return record;
+}
+
+function sanitizePiMessageContent(content: unknown): unknown {
+  if (typeof content === 'string') return sanitizeModelReplayText(content);
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const record = { ...(item as Record<string, unknown>) };
+      if (typeof record.text === 'string') record.text = sanitizeModelReplayText(record.text);
+      if (typeof record.content === 'string') record.content = sanitizeModelReplayText(record.content);
+      return record;
+    });
+  }
+  return content;
+}
+
+function containsTextFormToolInvocation(text: string) {
+  if (!text) return false;
+  if (/<\|?tool_call\|?>|<tool_call\|>/.test(text)) return true;
+  return /\bcall:[A-Za-z_$][A-Za-z0-9_$-]*\s*\{/.test(text);
+}
+
+function isToolArgumentRepairPrompt(text: string) {
+  return text.includes('OpenAgent received your structured tool call') &&
+    (text.includes('arguments were not safe to execute') || text.includes('Missing or empty required JSON fields'));
+}
+
+function summarizeInvalidToolText(text: string) {
+  const toolName = /(?:call:)?([A-Za-z_$][A-Za-z0-9_$-]*)\s*\{/s.exec(text)?.[1];
+  return toolName
+    ? `${INVALID_TEXT_TOOL_CALL_SUMMARY} Intended tool name: ${toolName}.`
+    : INVALID_TEXT_TOOL_CALL_SUMMARY;
+}
+
+function stripOpenAgentWrappedPrompt(text: string) {
+  if (!text.includes('<openagent-system-instructions>') && !text.includes('<user-prompt>')) {
+    return text;
+  }
+
+  const userPrompt = extractXmlLikeBlock(text, 'user-prompt');
+  if (userPrompt) return `Previous user prompt: ${userPrompt.trim()}`;
+
+  return text
+    .replace(/<openagent-system-instructions>[\s\S]*?<\/openagent-system-instructions>/g, '[OpenAgent system instructions omitted from replay]')
+    .replace(/<openagent-session-context>[\s\S]*?<\/openagent-session-context>/g, '[OpenAgent prior session context omitted from replay]')
+    .replace(/<openagent-current-attachments>[\s\S]*?<\/openagent-current-attachments>/g, '[OpenAgent attachment context omitted from replay]');
+}
+
+function stripOpenAgentMetadata(text: string) {
+  return text.replace(/<!--\s*openagent:metadata[\s\S]*?-->/g, '').trim();
+}
+
+function stripInlineThinkTags(text: string) {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/^[\s\S]*?<\/think>/gi, '')
+    .trim();
+}
+
+function redactProviderMarkerTokens(text: string) {
+  return text
+    .replace(/<\|"?\|>/g, '[provider-marker]')
+    .replace(/<\|/g, '[provider-marker-start]')
+    .replace(/\|>/g, '[provider-marker-end]');
+}
+
+function extractXmlLikeBlock(text: string, tag: string) {
+  const match = new RegExp(`<${tag}>\\n?([\\s\\S]*?)\\n?<\\/${tag}>`).exec(text);
+  return match?.[1] ?? '';
 }

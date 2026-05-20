@@ -311,6 +311,10 @@ export class ToolPolicy {
       return null;
     }
 
+    if (planContext.selectedSkillName && planContext.selectedSkillName !== 'skill-creator' && PI_CODING_TOOLS.has(tool.name)) {
+      return null;
+    }
+
     if (planContext.selectedSkillName === 'skill-creator' && FILE_WRITE_TOOLS.has(tool.name)) {
       return null;
     }
@@ -461,10 +465,10 @@ function matchesAllowedTool(toolName: string, allowedTools: string[]) {
 }
 
 function decidePiCodingAgent(args: unknown, planContext?: PlanExecutionContext | null): ToolPolicyDecision {
-  if (planContext?.selectedSkillName && planContext.selectedSkillHasScripts) {
+  if (planContext?.selectedSkillName === 'skill-creator') {
     return {
       kind: 'deny',
-      reason: `Selected skill ${planContext.selectedSkillName} declares scripts; use skill_load/skill_resource/skill_script instead of delegating to pi_coding_agent.`
+      reason: 'Selected skill skill-creator is the governed skill authoring path; use skill_load/skill_resource/skill_script and write_file instead of delegating to pi_coding_agent.'
     };
   }
 

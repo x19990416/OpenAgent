@@ -3873,6 +3873,8 @@ function AppConfigPanel() {
 
   const allowTextToolCallRecovery = settings?.runtime.allowTextToolCallRecovery ?? true;
   const autoApproveRuntimeApprovals = settings?.runtime.autoApproveRuntimeApprovals ?? false;
+  const maxConsecutiveSameToolCalls = settings?.runtime.maxConsecutiveSameToolCalls ?? 5;
+  const maxConsecutiveSameToolResults = settings?.runtime.maxConsecutiveSameToolResults ?? 3;
 
   const handleAutoApproveToggle = () => {
     if (autoApproveRuntimeApprovals) {
@@ -3885,6 +3887,12 @@ function AppConfigPanel() {
   const confirmEnableAutoApprove = () => {
     setShowAutoApproveRiskDialog(false);
     void updateRuntimeSetting({ autoApproveRuntimeApprovals: true });
+  };
+
+  const updateLoopGuardLimit = (key: 'maxConsecutiveSameToolCalls' | 'maxConsecutiveSameToolResults', value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    void updateRuntimeSetting({ [key]: Math.max(2, Math.min(20, Math.floor(parsed))) });
   };
 
   return (
@@ -3938,6 +3946,45 @@ function AppConfigPanel() {
             >
               <span className="settings-switch-knob" />
             </button>
+          </div>
+        </div>
+
+        <div className="settings-card-row">
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <div className="settings-row-title">Agent loop 重复工具调用保护</div>
+              <div className="settings-row-description">
+                当模型连续调用完全相同的结构化工具时停止当前 run，避免反复消耗 token。阈值范围 2-20；同结果阈值通常应小于或等于同调用阈值。
+              </div>
+            </div>
+            <div className="settings-model-input-row">
+              <label className="settings-form-field">
+                <span className="settings-form-label">同工具+参数</span>
+                <input
+                  className="settings-text-input"
+                  type="number"
+                  min={2}
+                  max={20}
+                  step={1}
+                  value={maxConsecutiveSameToolCalls}
+                  disabled={loading || saving || !settings}
+                  onChange={(event) => updateLoopGuardLimit('maxConsecutiveSameToolCalls', event.target.value)}
+                />
+              </label>
+              <label className="settings-form-field">
+                <span className="settings-form-label">同工具+参数+结果</span>
+                <input
+                  className="settings-text-input"
+                  type="number"
+                  min={2}
+                  max={20}
+                  step={1}
+                  value={maxConsecutiveSameToolResults}
+                  disabled={loading || saving || !settings}
+                  onChange={(event) => updateLoopGuardLimit('maxConsecutiveSameToolResults', event.target.value)}
+                />
+              </label>
+            </div>
           </div>
         </div>
 

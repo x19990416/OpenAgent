@@ -213,7 +213,10 @@ Use this skill when:
       "risk": "read",
       "timeoutMs": 30000,
       "network": false,
-      "writes": false
+      "writes": false,
+      "dependencies": {
+        "pip": ["openpyxl"]
+      }
     }
   ],
   "resources": [
@@ -353,9 +356,21 @@ Resolver 可以使用：
 - 如果需要详细说明，agent 应先调用 `skill_load`。
 - 如果需要模板、参考或示例，agent 应调用 `skill_resource`。
 - 如果声明脚本能完成确定性计算/转换，agent 应调用 `skill_script`，并把用户输入作为 `args` 传入。
-- selected skill 声明脚本时，OpenAgent policy 会允许 skill tools 穿过当前 Plan step 的 `allowedTools`，同时阻止把该任务绕到 `pi_coding_agent` 重新实现。
-- 只有当没有相关脚本，或用户明确要求做 selected skill 之外的代码/工程修改时，才考虑其他执行型工具。
-- 如果用户表达的是“创建/新建/生成/封装一个技能/skill”，但没有在 composer 中显式选择 `skill-creator`，Runtime 会把 `skill-creator` 推断为本轮 primary execution path，并注入 selected-skill routing rule；后续应优先走 `skill_load`、`skill_resource`、`skill_script` 和必要的 `write_file`，而不是先委托 `pi_coding_agent`。
+- selected skill 声明脚本时，OpenAgent policy 会允许 skill tools 穿过当前 Plan step 的 `allowedTools`；这表示“优先 skill”，不是“禁止所有其他执行工具”。
+- 普通业务 skill 不应一刀切禁止 `pi_coding_agent`：当声明脚本缺依赖、运行环境不满足、脚本失败、需要诊断/修复 skill 包，或用户明确要求做 selected skill 之外的代码/工程修改时，可以使用 `pi_coding_agent` 或其他执行型工具；所有 shell、安装和写入仍必须走 OpenAgent policy / approval。
+- `pi_coding_agent` 不能用于绕过一个已经可用且匹配的声明脚本去重新实现同一任务；如果改用它，必须能说明原因（例如真实 blocker、依赖/环境修复、脚本不覆盖该场景）。
+- `skill-creator` 是特殊的 authoring/scaffolding skill：当用户创建/新建/生成/封装 skill 时，Runtime 会把 `skill-creator` 视为受控主路径，并禁止委托 `pi_coding_agent` 绕过它的模板、元数据、安全和目录规则；后续应优先走 `skill_load`、`skill_resource`、`skill_script` 和必要的 `write_file`。
+
+### 9.4 Skill 运行环境与依赖声明
+
+Skill authoring 阶段必须把运行环境要求写成结构化元数据，避免执行时才通过脚本报错或让用户手工猜测安装命令：
+
+- Python / Node / shell 脚本必须在 `skill.json.scripts[]` 中声明 `runtime`、`risk`、`network`、`writes`、`timeoutMs`。
+- 如果脚本依赖第三方包，应声明 `dependencies`，例如 `dependencies.pip: ["pypdf"]` 或 `dependencies.npm: ["some-package"]`。
+- `skill-creator` 创建带脚本的 skill 时，应提示作者补齐依赖声明，必要时生成 `requirements.txt`、`package.json` 或脱敏的 `references/runtime.md`。
+- OpenAgent runtime 执行 `skill_script` 前应先做 preflight：解析解释器、检查依赖、记录环境信息；缺依赖时生成受控审批，而不是让脚本静默安装。
+- 依赖安装不得绕过审批；优先安装到 skill-local venv / workspace-local 环境，避免污染系统 Python 或全局 Node 环境。
+- `.env` 只用于用户私有配置、token、账号密码、endpoint URL 等，不用于声明公共依赖；`.env` 的变量说明可以写入脱敏的 `references/config.md`。
 
 ## 10. Progressive Disclosure 工具
 
@@ -540,6 +555,11 @@ export interface SkillScriptDescriptor {
   timeoutMs: number;
   network: boolean;
   writes: boolean;
+  dependencies?: {
+    pip?: string[];
+    npm?: string[];
+    system?: string[];
+  };
 }
 
 export interface SkillResolutionInput {
