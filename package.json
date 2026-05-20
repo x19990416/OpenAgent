@@ -25,9 +25,10 @@
     "smoke:plugin-skills": "node scripts/smoke-plugin-skills.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.75.3",
-    "@earendil-works/pi-ai": "0.75.3",
-    "@earendil-works/pi-coding-agent": "0.75.3"
+    "@mariozechner/pi-agent-core": "0.64.0",
+    "@mariozechner/pi-ai": "0.64.0",
+    "@mariozechner/pi-coding-agent": "0.64.0",
+    "mermaid": "^11.15.0"
   },
   "devDependencies": {
     "@types/node": "latest",
@@ -39,7 +40,6 @@
     "electron": "latest",
     "electron-builder": "latest",
     "lucide-react": "latest",
-    "mermaid": "^11.15.0",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "latest",

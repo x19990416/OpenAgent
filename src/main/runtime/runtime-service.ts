@@ -429,23 +429,8 @@ export class RuntimeService {
     const now = new Date().toISOString();
     const attachments = this.materializePromptAttachments(payload.attachments ?? [], runId);
     this.syncPluginSkills();
+    const selectedSkill = this.resolveSelectedSkill(payload.skillId ?? null);
     const thread = this.getActiveThread();
-    const explicitSelectedSkill = this.resolveSelectedSkill(payload.skillId ?? null);
-    const inferredSelectedSkill = explicitSelectedSkill ? null : this.skillService.inferSelectedSkill({ prompt, attachments });
-    const selectedSkill = explicitSelectedSkill ?? inferredSelectedSkill;
-    if (inferredSelectedSkill) {
-      appendRuntimeInfoLog({
-        scope: 'context',
-        message: 'implicit selected skill inferred before planning',
-        data: {
-          runId,
-          threadId: thread.threadId,
-          skillName: inferredSelectedSkill.name,
-          skillId: inferredSelectedSkill.id,
-          reason: 'skill authoring intent'
-        }
-      });
-    }
     const controller = this.runState.start({
       runId,
       threadId: thread.threadId,
@@ -483,7 +468,6 @@ export class RuntimeService {
           agentId: this.options.agentId,
           prompt,
           intent: planningIntent,
-          selectedSkill: selectedSkill ? { name: selectedSkill.name, hasScripts: selectedSkill.scripts.length > 0 } : null,
           now
         })
       : null;
@@ -1712,7 +1696,7 @@ function toPlanExecutionContext(plan: AgentPlan | null, selectedSkill?: SkillCat
     planId: plan.id,
     stepId: currentStep.id,
     mode: plan.mode,
-    allowedTools: mergeAllowedToolsForSelectedSkill(currentStep.allowedTools, selectedSkill),
+    allowedTools: currentStep.allowedTools,
     riskLevel: currentStep.riskLevel,
     selectedSkillName: selectedSkill?.name,
     selectedSkillHasScripts: Boolean(selectedSkill?.scripts.length)
@@ -1729,16 +1713,6 @@ function toSelectedSkillExecutionContext(selectedSkill?: SkillCatalogItem | null
     selectedSkillName: selectedSkill.name,
     selectedSkillHasScripts: selectedSkill.scripts.length > 0
   };
-}
-
-function mergeAllowedToolsForSelectedSkill(allowedTools?: string[], selectedSkill?: SkillCatalogItem | null) {
-  if (!selectedSkill) return allowedTools;
-  const next = new Set((allowedTools ?? []).filter((tool) => !(selectedSkill.scripts.length > 0 && tool === 'pi_coding_agent')));
-  next.add('read-only');
-  next.add('skill-tools');
-  next.add('shell_exec');
-  if (selectedSkill.name === 'skill-creator') next.add('write_file');
-  return Array.from(next);
 }
 
 function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {

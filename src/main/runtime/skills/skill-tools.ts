@@ -373,7 +373,6 @@ function normalizeSkillScriptArg(value: string) {
 }
 
 function enforceSkillAllowedTool(skill: SkillCatalogItem, toolName: string) {
-  if (toolName === 'skill_load') return null;
   if (skill.allowedTools.length === 0) return null;
   if (skill.allowedTools.includes(toolName)) return null;
   return {

@@ -6,7 +6,7 @@
 
 OpenClaw 的关键做法不是把 `pi` 当成外部 CLI 子进程来调用，而是把 Pi SDK 嵌入到应用运行时中：
 
-- 使用 `@earendil-works/pi-coding-agent` 提供的 `createAgentSession()` 创建 `AgentSession`。
+- 使用 `@mariozechner/pi-coding-agent` 提供的 `createAgentSession()` 创建 `AgentSession`。
 - 使用 `SessionManager` 管理 JSONL transcript、历史、分支和压缩。
 - 由应用自己的 Gateway / Runtime 负责：会话路由、工具注入、权限策略、事件转发、UI 状态同步。
 - Pi 负责核心 agent loop：LLM 调用、tool call、streaming、turn 生命周期。
@@ -226,9 +226,8 @@ call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 
 处理规则：
 
-- 检测到文本形式工具调用后，runtime 先创建一个隔离的短上下文 repair session，只放协议修复 system、单条 repair user message 和当前 OpenAgent tools，要求模型把同一操作重发为真实结构化 tool call；repair prompt 只给目标 toolName/args，不混入自然语言参数解释或坏样本。若 repair session 产生结构化 tool result，再把结果摘要交回主 session 继续原任务。
-- 文本工具调用本地解析执行只允许作为兼容兜底，不能绕过 ToolPolicy、审批、审计、timeout、AbortSignal 或 UI event。
-- 默认允许对已注册 OpenAgent tool 做受控兜底恢复，以兼容缺少结构化 tool calling 的模型；如需强制禁用，可设置 `OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY=0`。恢复失败或被 policy 拒绝时，仍应记录 `unparsed_tool_call` 并失败返回。
+- 文本工具调用恢复只允许作为兼容兜底，不能绕过 ToolPolicy、审批、审计、timeout、AbortSignal 或 UI event。
+- 默认允许对已注册 OpenAgent tool 做一次受控恢复，以兼容缺少结构化 tool calling 的模型；如需强制禁用，可设置 `OPENAGENT_ALLOW_TEXT_TOOL_RECOVERY=0`。恢复失败或被 policy 拒绝时，仍应记录 `unparsed_tool_call` 并失败返回。
 - 如果最终 assistant 文本本身像伪工具调用，runtime 必须把本轮标记为失败或阻塞，而不是把伪语法展示成正常回答；即使此前已经有其他结构化 tool result（例如先成功 `write_file`，最后又吐出伪 `shell_exec`）也不能放行。
 - run log 需要记录 `unparsed_tool_call` 诊断信息，包括 `runId`、`threadId`、模型、文本摘要和是否存在真实 tool results。
 - UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。

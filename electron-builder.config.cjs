@@ -29,7 +29,6 @@ module.exports = {
   },
   mac: {
     category: 'public.app-category.developer-tools',
-    icon: 'build/icon.icns',
     target: [
       {
         target: 'dmg',
@@ -42,7 +41,6 @@ module.exports = {
     ],
   },
   win: {
-    icon: 'build/icon.ico',
     target: [
       {
         target: 'nsis',

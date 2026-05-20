@@ -15,11 +15,6 @@ export interface LlmPlanDraft {
   approvalReason?: string;
 }
 
-export interface LlmPlanSelectedSkillContext {
-  name: string;
-  hasScripts: boolean;
-}
-
 export interface LlmPlanningIntentDecision {
   shouldPlan: boolean;
   approvalRequired?: boolean;
@@ -38,19 +33,10 @@ const ALLOWED_TOOL_HINTS = [
   'knowledge_agent',
   'knowledge',
   'knowledge-write',
-  'skill',
-  'skill-tools',
   'tool-executor',
   'message',
   'runtime'
 ];
-
-function getAllowedToolHints(input: { selectedSkill?: LlmPlanSelectedSkillContext | null }) {
-  if (input.selectedSkill?.hasScripts) {
-    return ALLOWED_TOOL_HINTS.filter((tool) => tool !== 'pi_coding_agent');
-  }
-  return ALLOWED_TOOL_HINTS;
-}
 
 export class PlanLlmGenerator {
   async classifyIntent(input: { prompt: string; fallbackRiskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanningIntentDecision | null> {
@@ -80,35 +66,18 @@ export class PlanLlmGenerator {
     };
   }
 
-  async generate(input: { prompt: string; riskLevel: 'low' | 'medium' | 'high'; selectedSkill?: LlmPlanSelectedSkillContext | null }): Promise<LlmPlanDraft | null> {
+  async generate(input: { prompt: string; riskLevel: 'low' | 'medium' | 'high' }): Promise<LlmPlanDraft | null> {
     const schema = '{"summary":"string","approvalReason":"string","steps":[{"title":"string","description":"string","allowedTools":["read-only"],"riskLevel":"low|medium|high","requiresApproval":false}]}';
-    const allowedToolHints = getAllowedToolHints(input);
     const text = await generateText('generate-plan', [
       'You create concise execution plans for OpenAgent Plan Mode.',
       'Return strict JSON only. No Markdown. No code fence.',
       'The plan should contain 2-6 business execution steps for the user goal, not generic runtime plumbing.',
       'Each step must be actionable, observable, and short.',
       'approvalReason must be one short natural sentence explaining why user confirmation is needed before execution.',
-      `Use only these allowedTools hints: ${allowedToolHints.join(', ')}`,
-      ...(input.selectedSkill
-        ? [
-            `Selected skill context: ${input.selectedSkill.name}${input.selectedSkill.hasScripts ? ' declares scripts/resources and is the primary execution path.' : ' is the primary execution path.'}`,
-            'For selected-skill runs, include skill-tools on execution steps and prefer skill_load / skill_resource / skill_script plus direct write_file when needed.',
-            ...(input.selectedSkill.hasScripts
-              ? [
-                  'Hard constraint: because the selected skill declares scripts/resources, do not generate any step title, description, or allowedTools containing pi_coding_agent.',
-                  'Use skill-tools/write_file/shell_exec as appropriate instead of pi_coding_agent.'
-                ]
-              : [
-                  'Do not use pi_coding_agent for selected-skill execution unless the selected skill cannot satisfy the step.'
-                ])
-          ]
-        : []),
+      `Use only these allowedTools hints: ${ALLOWED_TOOL_HINTS.join(', ')}`,
       'For simple text file creation or text file writing, prefer write_file or file-write on the relevant step.',
       'For tasks that require writing and running a program or script to compute, transform data, generate files, or call local CLIs, include shell_exec or shell-exec on the relevant step.',
-      ...(input.selectedSkill?.hasScripts
-        ? []
-        : ['For coding, scripting, API fetching, complex artifact generation, or iterative fix-and-run work, use the exact tool hint pi_coding_agent on the relevant step.']),
+      'For coding, scripting, API fetching, complex artifact generation, or iterative fix-and-run work, use the exact tool hint pi_coding_agent on the relevant step.',
       'For broader code implementation or mixed tool work, include tool-executor on the relevant step.',
       'For external data fetching, live market/news/API data, or HTTP request tasks, include shell_exec or tool-executor because the agent may need to run a small script or CLI after user/tool approval.',
       'For read-only investigation, use read-only.',

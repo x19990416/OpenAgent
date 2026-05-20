@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -430,93 +430,6 @@ function formatProviderName(providerId: string) {
     .join(' ');
 }
 
-interface OpenAgentLogFileInfo {
-  id: string;
-  name: string;
-  path: string;
-  size: number;
-  modifiedAt: string;
-}
-
-function listOpenAgentLogFiles(): { ok: true; root: string; files: OpenAgentLogFileInfo[] } | { ok: false; root: string; error: string; files: [] } {
-  const root = getOpenAgentPath('logs');
-
-  try {
-    mkdirSync(root, { recursive: true });
-    const candidates = collectOpenAgentLogFiles(root);
-    return {
-      ok: true,
-      root,
-      files: candidates.sort((left, right) => new Date(right.modifiedAt).getTime() - new Date(left.modifiedAt).getTime())
-    };
-  } catch (error) {
-    return { ok: false, root, files: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-function readOpenAgentLogFile(payload: { id?: string; maxBytes?: number }): { ok: true; file: OpenAgentLogFileInfo; content: string; truncated: boolean } | { ok: false; error: string } {
-  const logFile = resolveOpenAgentLogFile(String(payload?.id || ''));
-  if (!logFile) return { ok: false, error: 'Log file not found' };
-
-  const maxBytes = Math.max(16 * 1024, Math.min(Number(payload?.maxBytes || 256 * 1024), 1024 * 1024));
-  const { content, truncated } = readUtf8Tail(logFile.path, maxBytes);
-  return { ok: true, file: logFile, content, truncated };
-}
-
-function resolveOpenAgentLogFile(id: string) {
-  if (!id) return null;
-  return collectOpenAgentLogFiles(getOpenAgentPath('logs')).find((file) => file.id === id) ?? null;
-}
-
-function collectOpenAgentLogFiles(root: string): OpenAgentLogFileInfo[] {
-  if (!existsSync(root)) return [];
-
-  const files: OpenAgentLogFileInfo[] = [];
-  const walk = (directory: string, depth: number) => {
-    if (depth > 2) return;
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath, depth + 1);
-        continue;
-      }
-      if (!entry.isFile() || !isSupportedLogFile(entry.name)) continue;
-
-      const stats = statSync(fullPath);
-      const relativePath = path.relative(root, fullPath);
-      files.push({
-        id: relativePath.split(path.sep).join('/'),
-        name: relativePath.split(path.sep).join('/'),
-        path: fullPath,
-        size: stats.size,
-        modifiedAt: stats.mtime.toISOString()
-      });
-    }
-  };
-
-  walk(root, 0);
-  return files;
-}
-
-function isSupportedLogFile(fileName: string) {
-  return /\.(log|jsonl|txt)$/i.test(fileName);
-}
-
-function readUtf8Tail(filePath: string, maxBytes: number) {
-  const stats = statSync(filePath);
-  const bytesToRead = Math.min(stats.size, maxBytes);
-  if (bytesToRead <= 0) return { content: '', truncated: false };
-
-  const fd = openSync(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(bytesToRead);
-    readSync(fd, buffer, 0, bytesToRead, Math.max(0, stats.size - bytesToRead));
-    return { content: buffer.toString('utf8'), truncated: stats.size > maxBytes };
-  } finally {
-    closeSync(fd);
-  }
-}
-
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -812,14 +725,6 @@ function registerIpc() {
       configPath: getOpenAgentAppSettingsPath(),
       autoApproved
     };
-  });
-  ipcMain.handle('logs:list', () => listOpenAgentLogFiles());
-  ipcMain.handle('logs:read', (_event, payload) => readOpenAgentLogFile(payload ?? {}));
-  ipcMain.handle('logs:open-file', async (_event, payload) => {
-    const logFile = resolveOpenAgentLogFile(String(payload?.id || ''));
-    if (!logFile) return { ok: false, error: 'Log file not found' };
-    const error = await shell.openPath(logFile.path);
-    return error ? { ok: false, error } : { ok: true };
   });
   ipcMain.handle('skills:list', () => runtimeService.listSkills());
   ipcMain.handle('skills:refresh', () => runtimeService.refreshSkills());

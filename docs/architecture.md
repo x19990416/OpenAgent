@@ -147,7 +147,7 @@ Renderer submitPrompt()
 职责：
 
 - 基于 OpenAgent 的 `AgentRuntimeAdapter` 契约适配 Pi。
-- 使用 `@earendil-works/pi-coding-agent` 的 `createAgentSession()` 创建 AgentSession。
+- 使用 `@mariozechner/pi-coding-agent` 的 `createAgentSession()` 创建 AgentSession。
 - 使用 Pi 的 `SessionManager`、`SettingsManager`、`DefaultResourceLoader`。
 - 使用 Pi 的 `ModelRegistry` / `AuthStorage` 解析模型和认证。
 - 将 OpenAgent tools 转成 Pi custom tools。

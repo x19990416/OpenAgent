@@ -53,7 +53,6 @@ import type {
   LlmProviderKindDefinition,
   LlmProviderKind,
   OpenAgentAppSettings,
-  OpenAgentLogFileInfo,
   PluginRegistrySnapshot,
   SkillCatalogItem,
   UpsertLlmProviderInput,
@@ -107,8 +106,7 @@ const navItems: Array<{
   { key: 'config', label: '设置', icon: Settings2 },
   { key: 'plugins', label: '插件', icon: Puzzle },
   { key: 'skills', label: 'Skills', icon: WandSparkles },
-  { key: 'knowledge', label: '知识库', icon: Database },
-  { key: 'logs', label: '日志', icon: FileText }
+  { key: 'knowledge', label: '知识库', icon: Database }
 ];
 
 const visibleSettingsTabs = new Set<SettingsTab>(navItems.map((item) => item.key));
@@ -120,7 +118,6 @@ const pageTitles: Record<SettingsTab, string> = {
   plugins: '插件',
   skills: 'Skills',
   knowledge: '知识库',
-  logs: '日志',
   config: '配置',
   personalization: '个性化',
   account: '账户',
@@ -194,7 +191,6 @@ const pageRows: Record<SettingsTab, SettingRow[]> = {
   plugins: [],
   skills: [],
   knowledge: [],
-  logs: [],
   config: [
     { title: '工作区默认行为', description: '设置启动后的默认动作', kind: 'select', value: '恢复上次状态' },
     { title: '模型切换提示', description: '是否显示模型切换时的提示信息', kind: 'toggle', value: true },
@@ -3814,172 +3810,6 @@ function PluginPanel() {
   );
 }
 
-
-function formatLogSize(bytes: number) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
-}
-
-function LogsPanel() {
-  const [root, setRoot] = useState('');
-  const [files, setFiles] = useState<OpenAgentLogFileInfo[]>([]);
-  const [selectedId, setSelectedId] = useState('');
-  const [content, setContent] = useState('');
-  const [truncated, setTruncated] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [reading, setReading] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const selectedFile = useMemo(() => files.find((file) => file.id === selectedId) ?? null, [files, selectedId]);
-
-  const readLog = async (id: string) => {
-    const desktopApi = window.desktopApi;
-    if (!desktopApi?.readLogFile) {
-      setFeedback({ type: 'error', text: '当前环境未挂载日志读取接口，请先重启桌面应用。' });
-      return;
-    }
-
-    try {
-      setReading(true);
-      const result = await desktopApi.readLogFile({ id, maxBytes: 256 * 1024 });
-      if (!result.ok) {
-        setFeedback({ type: 'error', text: `日志读取失败：${result.error ?? '未知错误'}` });
-        return;
-      }
-      setContent(result.content ?? '');
-      setTruncated(Boolean(result.truncated));
-      setFeedback(null);
-    } catch (error) {
-      setFeedback({ type: 'error', text: `日志读取失败：${error instanceof Error ? error.message : '未知错误'}` });
-    } finally {
-      setReading(false);
-    }
-  };
-
-  const loadLogs = async (preferredId?: string) => {
-    const desktopApi = window.desktopApi;
-    if (!desktopApi?.listLogFiles) {
-      setFeedback({ type: 'error', text: '当前环境未挂载日志列表接口，请先重启桌面应用。' });
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const result = await desktopApi.listLogFiles();
-      setRoot(result.root ?? '');
-      if (!result.ok) {
-        setFeedback({ type: 'error', text: `日志列表读取失败：${result.error ?? '未知错误'}` });
-        return;
-      }
-      setFiles(result.files);
-      const nextSelectedId = preferredId || selectedId || result.files[0]?.id || '';
-      setSelectedId(nextSelectedId);
-      if (nextSelectedId) {
-        await readLog(nextSelectedId);
-      } else {
-        setContent('');
-        setTruncated(false);
-      }
-      setFeedback(null);
-    } catch (error) {
-      setFeedback({ type: 'error', text: `日志列表读取失败：${error instanceof Error ? error.message : '未知错误'}` });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadLogs();
-  }, []);
-
-  const handleSelectLog = (id: string) => {
-    setSelectedId(id);
-    void readLog(id);
-  };
-
-  const handleOpenLogFile = async () => {
-    if (!selectedId) return;
-    const result = await window.desktopApi?.openLogFile?.({ id: selectedId });
-    if (result && !result.ok) {
-      setFeedback({ type: 'error', text: `打开日志失败：${result.error ?? '未知错误'}` });
-    }
-  };
-
-  const handleCopy = async () => {
-    if (!content) return;
-    try {
-      await navigator.clipboard.writeText(content);
-      setFeedback({ type: 'success', text: '当前日志内容已复制。' });
-    } catch (error) {
-      setFeedback({ type: 'error', text: `复制失败：${error instanceof Error ? error.message : '未知错误'}` });
-    }
-  };
-
-  return (
-    <div className="settings-stack settings-log-workspace">
-      <section className="settings-card settings-log-card">
-        <div className="settings-card-header">
-          <div>
-            <div className="settings-section-title">运行日志</div>
-            <div className="settings-section-description">查看当前本机 `~/.openagent/logs` 下的 runtime、LLM、Skill 和插件日志。</div>
-          </div>
-          <div className="inline-actions">
-            <button className="toolbar-button" type="button" onClick={() => void loadLogs(selectedId)} disabled={loading || reading}>
-              <RefreshCw size={14} />
-              刷新
-            </button>
-            <button className="toolbar-button" type="button" onClick={handleOpenLogFile} disabled={!selectedId}>
-              <FolderOpen size={14} />
-              打开文件
-            </button>
-          </div>
-        </div>
-        <div className="settings-log-root">日志目录：{root || '未读取'}</div>
-        <div className="settings-log-layout">
-          <aside className="settings-log-list" aria-label="日志文件列表">
-            {files.length === 0 ? (
-              <div className="settings-log-empty">{loading ? '正在加载日志…' : '暂无日志文件'}</div>
-            ) : (
-              files.map((file) => (
-                <button
-                  key={file.id}
-                  type="button"
-                  className={`settings-log-item ${file.id === selectedId ? 'active' : ''}`}
-                  onClick={() => handleSelectLog(file.id)}
-                >
-                  <span className="settings-log-item-name">{file.name}</span>
-                  <span className="settings-log-item-meta">
-                    {formatLogSize(file.size)} · {new Date(file.modifiedAt).toLocaleString()}
-                  </span>
-                </button>
-              ))
-            )}
-          </aside>
-          <section className="settings-log-viewer">
-            <div className="settings-log-viewer-header">
-              <div>
-                <div className="settings-log-viewer-title">{selectedFile?.name ?? '未选择日志'}</div>
-                <div className="settings-log-viewer-meta">
-                  {selectedFile ? `${formatLogSize(selectedFile.size)} · ${new Date(selectedFile.modifiedAt).toLocaleString()}` : '选择左侧文件查看内容'}
-                </div>
-              </div>
-              <button className="toolbar-button" type="button" onClick={handleCopy} disabled={!content}>
-                <Copy size={14} />
-                复制
-              </button>
-            </div>
-            {truncated ? <div className="settings-log-truncated">文件较大，仅显示末尾 256 KB。</div> : null}
-            <pre className="settings-log-content">{reading ? '正在读取日志…' : content || '暂无内容'}</pre>
-          </section>
-        </div>
-      </section>
-      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
-    </div>
-  );
-}
-
 function AppConfigPanel() {
   const [settings, setSettings] = useState<OpenAgentAppSettings | null>(null);
   const [configPath, setConfigPath] = useState('');
@@ -4205,8 +4035,6 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
             ) : currentTab === 'config' ? (
               <AppConfigPanel />
-            ) : currentTab === 'logs' ? (
-              <LogsPanel />
             ) : currentTab === 'plugins' ? (
               <PluginPanel />
             ) : currentTab === 'skills' ? (

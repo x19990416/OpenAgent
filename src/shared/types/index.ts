@@ -119,29 +119,6 @@ export interface OpenAgentAppSettingsResult {
   error?: string;
 }
 
-export interface OpenAgentLogFileInfo {
-  id: string;
-  name: string;
-  path: string;
-  size: number;
-  modifiedAt: string;
-}
-
-export interface OpenAgentLogListResult {
-  ok: boolean;
-  root: string;
-  files: OpenAgentLogFileInfo[];
-  error?: string;
-}
-
-export interface OpenAgentLogReadResult {
-  ok: boolean;
-  file?: OpenAgentLogFileInfo;
-  content?: string;
-  truncated?: boolean;
-  error?: string;
-}
-
 export interface KnowledgeResult {
   id: string;
   title: string;
@@ -475,9 +452,6 @@ export interface DesktopApi {
   setActiveLlmProvider?: (payload: any) => Promise<any>;
   getAppSettings?: () => Promise<OpenAgentAppSettingsResult>;
   updateAppSettings?: (payload: Partial<{ runtime: Partial<OpenAgentAppSettings['runtime']> }>) => Promise<OpenAgentAppSettingsResult>;
-  listLogFiles?: () => Promise<OpenAgentLogListResult>;
-  readLogFile?: (payload: { id: string; maxBytes?: number }) => Promise<OpenAgentLogReadResult>;
-  openLogFile?: (payload: { id: string }) => Promise<{ ok: boolean; error?: string }>;
   listSkills?: () => Promise<SkillCatalogItem[]>;
   getSkillCatalog?: () => Promise<SkillCatalogItem[]>;
   refreshSkills?: () => Promise<SkillCatalogItem[]>;
