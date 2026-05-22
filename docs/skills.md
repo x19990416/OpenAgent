@@ -355,20 +355,23 @@ Resolver 可以使用：
 - prompt 中会注入该 Skill 的声明脚本和资源清单，但不会全量注入所有文件内容。
 - 如果需要详细说明，agent 应先调用 `skill_load`。
 - 如果需要模板、参考或示例，agent 应调用 `skill_resource`。
-- 如果声明脚本能完成确定性计算/转换，agent 应调用 `skill_script`，并把用户输入作为 `args` 传入。
+- 如果声明脚本能完成确定性计算/转换，agent 应调用 `skill_script`，并把用户输入作为 `args` 传入；只要 `skill.json.scripts[]` 声明了脚本，runtime 可将 `skill_script` 视为隐式可用，避免旧包漏写 `allowedTools` 后退化到文本/子 agent。
 - selected skill 声明脚本时，OpenAgent policy 会允许 skill tools 穿过当前 Plan step 的 `allowedTools`；这表示“优先 skill”，不是“禁止所有其他执行工具”。
 - 普通业务 skill 不应一刀切禁止 `pi_coding_agent`：当声明脚本缺依赖、运行环境不满足、脚本失败、需要诊断/修复 skill 包，或用户明确要求做 selected skill 之外的代码/工程修改时，可以使用 `pi_coding_agent` 或其他执行型工具；所有 shell、安装和写入仍必须走 OpenAgent policy / approval。
 - `pi_coding_agent` 不能用于绕过一个已经可用且匹配的声明脚本去重新实现同一任务；如果改用它，必须能说明原因（例如真实 blocker、依赖/环境修复、脚本不覆盖该场景）。
 - `skill-creator` 是特殊的 authoring/scaffolding skill：当用户创建/新建/生成/封装 skill 时，Runtime 会把 `skill-creator` 视为受控主路径，并禁止委托 `pi_coding_agent` 绕过它的模板、元数据、安全和目录规则；后续应优先走 `skill_load`、`skill_resource`、`skill_script` 和必要的 `write_file`。
+- `skill-creator` 的第一步脚手架适合走轻量 Tool Invocation 快路径：当 selected skill 已确定为 `skill-creator` 且 declared script 为 `scripts/init_skill.mjs` 时，runtime 应固定 `skillName` / `scriptPath`，只让模型或轻量路由器决定新 skill 的名称、slug、用途和目标目录业务参数，避免在长主 Agent prompt 中自由拼完整 `skill_script` JSON。
+- `skill-creator` 的 Tool Invocation 请求不应携带完整 SOUL/USER/MEMORY、完整 skill 列表、完整 `SKILL.md` 或最终 metadata 规则；这些属于主 Agent 总结/协作上下文，不属于确定性 scaffold 调用所需参数。
+- 如果模型输出包含 provider marker、伪 tool-call 或 malformed JSON，完整原文只写日志；下一轮只回灌短错误摘要，不得把坏 arguments 原样放回 prompt 诱导模型复制。
 
 ### 9.4 Skill 运行环境与依赖声明
 
 Skill authoring 阶段必须把运行环境要求写成结构化元数据，避免执行时才通过脚本报错或让用户手工猜测安装命令：
 
 - Python / Node / shell 脚本必须在 `skill.json.scripts[]` 中声明 `runtime`、`risk`、`network`、`writes`、`timeoutMs`。
-- 如果脚本依赖第三方包，应声明 `dependencies`，例如 `dependencies.pip: ["pypdf"]` 或 `dependencies.npm: ["some-package"]`。
+- 如果脚本依赖第三方包，应声明 `dependencies`，例如 `dependencies.pip: ["pypdf"]` 或 `dependencies.npm: ["some-package"]`；runtime 可兼容旧字段 `pipDependencies` / `npmDependencies` / `systemDependencies`，但新 skill 必须写入 `dependencies`。
 - `skill-creator` 创建带脚本的 skill 时，应提示作者补齐依赖声明，必要时生成 `requirements.txt`、`package.json` 或脱敏的 `references/runtime.md`。
-- OpenAgent runtime 执行 `skill_script` 前应先做 preflight：解析解释器、检查依赖、记录环境信息；缺依赖时生成受控审批，而不是让脚本静默安装。
+- OpenAgent runtime 执行 `skill_script` 前应先做 preflight：解析解释器、检查依赖、记录环境信息；Python `dependencies.pip` 缺失时由 `skill_script` 在同一次受控审批内执行安装并记录日志，而不是让主模型改走文本说明或委托 `pi_coding_agent` 手工安装。
 - 依赖安装不得绕过审批；优先安装到 skill-local venv / workspace-local 环境，避免污染系统 Python 或全局 Node 环境。
 - `.env` 只用于用户私有配置、token、账号密码、endpoint URL 等，不用于声明公共依赖；`.env` 的变量说明可以写入脱敏的 `references/config.md`。
 
@@ -766,7 +769,7 @@ type SkillUiEvent =
 2. Workspace/Plugin Skills 默认需要用户启用。
 3. 未知来源 Skill 只能读取 `SKILL.md` 和非脚本资源，不能执行脚本。
 4. `risk: write/network/external/destructive` 需要 UI 明示。
-5. `allowed-tools` 是上限声明，不是授权凭证。
+5. `allowed-tools` 是上限声明，不是授权凭证；为了兼容旧包，只要 `scripts[]` 已声明脚本，`skill_script` 可作为隐式运行入口，但仍必须通过声明脚本校验、policy、approval 和 audit。
 6. Skill script 不能绕过 OpenAgent 使用 shell 进行 destructive 操作。
 7. Skill script 不能读取 OpenAgent secrets。
 8. Skill resource path 必须做 realpath 校验，禁止 symlink/path traversal。

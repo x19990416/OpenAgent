@@ -74,8 +74,8 @@ flowchart TD
 | 简单目录列举 | `ls` / `list_directory` | 确定性只读工具即可。 |
 | 文件数量统计、按文件名查找、文件名+内容搜索 | `shell_agent` | 走确定性只读 fast path。 |
 | 知识库查询、保存、编译、lint、graph | `knowledge_agent` | knowledge 能力统一入口。 |
-| 创建/修改单个文本文件 | `write_file` 或 `pi_coding_agent` | 简单写入可直接 `write_file`；需要设计内容则委托 `pi_coding_agent`。 |
-| 写程序并执行程序 | `pi_coding_agent` | 子 agent 内部可调用 `write_file` + `shell_exec`。 |
+| 创建/修改单个文本文件 | `write_file` 或 `pi_coding_agent` | 简单写入可直接 `write_file`；需要设计内容则委托 `pi_coding_agent`。如果当前任务处于 selected skill，优先走该 skill 的 `skill_resource` / `skill_script` / `write_file` 约束路径。 |
+| 写程序并执行程序 | `pi_coding_agent` 或 selected skill 的 `skill_script` | 通用写/跑/修交给 `pi_coding_agent`；已选 skill 且 declared script 可满足任务时，先走 `skill_script`，不能用 `pi_coding_agent` 绕过 skill。 |
 | 生成 docx/xlsx/pdf/ppt 等复杂产物 | `pi_coding_agent` | 通过脚本或专用工具生成，并验证产物。 |
 | HTTP/API 抓取、实时行情/新闻/数据获取 | `pi_coding_agent` | 可写脚本、执行请求、解析结果。 |
 | 依赖安装 | `pi_coding_agent` 发起，`shell_exec` 审批 | 必须展示包名、命令、安装位置和联网风险。 |
@@ -208,7 +208,8 @@ UI 展示建议：
 主 Agent prompt 应明确：
 
 - `shell_agent` 只用于只读文件搜索/统计。
-- `pi_coding_agent` 用于写程序、运行程序、生成复杂文件、API 请求、代码修改和测试修复。
+- `pi_coding_agent` 用于通用写程序、运行程序、生成复杂文件、API 请求、代码修改和测试修复。
+- selected skill 是更窄的执行上下文：如果已选 skill 声明了可满足当前任务的脚本，先走 `skill_script`；`skill-creator` scaffold 场景应走 runtime 轻量 Tool Invocation 快路径，而不是委托 `pi_coding_agent`。
 - 不要把 `call:xxx{...}<tool_call|>` 文本当成工具执行；必须使用结构化 tool call。
 - 如果工具被 policy 拒绝，应报告真实拒绝原因，不要伪造已经执行。
 

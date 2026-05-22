@@ -233,6 +233,267 @@ call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
 - UI 应展示可理解错误，例如“模型返回了未解析的工具调用文本，工具未执行”，而不是展示原始 `call:xxx...<tool_call|>`。
 - 根本修复应优先切换/配置支持 tool calling 的模型，或修正 Pi/provider 的结构化 tool-call 适配；不得把伪文本当作授权执行入口。
 
+### 5.3 Tool calling 提示词与 schema 强化
+
+目标不是堆叠更长的提示词，而是让模型在进入任务前先看到短、硬、无反例污染的工具调用契约，并让 prompt、tool schema、失败修复提示保持一致。
+
+#### 5.3.1 Prompt 分层顺序
+
+OpenAgent 构建给 Pi AgentSession 的 system prompt 时，建议按下面顺序组织：
+
+1. **Tool Calling Contract**：结构化工具调用硬契约，必须放在最前。
+2. **Tool Selection Rules**：把常见任务映射到明确 tool。
+3. **Runtime Safety / Policy**：审批、sandbox、不要假装执行等安全边界。
+4. **Current Task Context**：`agentId`、`workspaceRoot`、当前附件、当前用户任务。
+5. **Skill / Plugin / Knowledge Context**：只放相关摘要，不全量注入。
+6. **Plan Mode Context**：plan 是执行指导，不是 tool call 的替代品。
+7. **Identity / User Preference / Memory**：SOUL、USER、MEMORY 放在工具契约之后。
+8. **Final Metadata Rules**：只约束最终回答，不干扰 tool-call-only turn。
+
+#### 5.3.2 Tool Calling Contract
+
+建议在 system prompt 顶部加入独立英文契约，减少模型把工具调用写成普通文本：
+
+```text
+Tool Calling Contract:
+- If the next action requires reading files, listing directories, running scripts, writing files, invoking a skill, or delegating to a subagent, use a real structured tool call.
+- Never write tool calls as normal assistant text.
+- Do not output pseudo tool syntax, provider protocol markers, XML/ChatML markers, markdown code blocks, or template placeholders as a substitute for a tool call.
+- Tool arguments must be plain JSON-compatible values matching the exposed tool schema.
+- If you decide to call a tool, the assistant turn should contain the structured tool call directly, without explanation before it.
+- After a tool failure, inspect the tool result and either repair the arguments once or explain the blocker. Do not repeat the same invalid call.
+```
+
+#### 5.3.3 Tool Selection Rules
+
+工具选择规则应表格化或列表化，避免模型从长段文字里推断：
+
+```text
+Tool Selection Rules:
+- List files/directories: use ls or list_directory.
+- Read text file: use read or read_file.
+- Find files by name/glob: use find.
+- Search text content: use grep.
+- Count files deterministically: use shell_agent with operation=count_files and extension.
+- Write text files: use write_file.
+- Run local commands or scripts: use shell_exec.
+- Execute a declared skill script: use skill_script.
+- Multi-step code/write/run/fix workflows: use pi_coding_agent.
+- Knowledge search/query/ingest: use knowledge_agent.
+```
+
+#### 5.3.4 减少反例污染
+
+不要在主提示词里展示完整坏格式，例如伪 `call` 语法、provider marker、ChatML/tool marker。即便语义是“不要这样做”，弱模型也可能模仿这些 token。
+
+主提示词只写抽象禁止规则：
+
+```text
+Never include pseudo tool-call syntax or provider protocol markers in normal text.
+```
+
+完整坏样例只应进入日志、诊断和 UI 错误摘要，不要回灌到后续模型上下文。
+
+#### 5.3.5 `skill_script` schema 与提示词对齐
+
+`skill_script` 是高价值执行入口，不应为了“让模型重试”而放宽 schema。否则 prompt 说严格、schema 说随便，会削弱结构化 tool call 约束。
+
+建议保持：
+
+```json
+{
+  "required": ["skillName", "scriptPath"],
+  "additionalProperties": false
+}
+```
+
+对应提示词可以只强调：
+
+```text
+For skill_script:
+- Use only when the script is declared in the current relevant skill context.
+- Required arguments: skillName, scriptPath.
+- Optional arguments: args, cwd, timeoutMs.
+- Do not invent additional argument keys.
+- Do not call skill_script if skillName or scriptPath is unknown; call skill_load first if available.
+```
+
+补充约束：
+
+- 如果 selected skill 声明了 `skill.json.scripts[]`，runtime 可以把 `skill_script` 作为隐式可用工具暴露，即使旧包漏写 `allowedTools: ["skill_script"]`；但具体 `scriptPath` 仍必须命中声明列表。
+- `dependencies.pip` / legacy `pipDependencies` 属于 `skill_script` 的执行前置条件。缺 Python 包时，安装应由 `skill_script` preflight 在同一次审批/audit 下完成，不能让主模型改成普通文本命令或绕到 `pi_coding_agent` 手工安装。
+
+#### 5.3.6 Repair prompt 极简化
+
+工具参数失败后的修复提示不要回显坏参数、provider marker 或超长 schema。建议只给一次极简修复指令：
+
+```text
+The previous structured tool call had invalid arguments.
+Retry once using a real structured tool call.
+
+Tool: <toolName>
+Required arguments:
+- <field>: <type>
+
+Do not include explanation text before the tool call.
+Do not reuse invalid markers or placeholder tokens.
+```
+
+如果已经修复过一次仍失败，应停止重试并向用户暴露可理解错误；不要把坏参数继续喂给模型。
+
+### 5.4 工具调用上下文瘦身
+
+工具调用决策不应默认依赖完整历史会话。完整 transcript 适合主 Agent 做连续对话、总结和最终回答，但对 tool call 来说会带来旧工具调用污染、过期参数干扰和更高的伪工具调用概率。
+
+OpenAgent 的默认原则是：
+
+- **当前用户输入是工具意图和参数的第一来源**：如果用户本轮已经给出命令、参数、文件路径或 skill 选择，runtime 应让模型围绕本轮输入生成结构化 tool call。
+- **历史只做消歧，不做默认拼接**：只有用户本轮明显依赖上文（例如“继续”“按刚才那个”“把它改成”）时，才把最近会话注入工具调用上下文。
+- **用状态替代长历史**：plan、selected skill、allowed tools、workspace、附件路径、最近 tool result 摘要应以短结构化块传入，而不是把完整聊天记录拼给模型。
+- **工具执行仍由 OpenAgent runtime 决策和治理**：即使走最小上下文，也必须经过 ToolRegistry、ToolPolicy、Approval、日志、UI event 和 AbortSignal。
+
+推荐 prompt 结构：
+
+```text
+<openagent-tool-routing-context>
+Tool routing mode: minimal.
+Use the current user prompt plus runtime state as the source of truth for tool intent and arguments.
+Do not infer tool arguments from older transcript unless the current prompt explicitly refers to prior context.
+</openagent-tool-routing-context>
+
+<openagent-current-attachments>...</openagent-current-attachments>
+<user-prompt>...</user-prompt>
+```
+
+实现约束：
+
+1. 对明确的执行型任务、selected skill 运行和 Plan execute 步骤，优先使用最小工具上下文。
+2. 对“继续/刚才/那个/它”等依赖上文的省略表达，保留最近会话上下文，避免误执行。
+3. Pi session 的历史 replay 也应与 prompt 注入策略一致：最小工具上下文运行使用当前 run 独立的 Pi session replay 文件，避免旧 assistant 伪 tool 文本和旧工具参数影响本轮 tool call。
+4. 最小上下文不是绕过记忆/知识库：SOUL、USER、相关 MEMORY、相关 knowledge、selected skill 摘要仍可按需注入 system prompt，但不能全量注入 transcript。
+5. 如果最小上下文导致信息不足，模型应先提澄清问题，或调用只读工具获取当前事实；不要从旧历史猜测路径、账号、收件人、命令参数等高风险信息。
+
+### 5.5 轻量 Tool Invocation 阶段
+
+5.4 的“最小工具上下文”只解决了旧 transcript 污染问题；它不等于真正的轻量工具路由。selected skill、Plan execute 或明确执行型任务进入工具调用时，应增加一个独立的 Tool Invocation 阶段，把“要不要调工具、调哪个工具、参数是什么”从主 Agent 长上下文中拆出来。
+
+目标流程：
+
+```mermaid
+flowchart LR
+  A["用户当前输入"] --> B["轻量工具路由器"]
+  C["会话摘要 / 当前任务状态"] --> B
+  D["已选 skill / 可用工具 schema"] --> B
+  B --> E{"是否需要工具?"}
+  E -->|是| F["生成结构化 Tool Invocation"]
+  E -->|否| G["进入普通对话回答"]
+  F --> H["OpenAgent Tool Policy / Approval"]
+  H --> I["执行工具"]
+  I --> J["把结果交给主 Agent 总结/继续"]
+```
+
+#### 5.5.1 与当前主 Agent prompt 的边界
+
+当前 selected skill 运行已经会过滤 tool surface，但如果仍把完整 SOUL、USER、MEMORY、Relevant skills、Active plan、完整 `SKILL.md`、tool schema 和上轮失败参数全部放进同一个 Pi request，模型仍可能在长上下文中产生 provider marker、伪 tool call 或旧参数复制。
+
+轻量 Tool Invocation 阶段应只接收：
+
+- 当前用户输入原文。
+- 必要的短任务状态，例如 `planId`、当前 step、workspaceRoot、附件路径摘要。
+- 已选 skill 的最小结构化信息：`skillName`、declared scripts/resources、默认目标 root。
+- 本轮可用工具的最小 schema；如果已确定唯一工具，只暴露这一个工具。
+- 最近一次 tool result 的短摘要；不得原样回灌包含 provider marker、坏 JSON、伪 tool-call 文本的失败参数。
+
+轻量 Tool Invocation 阶段不应接收：
+
+- 完整 SOUL.md / USER.md / MEMORY.md 原文。
+- 无关 skill 列表或完整 skill 文档。
+- 旧 assistant tool_calls 的完整 replay。
+- 上一次 malformed arguments 原文，尤其是 `<|...|>`、`<tool_call|>`、ChatML/tool marker。
+- 最终回答 metadata 规则；这些只属于主 Agent 总结阶段。
+
+#### 5.5.2 selected skill 的确定性补全
+
+当 runtime 已经确定 `selectedSkill` 时，不应再让模型自由拼完整 skill 调用。应由 runtime 固定或补全已知字段：
+
+- `skillName`：来自 selected skill。
+- `scriptPath`：如果 selected skill 只有一个 declared script，或当前 plan step 明确对应某个 declared script，由 runtime 直接填充。
+- `cwd`：默认 workspaceRoot，除非用户本轮明确指定。
+
+模型只负责提供仍需语义判断的业务变量，例如：
+
+- 新 skill 的 display name / slug。
+- 输入目录、输出文件名等用户任务参数。
+- 是否需要先 `skill_load` / `skill_resource` 补充模板。
+
+如果 `skillName` 和 `scriptPath` 都已确定，Tool Invocation 请求可以退化为一个窄 schema：
+
+```json
+{
+  "action": "call_tool",
+  "toolName": "skill_script",
+  "args": ["<business-arg-1>", "<business-arg-2>"],
+  "cwd": "."
+}
+```
+
+runtime 再把它组装成真正的 RuntimeTool 调用：
+
+```json
+{
+  "skillName": "skill-creator",
+  "scriptPath": "scripts/init_skill.mjs",
+  "args": ["/Users/guolimin/.openagent/agents/main/skills/merge-test"]
+}
+```
+
+这样可以减少模型在长 JSON 字符串里生成 `skillName`、`scriptPath`、绝对路径和 provider quote marker 的机会。
+
+#### 5.5.3 `skill-creator` 快路径
+
+`skill-creator` 是最适合走轻量 Tool Invocation 的特殊场景。创建新 skill 时 runtime 通常已经知道：
+
+- selected skill：`skill-creator`。
+- scaffold script：`scripts/init_skill.mjs`。
+- 默认目标根：`~/.openagent/agents/<agentId>/skills/<skill-slug>/`。
+
+因此第一步 scaffold 不应把完整主 Agent prompt 交给模型生成完整 `skill_script` 参数。推荐：
+
+1. runtime 根据用户输入解析或让轻量路由器生成 `displayName`、`slug`、`purpose`。
+2. runtime 计算目标目录，并做 allowed skill root 校验。
+3. runtime 构造标准 `skill_script(skillName=skill-creator, scriptPath=scripts/init_skill.mjs, args=[targetDir])`。
+4. ToolPolicy / Approval 正常执行。
+5. 脚手架完成后，再由主 Agent 或后续轻量阶段补写 `SKILL.md`、`skill.json` 和 `scripts/`。
+
+如果用户输入里缺少必要信息（例如 skill 名称、目标 scope、风险级别），轻量路由器应输出澄清问题，而不是从旧历史或 MEMORY 中猜测。
+
+#### 5.5.4 失败处理与污染隔离
+
+Tool Invocation 阶段检测到 malformed arguments、provider marker 或 schema validation 失败时，应按下面顺序处理：
+
+1. 如果字段可由 runtime 从 selected skill / declared script / plan state 安全补全，则 runtime 补全，不把坏参数回灌给模型。
+2. 如果缺的是业务参数，返回短澄清问题。
+3. 如果模型输出包含 provider marker，记录完整原文到日志，但传给下一轮模型的只是一句短摘要，例如：`previous tool arguments contained provider markers and were discarded`。
+4. 同一工具同一 run 只允许一次 repair；再次失败则停止工具循环并向用户说明模型工具调用格式不稳定。
+
+不得把下面内容继续作为 assistant/tool 历史喂给模型：
+
+```text
+<|tool_call>call:skill_script{args:[<|"|><|"|>]}<tool_call|>
+```
+
+也不得把完整 malformed JSON 原样放进 repair prompt。
+
+#### 5.5.5 落地验收标准
+
+实现轻量 Tool Invocation 后，至少用 `skill-creator` 创建新 skill 的场景验证：
+
+- 发给 provider 的 Tool Invocation request 不包含完整 SOUL/USER/MEMORY、完整所有 skill 列表、完整 `SKILL.md` 或最终 metadata 规则。
+- 当 selected skill 为 `skill-creator` 且 declared script 唯一时，模型不需要生成 `skillName` 和 `scriptPath`。
+- malformed tool-call 参数不会被原样回灌到下一轮 request。
+- `pi_coding_agent` 仍被 policy 阻止绕过 `skill-creator`。
+- `skill_script` 执行仍走 ToolPolicy、Approval、audit log、UI event 和 AbortSignal。
+
 ## 6. Tool Adapter 约定
 
 OpenAgent 自己的工具接口建议保持稳定：

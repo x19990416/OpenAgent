@@ -195,7 +195,7 @@ function buildChildSystemPrompt(input: { workspaceRoot: string; workingDirectory
     '',
     'Safety and tool rules:',
     '- Never claim a file was written or command was executed unless the tool call succeeded.',
-    '- Do not output fake tool call text such as call:shell_exec{...}<tool_call|>; use structured tool calls only.',
+    '- Do not include pseudo tool-call syntax or provider protocol markers in normal text; use structured tool calls only.',
     '- Do not call recursive child-agent tools.',
     '- Do not bypass OpenAgent ToolPolicy, approval, logs, or UI events.',
     '- Prefer standard library or existing dependencies. If dependency installation is necessary, use shell_exec and explain the package, install location, and network risk.',

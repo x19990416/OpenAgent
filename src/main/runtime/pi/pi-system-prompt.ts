@@ -1,21 +1,30 @@
 import type { RuntimeAttachment, RuntimeMessage } from '../runtime-types.js';
 
 export const MAX_RECENT_TRANSCRIPT_MESSAGES = 16;
+export const MAX_TOOL_MINIMAL_TRANSCRIPT_MESSAGES = 0;
 export const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
 export const MAX_TEXT_ATTACHMENT_PREVIEW_CHARS = 2_000;
 const INVALID_TEXT_TOOL_CALL_SUMMARY = '[OpenAgent note: a previous assistant message contained an invalid text-form tool invocation. The text was removed from replay context; no tool executed from that text.]';
 const TOOL_ARGUMENT_REPAIR_SUMMARY = '[OpenAgent note: a previous structured tool call had unsafe or invalid arguments. The verbose repair prompt was removed from replay context.]';
 
-export function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: RuntimeMessage[], attachments: RuntimeAttachment[]) {
-  const recentTranscript = formatRecentTranscript(messages, userPrompt);
+export interface PiPromptBuildOptions {
+  transcriptMode?: 'recent' | 'tool_minimal';
+  transcriptReason?: string;
+}
+
+export function buildPiPrompt(systemPrompt: string, userPrompt: string, messages: RuntimeMessage[], attachments: RuntimeAttachment[], options: PiPromptBuildOptions = {}) {
+  const transcriptMode = options.transcriptMode ?? 'recent';
+  const recentTranscript = transcriptMode === 'tool_minimal' ? '' : formatRecentTranscript(messages, userPrompt, MAX_RECENT_TRANSCRIPT_MESSAGES);
+  const sessionContext = transcriptMode === 'tool_minimal'
+    ? formatToolMinimalSessionContext(options.transcriptReason)
+    : ['下面是当前 OpenAgent thread 的最近对话上下文。回答时必须延续这些上下文；如果用户说“好的”“继续”“就这样”等省略表达，应结合最近对话理解。', recentTranscript || '(当前 thread 还没有可用历史消息。)'].join('\n');
   return [
     '<openagent-system-instructions>',
     systemPrompt,
     '</openagent-system-instructions>',
     '',
     '<openagent-session-context>',
-    '下面是当前 OpenAgent thread 的最近对话上下文。回答时必须延续这些上下文；如果用户说“好的”“继续”“就这样”等省略表达，应结合最近对话理解。',
-    recentTranscript || '(当前 thread 还没有可用历史消息。)',
+    sessionContext,
     '</openagent-session-context>',
     '',
     '<openagent-current-attachments>',
@@ -25,6 +34,18 @@ export function buildPiPrompt(systemPrompt: string, userPrompt: string, messages
     '<user-prompt>',
     userPrompt,
     '</user-prompt>'
+  ].join('\n');
+}
+
+
+function formatToolMinimalSessionContext(reason?: string) {
+  return [
+    'Tool routing mode: minimal current-run context.',
+    `Reason: ${reason || 'current prompt can be routed without replaying prior transcript'}.`,
+    'The older chat transcript is intentionally not injected into this prompt for tool-call selection.',
+    'Use the current user prompt, current attachments, system prompt, selected skill, active plan, allowed tool schemas, and runtime policy as the source of truth for tool intent and arguments.',
+    'Do not infer high-risk tool arguments such as paths, commands, recipients, accounts, credentials, or destructive actions from older chat history unless the current prompt explicitly refers to prior context.',
+    'If required arguments are missing, ask a concise clarification question or use a safe read-only tool to inspect current workspace facts.'
   ].join('\n');
 }
 
@@ -45,12 +66,12 @@ function formatCurrentAttachments(attachments: RuntimeAttachment[]) {
     .join('\n');
 }
 
-function formatRecentTranscript(messages: RuntimeMessage[], currentPrompt: string) {
+function formatRecentTranscript(messages: RuntimeMessage[], currentPrompt: string, limit: number) {
   const historyMessages =
     messages.at(-1)?.role === 'user' && messages.at(-1)?.content.trim() === currentPrompt.trim()
       ? messages.slice(0, -1)
       : messages;
-  const recentMessages = historyMessages.slice(-MAX_RECENT_TRANSCRIPT_MESSAGES);
+  const recentMessages = historyMessages.slice(-limit);
   return recentMessages
     .map((message) => {
       const role = message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user';

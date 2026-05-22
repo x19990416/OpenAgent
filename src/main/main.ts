@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -136,6 +136,226 @@ function resolveDefaultAgentWorkspaceRoot(agentId: string) {
   const workspaceRoot = getOpenAgentPath('agents', agentId, 'workspace');
   mkdirSync(workspaceRoot, { recursive: true });
   return workspaceRoot;
+}
+
+
+const LOG_FILE_EXTENSIONS = new Set(['.log', '.jsonl', '.txt']);
+const LOG_READ_TAIL_BYTES = 1024 * 1024;
+const MAX_LOG_FILES = 200;
+
+function listOpenAgentLogFiles() {
+  const logsRoot = getOpenAgentPath('logs');
+  mkdirSync(logsRoot, { recursive: true });
+
+  const files: Array<{ name: string; path: string; relativePath: string; size: number; mtimeMs: number; updatedAt: string }> = [];
+  const visit = (directoryPath: string) => {
+    if (files.length >= MAX_LOG_FILES) return;
+    let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
+    try {
+      entries = readdirSync(directoryPath, { withFileTypes: true }) as Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (files.length >= MAX_LOG_FILES) break;
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+      if (!entry.isFile() || !LOG_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+      try {
+        const stat = statSync(entryPath);
+        files.push({
+          name: entry.name,
+          path: entryPath,
+          relativePath: path.relative(logsRoot, entryPath) || entry.name,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          updatedAt: stat.mtime.toISOString()
+        });
+      } catch {
+        // Ignore files that disappear while the viewer is refreshing.
+      }
+    }
+  };
+
+  visit(logsRoot);
+  files.sort((left, right) => right.mtimeMs - left.mtimeMs || left.relativePath.localeCompare(right.relativePath));
+  return { ok: true, rootPath: logsRoot, files };
+}
+
+function resolveOpenAgentLogFilePath(requestedPath: unknown) {
+  const rawPath = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+  if (!rawPath) return null;
+
+  const logsRoot = getOpenAgentPath('logs');
+  const resolved = path.resolve(path.isAbsolute(rawPath) ? rawPath : path.join(logsRoot, rawPath));
+  if (!isPathInside(resolved, logsRoot)) return null;
+  if (!LOG_FILE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return null;
+  if (!existsSync(resolved)) return null;
+  const stat = statSync(resolved);
+  if (!stat.isFile()) return null;
+  return { path: resolved, stat, logsRoot };
+}
+
+function readOpenAgentLogFile(payload: { path?: unknown; maxBytes?: unknown }) {
+  const resolved = resolveOpenAgentLogFilePath(payload?.path);
+  if (!resolved) return { ok: false, error: '未找到可读取的日志文件。' };
+
+  const requestedMaxBytes = Number(payload?.maxBytes);
+  const maxBytes = Number.isFinite(requestedMaxBytes) ? Math.max(16 * 1024, Math.min(1024 * 1024, Math.floor(requestedMaxBytes))) : LOG_READ_TAIL_BYTES;
+  const size = resolved.stat.size;
+  const start = Math.max(0, size - maxBytes);
+  const buffer = readFileSync(resolved.path);
+  const content = buffer.subarray(start).toString('utf8');
+  return {
+    ok: true,
+    name: path.basename(resolved.path),
+    path: resolved.path,
+    relativePath: path.relative(resolved.logsRoot, resolved.path) || path.basename(resolved.path),
+    size,
+    updatedAt: resolved.stat.mtime.toISOString(),
+    truncated: start > 0,
+    content
+  };
+}
+
+async function openOpenAgentLogFile(payload: { path?: unknown; action?: unknown }) {
+  const resolved = resolveOpenAgentLogFilePath(payload?.path);
+  if (!resolved) return { ok: false, error: '未找到可打开的日志文件。' };
+  if (payload?.action === 'reveal') {
+    shell.showItemInFolder(resolved.path);
+    return { ok: true };
+  }
+  const result = await shell.openPath(resolved.path);
+  return result ? { ok: false, error: result } : { ok: true };
+}
+
+
+function parseJsonObjectForLogTest(text: string): Record<string, unknown> | null {
+  if (!text.trim()) return null;
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildHeadersForLogTest(detail: Record<string, unknown>) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const loggedHeaders = detail.headers && typeof detail.headers === 'object' && !Array.isArray(detail.headers)
+    ? detail.headers as Record<string, unknown>
+    : {};
+  for (const [key, value] of Object.entries(loggedHeaders)) {
+    const text = typeof value === 'string' ? value : '';
+    if (!text || text.includes('<redacted')) continue;
+    headers[key] = text;
+  }
+
+  const catalog = activePiModelConfig;
+  void catalog;
+  return headers;
+}
+
+function applyPromptOverrideToBody(body: unknown, promptOverride: string) {
+  if (!promptOverride.trim() || !body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const cloned = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+
+  if (Array.isArray(cloned.messages)) {
+    const messages = cloned.messages as Array<unknown>;
+    const userMessage = [...messages].reverse().find((item) => {
+      const record = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : null;
+      return record?.role === 'user' && typeof record.content === 'string';
+    });
+    const target = userMessage && typeof userMessage === 'object' && !Array.isArray(userMessage) ? userMessage as Record<string, unknown> : null;
+    if (target) {
+      target.content = promptOverride;
+      return cloned;
+    }
+  }
+
+  if (typeof cloned.prompt === 'string') {
+    cloned.prompt = promptOverride;
+    return cloned;
+  }
+  if (typeof cloned.input === 'string') {
+    cloned.input = promptOverride;
+    return cloned;
+  }
+
+  return cloned;
+}
+
+async function testOpenAgentLogRequest(payload: { detail?: unknown; promptOverride?: unknown }) {
+  const detailText = typeof payload?.detail === 'string' ? payload.detail : '';
+  const detail = parseJsonObjectForLogTest(detailText);
+  if (!detail) return { ok: false, error: '这条日志没有可重放的 JSON request detail。' };
+
+  const baseUrl = typeof detail.baseUrl === 'string' ? detail.baseUrl.replace(/\/$/, '') : '';
+  const url = typeof detail.url === 'string' && detail.url.trim()
+    ? detail.url.trim()
+    : baseUrl
+      ? `${baseUrl}/chat/completions`
+      : '';
+  if (!url) return { ok: false, error: '这条日志缺少 request url 或 baseUrl。' };
+
+  const promptOverride = typeof payload?.promptOverride === 'string' ? payload.promptOverride : '';
+  const parsedBody = typeof detail.body === 'string' ? parseJsonObjectForLogTest(detail.body) : null;
+  const originalRequestBody = detail.requestBody && typeof detail.requestBody === 'object' ? detail.requestBody : parsedBody;
+  const requestBody = applyPromptOverrideToBody(originalRequestBody, promptOverride);
+  const body = requestBody ? JSON.stringify(requestBody) : typeof detail.body === 'string' ? detail.body : undefined;
+  const method = typeof detail.method === 'string' ? detail.method : body ? 'POST' : 'GET';
+  const headers = buildHeadersForLogTest(detail);
+
+  const providerCatalog = await buildPiProviderCatalog({ activeProviderId: workspace.providerId, activeModelId: workspace.model });
+  const activeProvider = providerCatalog.providers.find((provider) => provider.id === providerCatalog.activeProviderId);
+  const providerBaseUrl = activeProvider?.baseUrl?.replace(/\/$/, '');
+  if (activeProvider?.auth?.secret && (!providerBaseUrl || url.startsWith(providerBaseUrl) || (baseUrl && baseUrl === providerBaseUrl))) {
+    headers.Authorization = `Bearer ${activeProvider.auth.secret}`;
+  }
+  if (activeProvider?.id === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://openagent.local';
+    headers['X-Title'] = 'OpenAgent';
+  }
+
+  const startedAt = new Date().toISOString();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal
+    });
+    const responseBody = await response.text().catch(() => '');
+    return {
+      ok: response.ok,
+      url,
+      method,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      status: response.status,
+      statusText: response.statusText,
+      responseBody,
+      bodyLength: responseBody.length,
+      error: response.ok ? undefined : `HTTP ${response.status} ${response.statusText}`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      url,
+      method,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error)
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function activateWindowForApproval() {
@@ -726,6 +946,10 @@ function registerIpc() {
       autoApproved
     };
   });
+  ipcMain.handle('logs:list', () => listOpenAgentLogFiles());
+  ipcMain.handle('logs:read', (_event, payload) => readOpenAgentLogFile(payload ?? {}));
+  ipcMain.handle('logs:open-file', (_event, payload) => openOpenAgentLogFile(payload ?? {}));
+  ipcMain.handle('logs:test-request', (_event, payload) => testOpenAgentLogRequest(payload ?? {}));
   ipcMain.handle('skills:list', () => runtimeService.listSkills());
   ipcMain.handle('skills:refresh', () => runtimeService.refreshSkills());
   ipcMain.handle('skills:get', (_event, payload) => runtimeService.getSkill(String(payload?.skillName || payload?.skillId || payload || '')));

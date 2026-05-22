@@ -3,53 +3,32 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const MAX_SCRIPT_OUTPUT_BYTES = 80_000;
+const DEFAULT_DEPENDENCY_TIMEOUT_MS = 120_000;
 
-export function runSkillScript(script: string, args: string[], cwd: string, timeoutMs: number, signal: AbortSignal): Promise<{ exitCode: number | null; stdout: string; stderr: string; durationMs: number; timedOut: boolean }> {
+export interface ProcessRunResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}
+
+export function runSkillScript(script: string, args: string[], cwd: string, timeoutMs: number, signal: AbortSignal): Promise<ProcessRunResult> {
   return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
     const command = commandForScript(script, args);
     const skillDir = path.dirname(path.dirname(script));
-    const child = spawn(command.cmd, command.args, {
+    runProcess(command.cmd, command.args, {
       cwd,
       env: {
         ...process.env,
         ...loadSkillDotEnv(skillDir),
         OPENAGENT_SKILL_SCRIPT: script,
         OPENAGENT_SKILL_DIR: skillDir
-      }
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    let timedOut = false;
-    const finish = (exitCode: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      resolve({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
-    };
-    const abort = () => {
-      child.kill('SIGTERM');
-      reject(new Error('skill_script aborted'));
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, timeoutMs);
-    if (signal.aborted) {
-      abort();
-      return;
-    }
-    signal.addEventListener('abort', abort, { once: true });
-    child.stdout.on('data', (chunk) => { stdout = truncate(String(stdout) + String(chunk)); });
-    child.stderr.on('data', (chunk) => { stderr = truncate(String(stderr) + String(chunk)); });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      reject(error);
-    });
-    child.on('close', (exitCode) => finish(exitCode));
+      },
+      timeoutMs,
+      signal,
+      abortMessage: 'skill_script aborted'
+    }).then(resolve, reject);
   });
 }
 
@@ -94,4 +73,85 @@ function unquoteDotEnvValue(value: string) {
 
 function truncate(value: string) {
   return Buffer.byteLength(value, 'utf8') > MAX_SCRIPT_OUTPUT_BYTES ? `${value.slice(0, MAX_SCRIPT_OUTPUT_BYTES)}\n...[truncated]` : value;
+}
+
+
+export async function ensurePipDependencies(input: { packages: string[]; cwd: string; signal: AbortSignal; timeoutMs?: number }): Promise<{ installed: string[]; alreadyAvailable: string[]; checks: ProcessRunResult[]; installs: ProcessRunResult[] }> {
+  const packages = Array.from(new Set(input.packages.map((pkg) => pkg.trim()).filter(Boolean)));
+  const installed: string[] = [];
+  const alreadyAvailable: string[] = [];
+  const checks: ProcessRunResult[] = [];
+  const installs: ProcessRunResult[] = [];
+  for (const pkg of packages) {
+    const moduleName = inferPythonModuleName(pkg);
+    const check = await runProcess('python3', ['-c', `import ${moduleName}`], {
+      cwd: input.cwd,
+      env: process.env,
+      timeoutMs: 20_000,
+      signal: input.signal,
+      abortMessage: 'skill dependency check aborted'
+    });
+    checks.push(check);
+    if (check.exitCode === 0) {
+      alreadyAvailable.push(pkg);
+      continue;
+    }
+    const install = await runProcess('python3', ['-m', 'pip', 'install', '--user', pkg], {
+      cwd: input.cwd,
+      env: process.env,
+      timeoutMs: input.timeoutMs ?? DEFAULT_DEPENDENCY_TIMEOUT_MS,
+      signal: input.signal,
+      abortMessage: 'skill dependency install aborted'
+    });
+    installs.push(install);
+    if (install.exitCode !== 0) {
+      throw new Error(`Failed to install pip dependency ${pkg}: ${install.stderr || install.stdout || `exitCode=${install.exitCode}`}`);
+    }
+    installed.push(pkg);
+  }
+  return { installed, alreadyAvailable, checks, installs };
+}
+
+function runProcess(cmd: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal: AbortSignal; abortMessage: string }): Promise<ProcessRunResult> {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const child = spawn(cmd, args, { cwd: options.cwd, env: options.env });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    const finish = (exitCode: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal.removeEventListener('abort', abort);
+      resolve({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
+    };
+    const abort = () => {
+      child.kill('SIGTERM');
+      reject(new Error(options.abortMessage));
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, options.timeoutMs);
+    if (options.signal.aborted) {
+      abort();
+      return;
+    }
+    options.signal.addEventListener('abort', abort, { once: true });
+    child.stdout.on('data', (chunk) => { stdout = truncate(String(stdout) + String(chunk)); });
+    child.stderr.on('data', (chunk) => { stderr = truncate(String(stderr) + String(chunk)); });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      options.signal.removeEventListener('abort', abort);
+      reject(error);
+    });
+    child.on('close', (exitCode) => finish(exitCode));
+  });
+}
+
+function inferPythonModuleName(pkg: string) {
+  const base = pkg.split(/[<>=!~;\[]/, 1)[0]?.trim() || pkg;
+  return base.replace(/[-.]/g, '_');
 }

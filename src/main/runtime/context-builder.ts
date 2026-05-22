@@ -19,6 +19,7 @@ export interface RunContextInput {
   emitUiEvent?: (type: import('./runtime-types.js').RuntimeUiEvent['type'], payload?: unknown) => void;
   requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
   getPlanContext?: () => PlanExecutionContext | null;
+  promptContext?: import('./runtime-types.js').RuntimePromptContext;
 }
 
 export function buildRunInput(input: RunContextInput): AgentRuntimeRunInput {

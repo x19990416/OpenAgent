@@ -163,6 +163,12 @@ export interface AgentRuntimeRunInput {
   requestApproval?: (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
   getPlanContext?: () => PlanExecutionContext | null;
   maxIterations?: number;
+  promptContext?: RuntimePromptContext;
+}
+
+export interface RuntimePromptContext {
+  transcriptMode: 'recent' | 'tool_minimal';
+  reason: string;
 }
 
 export interface RuntimeLogEntry {

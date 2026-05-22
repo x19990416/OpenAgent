@@ -23,6 +23,9 @@ export interface SkillExecutionAuditEntry {
   writes?: boolean;
   stdoutPreview?: string;
   stderrPreview?: string;
+  pipDependencies?: string[];
+  installedDependencies?: string[];
+  availableDependencies?: string[];
   error?: string;
 }
 

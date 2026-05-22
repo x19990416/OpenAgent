@@ -7,7 +7,7 @@ import { appendLlmResponseLog } from '../runtime-info-logger.js';
 import { ToolExecutor } from '../tool-executor.js';
 import { toPiToolDefinitions } from './pi-tools.js';
 import { createOpenAgentPiSession } from './pi-session.js';
-import { MAX_RECENT_TRANSCRIPT_MESSAGES, buildPiPrompt, sanitizePiSessionMessages } from './pi-system-prompt.js';
+import { MAX_RECENT_TRANSCRIPT_MESSAGES, MAX_TOOL_MINIMAL_TRANSCRIPT_MESSAGES, buildPiPrompt, sanitizePiSessionMessages } from './pi-system-prompt.js';
 import { promptOpenAgentPiSession } from './pi-events.js';
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
@@ -150,7 +150,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         modelRegistry,
         selectedModel,
         customTools,
-        thinkingLevel
+        thinkingLevel,
+        sessionReplayMode: input.promptContext?.transcriptMode === 'tool_minimal' ? 'tool_minimal' : 'thread',
+        runId: input.runId
       });
       sanitizeRestoredPiSession(session, input.onLog);
       session.setActiveToolsByName?.(input.tools.map((tool) => tool.name));
@@ -176,11 +178,15 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           promptLength: input.prompt.length,
           transcriptMessageCount: input.messages.length,
           attachmentCount: input.attachments?.length ?? 0,
-          piPromptRecentTranscriptLimit: MAX_RECENT_TRANSCRIPT_MESSAGES,
+          piPromptRecentTranscriptLimit: input.promptContext?.transcriptMode === 'tool_minimal' ? MAX_TOOL_MINIMAL_TRANSCRIPT_MESSAGES : MAX_RECENT_TRANSCRIPT_MESSAGES,
+          promptContext: input.promptContext,
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });
-      const requestBody = buildPiPrompt(input.systemPrompt, input.prompt, input.messages, input.attachments ?? []);
+      const requestBody = buildPiPrompt(input.systemPrompt, input.prompt, input.messages, input.attachments ?? [], {
+        transcriptMode: input.promptContext?.transcriptMode,
+        transcriptReason: input.promptContext?.reason
+      });
       appendLlmResponseLog({
         scope: 'agent-loop',
         message: 'LLM request body',
@@ -203,7 +209,8 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
           promptLength: requestBody.length,
           transcriptMessageCount: input.messages.length,
           attachmentCount: input.attachments?.length ?? 0,
-          piPromptRecentTranscriptLimit: MAX_RECENT_TRANSCRIPT_MESSAGES,
+          piPromptRecentTranscriptLimit: input.promptContext?.transcriptMode === 'tool_minimal' ? MAX_TOOL_MINIMAL_TRANSCRIPT_MESSAGES : MAX_RECENT_TRANSCRIPT_MESSAGES,
+          promptContext: input.promptContext,
           imageAttachmentCount: input.attachments?.filter((attachment) => attachment.kind === 'image' && attachment.imageDataUrl).length ?? 0
         }
       });

@@ -121,6 +121,47 @@ export interface OpenAgentAppSettingsResult {
   error?: string;
 }
 
+export interface OpenAgentLogFileInfo {
+  name: string;
+  path: string;
+  relativePath: string;
+  size: number;
+  mtimeMs: number;
+  updatedAt: string;
+}
+
+export interface OpenAgentLogListResult {
+  ok: boolean;
+  rootPath?: string;
+  files?: OpenAgentLogFileInfo[];
+  error?: string;
+}
+
+export interface OpenAgentLogReadResult {
+  ok: boolean;
+  name?: string;
+  path?: string;
+  relativePath?: string;
+  size?: number;
+  updatedAt?: string;
+  truncated?: boolean;
+  content?: string;
+  error?: string;
+}
+
+export interface OpenAgentLogRequestTestResult {
+  ok: boolean;
+  url?: string;
+  method?: string;
+  startedAt?: string;
+  completedAt?: string;
+  status?: number;
+  statusText?: string;
+  responseBody?: string;
+  bodyLength?: number;
+  error?: string;
+}
+
 export interface KnowledgeResult {
   id: string;
   title: string;
@@ -454,6 +495,10 @@ export interface DesktopApi {
   setActiveLlmProvider?: (payload: any) => Promise<any>;
   getAppSettings?: () => Promise<OpenAgentAppSettingsResult>;
   updateAppSettings?: (payload: Partial<{ runtime: Partial<OpenAgentAppSettings['runtime']> }>) => Promise<OpenAgentAppSettingsResult>;
+  listLogs?: () => Promise<OpenAgentLogListResult>;
+  readLog?: (payload: { path: string; maxBytes?: number }) => Promise<OpenAgentLogReadResult>;
+  openLogFile?: (payload: { path: string; action?: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string }>;
+  testLogRequest?: (payload: { detail: string; promptOverride?: string }) => Promise<OpenAgentLogRequestTestResult>;
   listSkills?: () => Promise<SkillCatalogItem[]>;
   getSkillCatalog?: () => Promise<SkillCatalogItem[]>;
   refreshSkills?: () => Promise<SkillCatalogItem[]>;

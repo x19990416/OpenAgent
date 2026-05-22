@@ -6,6 +6,7 @@ import { RuntimeEventBus } from './event-bus.js';
 import { RunStateStore } from './run-state.js';
 import { SessionStore } from './session-store.js';
 import { TranscriptStore } from './transcript-store.js';
+import { ToolExecutor } from './tool-executor.js';
 import { buildRunContextLogSnapshot, buildRunInput } from './context-builder.js';
 import { createDefaultToolRegistry } from './tool-registry.js';
 import { LocalDemoAgentLoop } from './agent-loop.js'; // legacy explicit fallback only
@@ -684,6 +685,12 @@ export class RuntimeService {
       });
       const availableTools = [...this.toolRegistry.list(), ...pluginContext.tools];
       const runTools = filterToolsForSelectedSkill(availableTools, selectedSkill);
+      const promptContext = resolvePromptContextMode({
+        prompt,
+        hasSelectedSkill: Boolean(selectedSkill),
+        hasActivePlan: Boolean(activePlan),
+        attachmentsCount: attachments.length
+      });
       const runInput = buildRunInput({
         runId,
         threadId: thread.threadId,
@@ -697,6 +704,7 @@ export class RuntimeService {
         attachments,
         tools: runTools,
         abortSignal,
+        promptContext,
         onLog: (entry) => {
           appendRuntimeInfoLog(entry);
           this.eventBus.emit('terminal.delta', {
@@ -738,6 +746,7 @@ export class RuntimeService {
           elapsedMs: Date.now() - startedAt,
           messageCount: runMessages.length,
           toolCount: runInput.tools.length,
+          promptContext,
           selectedSkill: selectedSkill ? {
             name: selectedSkill.name,
             allowedTools: selectedSkill.allowedTools,
@@ -745,6 +754,12 @@ export class RuntimeService {
             exposedToolNames: runInput.tools.map((tool) => tool.name)
           } : undefined
         }
+      });
+      const preExecutedToolContext = await this.maybeRunSkillCreatorScaffoldFastPath({
+        runInput,
+        selectedSkill,
+        activePlan,
+        prompt
       });
       const bootstrap = this.soulManager.getBootstrapSnapshot();
       appendRuntimeInfoLog({
@@ -779,6 +794,7 @@ export class RuntimeService {
           totalMessages: transcriptStats.messageCount,
           injectedMessages: runInput.messages.length,
           maxInjectedMessages: MAX_RUN_CONTEXT_MESSAGES,
+          promptContext,
           firstMessageAt: transcriptStats.firstMessageAt,
           lastMessageAt: transcriptStats.lastMessageAt
         }
@@ -802,6 +818,13 @@ export class RuntimeService {
         'Relevant skill context:',
         skillContext.promptBlock,
         '',
+        ...(preExecutedToolContext
+          ? [
+              'Pre-executed Tool Invocation:',
+              preExecutedToolContext,
+              ''
+            ]
+          : []),
         ...(selectedSkill
           ? [
               'Selected skill routing rule:',
@@ -1256,6 +1279,109 @@ export class RuntimeService {
     transcript.appendMessage(assistantMessage);
     this.finishThread(thread, content);
     this.eventBus.emit('message.completed', assistantMessage);
+  }
+
+  private async maybeRunSkillCreatorScaffoldFastPath(input: {
+    runInput: import('./runtime-types.js').AgentRuntimeRunInput;
+    selectedSkill?: SkillCatalogItem | null;
+    activePlan?: AgentPlan | null;
+    prompt: string;
+  }) {
+    const { runInput, selectedSkill, activePlan, prompt } = input;
+    if (selectedSkill?.name !== 'skill-creator') return null;
+    const scaffold = inferSkillCreatorScaffoldRequest(prompt, runInput.agentId);
+    if (!scaffold) return null;
+    const skillScriptTool = runInput.tools.find((tool) => tool.name === 'skill_script');
+    if (!skillScriptTool) return null;
+    const initScript = selectedSkill.scripts.find((script) => script.path === 'scripts/init_skill.mjs');
+    if (!initScript) return null;
+    if (existsSync(scaffold.outputDir)) {
+      runInput.onLog?.({
+        scope: 'runtime',
+        message: 'skill-creator scaffold fast path skipped because target exists',
+        data: {
+          runId: runInput.runId,
+          threadId: runInput.threadId,
+          selectedSkillName: selectedSkill.name,
+          scriptPath: initScript.path,
+          scaffold
+        }
+      });
+      return [
+        'skill-creator scaffold fast path was skipped because the target skill directory already exists.',
+        `skillName: ${selectedSkill.name}`,
+        `scriptPath: ${initScript.path}`,
+        `targetSkillName: ${scaffold.slug}`,
+        `targetPath: ${scaffold.outputDir}`,
+        'Do not call init_skill.mjs again unless the user asks to overwrite or repair this existing skill.'
+      ].join('\n');
+    }
+
+    const args = [
+      '--name', scaffold.slug,
+      '--displayName', scaffold.displayName,
+      '--description', scaffold.description,
+      '--risk', scaffold.risk,
+      '--tags', scaffold.tags.join(','),
+      '--allowedTools', scaffold.allowedTools.join(',')
+    ];
+    if (scaffold.outputDir) args.push('--output', scaffold.outputDir);
+
+    const toolArgs = {
+      skillName: selectedSkill.name,
+      scriptPath: initScript.path,
+      args,
+      cwd: '.'
+    };
+    const toolCallId = `tool-${randomUUID()}`;
+    runInput.onLog?.({
+      scope: 'runtime',
+      message: 'skill-creator scaffold fast path selected',
+      data: {
+        runId: runInput.runId,
+        threadId: runInput.threadId,
+        planId: activePlan?.id,
+        toolCallId,
+        selectedSkillName: selectedSkill.name,
+        scriptPath: initScript.path,
+        scaffold
+      }
+    });
+
+    const executor = new ToolExecutor(runInput.tools, {
+      runId: runInput.runId,
+      threadId: runInput.threadId,
+      agentId: runInput.agentId,
+      sessionFile: runInput.sessionFile,
+      providerId: runInput.providerId,
+      model: runInput.model,
+      onLog: runInput.onLog,
+      emitUiEvent: runInput.emitUiEvent,
+      workspaceRoot: runInput.workspaceRoot,
+      requestApproval: runInput.requestApproval,
+      getPlanContext: runInput.getPlanContext
+    });
+    const result = await executor.execute({
+      toolName: 'skill_script',
+      toolCallId,
+      args: toolArgs,
+      signal: runInput.abortSignal
+    });
+
+    const summary = result.ok
+      ? `skill-creator scaffold already executed through OpenAgent ToolPolicy. Do not call skill_script for scripts/init_skill.mjs again unless the user asks to overwrite or repair the scaffold.`
+      : `skill-creator scaffold fast path attempted but did not complete. Inspect the result before retrying or modifying files.`;
+    return [
+      summary,
+      `toolCallId: ${toolCallId}`,
+      `skillName: ${selectedSkill.name}`,
+      `scriptPath: ${initScript.path}`,
+      `targetSkillName: ${scaffold.slug}`,
+      `displayName: ${scaffold.displayName}`,
+      `ok: ${result.ok}`,
+      'result:',
+      result.content.slice(0, 2000)
+    ].join('\n');
   }
 
   private emitPlan(type: 'plan.created' | 'plan.updated' | 'plan.completed' | 'plan.failed', plan: AgentPlan, reason?: string, changedStepId?: string) {
@@ -1730,9 +1856,49 @@ function toSelectedSkillExecutionContext(selectedSkill?: SkillCatalogItem | null
   };
 }
 
+function resolvePromptContextMode(input: { prompt: string; hasSelectedSkill: boolean; hasActivePlan: boolean; attachmentsCount: number }): { transcriptMode: 'recent' | 'tool_minimal'; reason: string } {
+  if (isContextDependentPrompt(input.prompt)) {
+    return { transcriptMode: 'recent', reason: 'current prompt explicitly depends on prior conversation context' };
+  }
+
+  if (input.hasActivePlan) {
+    return { transcriptMode: 'tool_minimal', reason: 'active plan provides structured task state without replaying prior transcript' };
+  }
+
+  if (input.hasSelectedSkill) {
+    return { transcriptMode: 'tool_minimal', reason: 'selected skill run should route tools from current prompt and skill context' };
+  }
+
+  if (input.attachmentsCount > 0 && looksLikeDirectToolAction(input.prompt)) {
+    return { transcriptMode: 'tool_minimal', reason: 'current prompt plus current attachments are sufficient for tool routing' };
+  }
+
+  if (looksLikeDirectToolAction(input.prompt)) {
+    return { transcriptMode: 'tool_minimal', reason: 'current prompt is an explicit tool/action request' };
+  }
+
+  return { transcriptMode: 'recent', reason: 'conversation answer may need recent transcript continuity' };
+}
+
+function isContextDependentPrompt(prompt: string) {
+  const value = prompt.trim().toLowerCase();
+  if (!value) return false;
+  return /(^|[\s，。,.!?！？])(继续|接着|上面|刚才|前面|之前|那个|这个|它|它们|按你说的|就这样|照这个|照刚才|再来|重试|修正一下|改成|换成)([\s，。,.!?！？]|$)/i.test(value) ||
+    /\b(continue|that|it|those|previous|above|same|retry|again)\b/i.test(value);
+}
+
+function looksLikeDirectToolAction(prompt: string) {
+  const value = prompt.trim().toLowerCase();
+  if (!value) return false;
+  return /(读取|查看|列出|搜索|查找|统计|执行|运行|调用|安装|写入|创建|修改|修复|生成|保存|摄取|导入|导出|发送|打开|删除|提交|push|构建|编译|测试|打包|转换|分析附件|处理附件|落实到文档|进行开发|工具调用|skill|插件|知识库|wiki|命令|脚本|文件|目录|路径|日志|报错|typecheck|build|install|run|test|grep|find|read|write|shell|commit)/i.test(value);
+}
+
 function filterToolsForSelectedSkill(tools: RuntimeTool[], selectedSkill?: SkillCatalogItem | null) {
   if (!selectedSkill || selectedSkill.allowedTools.length === 0) return tools;
   const allowed = new Set(selectedSkill.allowedTools);
+  if (selectedSkill.scripts.length > 0) {
+    allowed.add('skill_script');
+  }
   if (selectedSkill.name !== 'skill-creator') {
     allowed.add('pi_coding_agent');
   }
@@ -1789,9 +1955,9 @@ function formatSelectedSkillRoutingRule(skill: SkillCatalogItem) {
       ? 'If a template/reference/example is needed, call skill_resource with this exact skillName and resource path.'
       : 'Do not call skill_resource for this selected skill; it is not available in this run.',
     shouldMentionScript
-      ? 'If deterministic computation or scaffolding is needed and a declared script fits, call skill_script with this exact skillName, the declared scriptPath, and user input as args. Do not run the skill script indirectly through pi_coding_agent or shell_exec.'
+      ? 'If deterministic computation or scaffolding is needed and a declared script fits, call skill_script with this exact skillName and declared scriptPath. Required arguments are skillName and scriptPath; optional arguments are args, cwd, and timeoutMs. Do not invent additional argument keys. Do not run the skill script indirectly through pi_coding_agent or shell_exec.'
       : 'Do not call skill_script unless it is exposed as an available structured tool in this run.',
-    'Never output text-form tool calls such as _script{...}<tool_call|>, call:skill_script{...}, or <|tool_call>...; use a real structured tool call with the exact tool name.',
+    'Never include pseudo tool-call syntax or provider protocol markers in normal text; use a real structured tool call with the exact exposed tool name.',
     skill.name === 'skill-creator'
       ? 'Only avoid skill_script when no declared skill-creator script is relevant; explain why and use governed skill tools/write_file rather than pi_coding_agent.'
       : 'Only avoid skill_script when no declared script is relevant, the script hits a real dependency/runtime blocker, the script fails and needs diagnosis/fix, or the user explicitly asks for code changes outside the selected skill; explain why before choosing another tool.',
@@ -1815,11 +1981,15 @@ function formatScriptDependencies(script: SkillCatalogItem['scripts'][number]) {
 function getAllowedSelectedSkillTools(skill: SkillCatalogItem) {
   const skillTools = ['skill_list', 'skill_load', 'skill_resource', 'skill_script'];
   if (skill.allowedTools.length === 0) return skillTools;
-  return skillTools.filter((tool) => skill.allowedTools.includes(tool));
+  return skillTools.filter((tool) => skill.allowedTools.includes(tool) || isImplicitSelectedSkillToolAllowed(skill, tool));
 }
 
 function isSelectedSkillToolAllowed(skill: SkillCatalogItem, toolName: string) {
-  return skill.allowedTools.length === 0 || skill.allowedTools.includes(toolName);
+  return skill.allowedTools.length === 0 || skill.allowedTools.includes(toolName) || isImplicitSelectedSkillToolAllowed(skill, toolName);
+}
+
+function isImplicitSelectedSkillToolAllowed(skill: SkillCatalogItem, toolName: string) {
+  return toolName === 'skill_script' && skill.scripts.length > 0;
 }
 
 function formatPlanForPrompt(plan: AgentPlan) {
@@ -1850,6 +2020,61 @@ function formatPlanApprovalDescription(plan: AgentPlan) {
     `风险等级：${plan.riskLevel}`,
     `审批原因：${plan.approvalReason || defaultReason}`
   ].join('\n');
+}
+
+interface SkillCreatorScaffoldRequest {
+  slug: string;
+  displayName: string;
+  description: string;
+  risk: 'read' | 'write' | 'network' | 'external' | 'destructive';
+  tags: string[];
+  allowedTools: string[];
+  outputDir: string;
+}
+
+function inferSkillCreatorScaffoldRequest(prompt: string, agentId: string): SkillCreatorScaffoldRequest | null {
+  if (!/(skill|技能)/i.test(prompt)) return null;
+  if (!/(创建|新建|生成|封装|做一个|加一个|create|scaffold|generate)/i.test(prompt)) return null;
+
+  const explicitSlug = extractExplicitSkillSlug(prompt);
+  const displayName = extractSkillDisplayName(prompt) || explicitSlug || 'new-skill';
+  const slug = safeSkillSlug(explicitSlug || displayName);
+  if (!slug) return null;
+
+  const isPdfMerge = /pdf/i.test(prompt) && /(合并|merge|merg)/i.test(prompt);
+  const description = isPdfMerge
+    ? '合并目录下的 PDF 文件。'
+    : `Provide ${displayName} skill guidance and reusable automation.`;
+  const tags = isPdfMerge ? ['pdf', 'merge', 'skill'] : ['skill'];
+  const risk: SkillCreatorScaffoldRequest['risk'] = isPdfMerge ? 'write' : 'read';
+  return {
+    slug,
+    displayName,
+    description,
+    risk,
+    tags,
+    allowedTools: ['skill_load', 'skill_resource', 'skill_script'],
+    outputDir: path.join(getOpenAgentHome(), 'agents', agentId, 'skills', slug)
+  };
+}
+
+function extractExplicitSkillSlug(prompt: string) {
+  const candidates: string[] = prompt.match(/[A-Za-z][A-Za-z0-9._-]*-[A-Za-z0-9._-]*/g) ?? [];
+  const filtered = candidates.filter((item) => !['skill-creator', 'skill-installer'].includes(item.toLowerCase()));
+  return filtered.at(-1) ?? '';
+}
+
+function extractSkillDisplayName(prompt: string) {
+  const match = /(?:名字叫做|名叫|叫做|名为|名称(?:是|为)?)([^,，\s]+)/.exec(prompt);
+  return match?.[1]?.trim() ?? '';
+}
+
+function safeSkillSlug(value: string) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function createDefaultAdapter() {

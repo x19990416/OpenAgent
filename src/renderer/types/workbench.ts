@@ -20,6 +20,7 @@ export type SettingsTab =
   | 'skills'
   | 'knowledge'
   | 'config'
+  | 'logs'
   | 'personalization'
   | 'account'
   | 'mcp'

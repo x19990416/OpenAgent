@@ -3,7 +3,7 @@ import type { RuntimeTool, RuntimeToolPolicyDecision } from '../runtime-types.js
 import type { SkillCatalogItem } from './skill-types.js';
 import { appendSkillExecutionAuditLog } from './skill-audit-log.js';
 import { summarizeSkillMarkdown } from './skill-parser.js';
-import { runSkillScript } from './skill-script-executor.js';
+import { ensurePipDependencies, runSkillScript } from './skill-script-executor.js';
 import { asRecord, normalizePositiveInt, readLimitedFile, resolveSkillChild, resolveWorkspaceCwd, throwIfAborted } from './skill-utils.js';
 
 const DEFAULT_MAX_RESOURCE_BYTES = 120_000;
@@ -159,6 +159,8 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
       if (!cwdStat?.isDirectory()) return { ok: false, content: `cwd is not a directory: ${cwd}` };
       const scriptArgs = Array.isArray(args.args) ? args.args.map((item) => normalizeSkillScriptArg(String(item))) : [];
       const timeoutMs = normalizePositiveInt(args.timeoutMs ?? scriptDescriptor?.timeoutMs, DEFAULT_SCRIPT_TIMEOUT_MS, MAX_SCRIPT_TIMEOUT_MS);
+      const pipDependencies = scriptDescriptor?.dependencies?.pip ?? [];
+      const effectiveNetwork = Boolean(scriptDescriptor?.network || pipDependencies.length > 0);
       const startedAuditLogPath = appendSkillExecutionAuditLog({
         runId: context?.runId,
         threadId: context?.threadId,
@@ -171,8 +173,9 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
         args: scriptArgs,
         scriptRuntime: scriptDescriptor?.runtime,
         scriptRisk: scriptDescriptor?.risk,
-        network: scriptDescriptor?.network,
-        writes: scriptDescriptor?.writes
+        network: effectiveNetwork,
+        writes: scriptDescriptor?.writes,
+        pipDependencies
       });
       context?.emitUiEvent?.('skill.script.started', {
         runId: context.runId,
@@ -184,8 +187,9 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
         auditLogPath: startedAuditLogPath,
         scriptRuntime: scriptDescriptor?.runtime,
         scriptRisk: scriptDescriptor?.risk,
-        network: scriptDescriptor?.network,
+        network: effectiveNetwork,
         writes: scriptDescriptor?.writes,
+        pipDependencies,
         createdAt: new Date().toISOString()
       });
       context?.onLog?.({
@@ -200,10 +204,27 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
           auditLogPath: startedAuditLogPath,
           scriptRuntime: scriptDescriptor?.runtime,
           scriptRisk: scriptDescriptor?.risk,
-          network: scriptDescriptor?.network,
-          writes: scriptDescriptor?.writes
+          network: effectiveNetwork,
+          writes: scriptDescriptor?.writes,
+          pipDependencies
         }
       });
+      let dependencySummary: Awaited<ReturnType<typeof ensurePipDependencies>> | null = null;
+      if (pipDependencies.length > 0 && isPythonScriptRuntime(scriptDescriptor?.runtime, scriptPath)) {
+        context?.onLog?.({ scope: 'runtime', message: 'skill script dependency preflight', data: { skillName: skill.name, scriptPath, pipDependencies } });
+        dependencySummary = await ensurePipDependencies({ packages: pipDependencies, cwd, signal });
+        context?.onLog?.({
+          scope: 'runtime',
+          message: 'skill script dependency preflight completed',
+          data: {
+            skillName: skill.name,
+            scriptPath,
+            pipDependencies,
+            installed: dependencySummary.installed,
+            alreadyAvailable: dependencySummary.alreadyAvailable
+          }
+        });
+      }
       const result = await runSkillScript(script, scriptArgs, cwd, timeoutMs, signal);
       const completedEvent = result.exitCode === 0 ? 'skill.script.completed' : 'skill.script.failed';
       const auditLogPath = appendSkillExecutionAuditLog({
@@ -221,10 +242,13 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
         timedOut: result.timedOut,
         scriptRuntime: scriptDescriptor?.runtime,
         scriptRisk: scriptDescriptor?.risk,
-        network: scriptDescriptor?.network,
+        network: effectiveNetwork,
         writes: scriptDescriptor?.writes,
         stdoutPreview: result.stdout.slice(0, 2000),
-        stderrPreview: result.stderr.slice(0, 2000)
+        stderrPreview: result.stderr.slice(0, 2000),
+        pipDependencies,
+        installedDependencies: dependencySummary?.installed ?? [],
+        availableDependencies: dependencySummary?.alreadyAvailable ?? []
       });
       const eventPayload = {
         runId: context?.runId,
@@ -239,10 +263,13 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
         timedOut: result.timedOut,
         scriptRuntime: scriptDescriptor?.runtime,
         scriptRisk: scriptDescriptor?.risk,
-        network: scriptDescriptor?.network,
+        network: effectiveNetwork,
         writes: scriptDescriptor?.writes,
         stdoutPreview: result.stdout.slice(0, 2000),
         stderrPreview: result.stderr.slice(0, 2000),
+        pipDependencies,
+        installedDependencies: dependencySummary?.installed ?? [],
+        availableDependencies: dependencySummary?.alreadyAvailable ?? [],
         completedAt: new Date().toISOString()
       };
       context?.onLog?.({ scope: 'runtime', message: 'skill script completed', data: eventPayload });
@@ -253,6 +280,7 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
         scriptDescriptor?.runtime ? `runtime: ${scriptDescriptor.runtime}` : '',
         scriptDescriptor?.risk ? `risk: ${scriptDescriptor.risk}` : '',
         result.stdout ? `stdout:\n${result.stdout}` : '',
+        dependencySummary ? `dependencies: pip installed=[${dependencySummary.installed.join(', ')}] available=[${dependencySummary.alreadyAvailable.join(', ')}]` : '',
         result.stderr ? `stderr:\n${result.stderr}` : ''
       ].filter(Boolean).join('\n\n');
       return { ok: result.exitCode === 0, content, data: { ...eventPayload, stdout: result.stdout, stderr: result.stderr } };
@@ -295,7 +323,8 @@ function decideSkillScriptPolicy(
   }
 
   const descriptorRisk = scriptDescriptor?.risk ?? skill.risk;
-  const network = Boolean(scriptDescriptor?.network || descriptorRisk === 'network' || descriptorRisk === 'external');
+  const hasDependencies = hasScriptDependencies(scriptDescriptor);
+  const network = Boolean(scriptDescriptor?.network || hasDependencies || descriptorRisk === 'network' || descriptorRisk === 'external');
   const writes = Boolean(scriptDescriptor?.writes || descriptorRisk === 'write' || descriptorRisk === 'destructive');
   const destructive = descriptorRisk === 'destructive';
   const approvalRisk: 'low' | 'medium' | 'high' = destructive ? 'high' : network || writes || descriptorRisk === 'external' ? 'medium' : 'low';
@@ -308,6 +337,7 @@ function decideSkillScriptPolicy(
     `Skill 来源：${skill.source}`,
     scriptDescriptor?.description ? `脚本说明：${scriptDescriptor.description}` : '',
     scriptDescriptor?.runtime ? `runtime：${scriptDescriptor.runtime}` : '',
+    formatScriptDependencyLine(scriptDescriptor),
     `声明风险：${descriptorRisk}`,
     `network：${network ? 'yes' : 'no'}`,
     `writes：${writes ? 'yes' : 'no'}`,
@@ -334,6 +364,25 @@ function decideSkillScriptPolicy(
 
 
 
+
+
+function hasScriptDependencies(script: SkillCatalogItem['scripts'][number] | null | undefined) {
+  return Boolean(script?.dependencies?.pip?.length || script?.dependencies?.npm?.length || script?.dependencies?.system?.length);
+}
+
+function formatScriptDependencyLine(script: SkillCatalogItem['scripts'][number] | null | undefined) {
+  const parts = [
+    script?.dependencies?.pip?.length ? `pip=[${script.dependencies.pip.join(',')}]` : '',
+    script?.dependencies?.npm?.length ? `npm=[${script.dependencies.npm.join(',')}]` : '',
+    script?.dependencies?.system?.length ? `system=[${script.dependencies.system.join(',')}]` : ''
+  ].filter(Boolean);
+  return parts.length > 0 ? `依赖：${parts.join(' ')}` : '';
+}
+
+function isPythonScriptRuntime(runtime: string | undefined, scriptPath: string) {
+  const value = (runtime || '').toLowerCase();
+  return scriptPath.endsWith('.py') || value === 'python' || value === 'python3' || value.startsWith('python');
+}
 
 function findDeclaredScript(skill: SkillCatalogItem, scriptPath: string) {
   const normalized = scriptPath.replace(/^\/+/, '').split('\\').join('/');
@@ -375,6 +424,7 @@ function normalizeSkillScriptArg(value: string) {
 function enforceSkillAllowedTool(skill: SkillCatalogItem, toolName: string) {
   if (skill.allowedTools.length === 0) return null;
   if (skill.allowedTools.includes(toolName)) return null;
+  if (toolName === 'skill_script' && skill.scripts.length > 0) return null;
   return {
     ok: false,
     content: `Skill ${skill.name} does not allow tool ${toolName}. allowedTools=${skill.allowedTools.join(', ')}`,

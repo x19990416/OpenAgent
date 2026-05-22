@@ -16,6 +16,8 @@ export interface OpenAgentPiSessionInput {
   selectedModel: unknown;
   customTools: ToolDefinition<any, unknown>[];
   thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | string;
+  sessionReplayMode?: 'thread' | 'tool_minimal';
+  runId?: string;
 }
 
 export interface OpenAgentPiSessionHandle {
@@ -26,7 +28,9 @@ export interface OpenAgentPiSessionHandle {
 
 export async function createOpenAgentPiSession(input: OpenAgentPiSessionInput): Promise<OpenAgentPiSessionHandle> {
   const agentDir = resolveAgentDir(input.openAgentSessionFile);
-  const piSessionFile = resolvePiSessionFile(input.openAgentSessionFile);
+  const piSessionFile = input.sessionReplayMode === 'tool_minimal'
+    ? resolvePiToolMinimalSessionFile(input.openAgentSessionFile, input.runId || 'run')
+    : resolvePiSessionFile(input.openAgentSessionFile);
   const settingsManager = SettingsManager.create();
   const sessionManager = SessionManager.open(piSessionFile);
   const resourceLoader = new DefaultResourceLoader({
@@ -65,4 +69,12 @@ export function resolvePiSessionFile(openAgentSessionFile: string) {
   const piSessionsDir = path.join(sessionsDir, 'pi');
   mkdirSync(piSessionsDir, { recursive: true });
   return path.join(piSessionsDir, path.basename(openAgentSessionFile));
+}
+
+export function resolvePiToolMinimalSessionFile(openAgentSessionFile: string, runId: string) {
+  const sessionsDir = path.dirname(openAgentSessionFile);
+  const piSessionsDir = path.join(sessionsDir, 'pi-tool-minimal');
+  mkdirSync(piSessionsDir, { recursive: true });
+  const safeRunId = runId.replace(/[^A-Za-z0-9_.-]/g, '-');
+  return path.join(piSessionsDir, `${path.basename(openAgentSessionFile)}.${safeRunId}.jsonl`);
 }

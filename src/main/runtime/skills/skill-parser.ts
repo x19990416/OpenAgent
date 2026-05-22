@@ -125,17 +125,17 @@ function collectSkillScripts(skillJson: Record<string, unknown>): SkillScriptDes
       timeoutMs: typeof record.timeoutMs === 'number' && Number.isFinite(record.timeoutMs) && record.timeoutMs > 0 ? Math.floor(record.timeoutMs) : undefined,
       network: typeof record.network === 'boolean' ? record.network : undefined,
       writes: typeof record.writes === 'boolean' ? record.writes : undefined,
-      dependencies: normalizeScriptDependencies(record.dependencies)
+      dependencies: normalizeScriptDependencies(record.dependencies, record)
     });
   }
   return scripts;
 }
 
-function normalizeScriptDependencies(input: unknown) {
+function normalizeScriptDependencies(input: unknown, scriptRecord: Record<string, unknown> = {}) {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const pip = normalizeStringArray(record.pip);
-  const npm = normalizeStringArray(record.npm);
-  const system = normalizeStringArray(record.system);
+  const pip = normalizeStringArray(record.pip || scriptRecord.pipDependencies || scriptRecord.pip);
+  const npm = normalizeStringArray(record.npm || scriptRecord.npmDependencies || scriptRecord.npm);
+  const system = normalizeStringArray(record.system || scriptRecord.systemDependencies || scriptRecord.system);
   if (pip.length === 0 && npm.length === 0 && system.length === 0) return undefined;
   return { pip, npm, system };
 }

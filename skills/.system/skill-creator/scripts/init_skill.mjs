@@ -15,7 +15,7 @@ const output = path.resolve(args.output || defaultOutputDir(name));
 const risk = normalizeRisk(args.risk || 'read');
 const version = normalizeVersion(args.version || '0.1.0');
 const tags = splitList(args.tags || 'skill');
-const allowedTools = splitList(args.allowedTools || 'skill_load,skill_resource');
+const allowedTools = splitList(args.allowedTools || 'skill_load,skill_resource,skill_script');
 
 if (existsSync(output) && !args.overwrite) {
   fail(`Destination already exists: ${output}. Pass --overwrite to replace files in place.`);
@@ -67,4 +67,4 @@ function defaultOutputDir(name) {
   return path.join(cwd, 'skills', name);
 }
 function fail(message) { console.error(JSON.stringify({ ok: false, error: message }, null, 2)); process.exit(1); }
-function printHelp() { console.log('Usage: init_skill.mjs --name <skill-name> [--description <text>] [--output <dir>] [--tags a,b] [--version 0.1.0] [--risk read|write|network|external|destructive] [--allowedTools skill_load,skill_resource] [--overwrite]'); }
+function printHelp() { console.log('Usage: init_skill.mjs --name <skill-name> [--description <text>] [--output <dir>] [--tags a,b] [--version 0.1.0] [--risk read|write|network|external|destructive] [--allowedTools skill_load,skill_resource,skill_script] [--overwrite]'); }

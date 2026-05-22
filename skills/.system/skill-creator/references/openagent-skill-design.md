@@ -5,6 +5,7 @@
 - Declare `version` in both `SKILL.md` frontmatter and `skill.json`; keep them identical. Default new skills to `0.1.0` unless the user provides a version.
 - Use progressive disclosure: summarize core workflow in `SKILL.md`; move long details to `references/`, `examples/`, and `templates/`.
 - Scripts must live under `scripts/` and be declared in `skill.json` before `skill_script` can run them.
+- Scripted skills must include `skill_script` in `SKILL.md` frontmatter `allowed-tools` and `skill.json.allowedTools`; default new skills may include it even before scripts are added so later script additions do not become unreachable.
 - Declare script metadata honestly: runtime, risk, timeout, network, writes, and public package dependencies.
 - For scripted skills, declare public runtime dependencies in `skill.json.scripts[].dependencies` (for example `pip: ["pypdf"]` or `npm: ["some-package"]`) and add a `requirements.txt` / package metadata file when useful. Do not hide public dependencies in `.env`.
 - Example script declaration: `{ "path": "scripts/merge_pdfs.py", "runtime": "python", "risk": "write", "network": false, "writes": true, "timeoutMs": 30000, "dependencies": { "pip": ["pypdf"] } }`.

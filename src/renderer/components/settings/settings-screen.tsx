@@ -53,6 +53,9 @@ import type {
   LlmProviderKindDefinition,
   LlmProviderKind,
   OpenAgentAppSettings,
+  OpenAgentLogFileInfo,
+  OpenAgentLogReadResult,
+  OpenAgentLogRequestTestResult,
   PluginRegistrySnapshot,
   SkillCatalogItem,
   UpsertLlmProviderInput,
@@ -104,6 +107,7 @@ const navItems: Array<{
 }> = [
   { key: 'models', label: '模型', icon: Bot },
   { key: 'config', label: '设置', icon: Settings2 },
+  { key: 'logs', label: '日志', icon: FileText },
   { key: 'plugins', label: '插件', icon: Puzzle },
   { key: 'skills', label: 'Skills', icon: WandSparkles },
   { key: 'knowledge', label: '知识库', icon: Database }
@@ -119,6 +123,7 @@ const pageTitles: Record<SettingsTab, string> = {
   skills: 'Skills',
   knowledge: '知识库',
   config: '配置',
+  logs: '日志',
   personalization: '个性化',
   account: '账户',
   mcp: 'MCP 服务器',
@@ -191,6 +196,7 @@ const pageRows: Record<SettingsTab, SettingRow[]> = {
   plugins: [],
   skills: [],
   knowledge: [],
+  logs: [],
   config: [
     { title: '工作区默认行为', description: '设置启动后的默认动作', kind: 'select', value: '恢复上次状态' },
     { title: '模型切换提示', description: '是否显示模型切换时的提示信息', kind: 'toggle', value: true },
@@ -3810,6 +3816,578 @@ function PluginPanel() {
   );
 }
 
+
+
+interface ParsedLogEntry {
+  id: string;
+  timestamp?: string;
+  level?: string;
+  scope?: string;
+  message: string;
+  detail: string;
+}
+
+interface LogEntrySummary {
+  kind: string;
+  model: string;
+  totalTokens: string;
+  summary: string;
+}
+
+type LogRow = { entry: ParsedLogEntry; summary: LogEntrySummary };
+
+function parseLogEntries(content: string): ParsedLogEntry[] {
+  const lines = content.split(/\r?\n/);
+  const entries: ParsedLogEntry[] = [];
+  let current: ParsedLogEntry | null = null;
+  const headerPattern = /^\[([^\]]+)]\s+\[([^\]]+)]\s+\[([^\]]+)]\s*(.*)$/;
+
+  const pushCurrent = () => {
+    if (current && (current.message.trim() || current.detail.trim())) {
+      entries.push({ ...current, detail: current.detail.trimEnd() });
+    }
+  };
+
+  lines.forEach((line, index) => {
+    const match = line.match(headerPattern);
+    if (match) {
+      pushCurrent();
+      current = {
+        id: `${match[1]}-${index}`,
+        timestamp: match[1],
+        level: match[2],
+        scope: match[3],
+        message: match[4]?.trim() || '(empty)',
+        detail: ''
+      };
+      return;
+    }
+
+    if (!current) {
+      if (!line.trim()) return;
+      current = {
+        id: `line-${index}`,
+        message: line.trim(),
+        detail: ''
+      };
+      return;
+    }
+
+    current.detail += `${line}\n`;
+  });
+
+  pushCurrent();
+  return entries;
+}
+
+function formatLogTimestamp(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function asLogRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readString(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function readNumber(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  if (!text.trim()) return null;
+  try {
+    return asLogRecord(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+function extractJsonObjectFromText(text: string, key: string) {
+  const keyIndex = text.indexOf(`"${key}"`);
+  if (keyIndex < 0) return null;
+  const start = text.indexOf('{', keyIndex);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return parseJsonObject(text.slice(start, index + 1));
+    }
+  }
+  return null;
+}
+
+function formatLogDetail(entry: ParsedLogEntry) {
+  const parsed = parseJsonObject(entry.detail);
+  if (parsed) return JSON.stringify(parsed, null, 2);
+  return entry.detail || entry.message;
+}
+
+function isLongReadableText(value: string) {
+  return value.length > 120 || value.includes('\n') || value.includes('<openagent-') || value.includes('<user-prompt>');
+}
+
+function renderLogDetailValue(value: unknown): ReactNode {
+  if (typeof value === 'string') {
+    const parsedNestedJson = parseJsonObject(value);
+    if (parsedNestedJson) {
+      return <pre className="settings-log-detail-code">{JSON.stringify(parsedNestedJson, null, 2)}</pre>;
+    }
+    return isLongReadableText(value)
+      ? <pre className="settings-log-detail-text">{value}</pre>
+      : <span className="settings-log-detail-inline-value">{value || '-'}</span>;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return <span className="settings-log-detail-inline-value">{String(value)}</span>;
+  }
+
+  if (value === null || value === undefined) {
+    return <span className="settings-log-detail-inline-value is-empty">null</span>;
+  }
+
+  return <pre className="settings-log-detail-code">{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function extractPromptFromLogEntry(entry: ParsedLogEntry) {
+  const detail = parseJsonObject(entry.detail);
+  const requestBody = asLogRecord(detail?.requestBody) ?? parseJsonObject(readString(detail, 'body'));
+  const messages = Array.isArray(requestBody?.messages) ? requestBody.messages : [];
+  const userMessage = [...messages].reverse().find((item) => {
+    const record = asLogRecord(item);
+    return record?.role === 'user' && typeof record.content === 'string';
+  });
+  const userRecord = asLogRecord(userMessage);
+  if (typeof userRecord?.content === 'string') return userRecord.content;
+  if (typeof requestBody?.prompt === 'string') return requestBody.prompt;
+  if (typeof requestBody?.input === 'string') return requestBody.input;
+  if (typeof detail?.prompt === 'string') return detail.prompt;
+  return '';
+}
+
+function renderLogDetail(entry: ParsedLogEntry) {
+  const parsed = parseJsonObject(entry.detail);
+  if (!parsed) {
+    return <pre className="settings-log-detail-pre">{formatLogDetail(entry)}</pre>;
+  }
+
+  return (
+    <div className="settings-log-detail-fields">
+      {Object.entries(parsed).map(([key, value]) => (
+        <section key={key} className={`settings-log-detail-field ${key === 'prompt' ? 'is-prompt' : ''}`}>
+          <div className="settings-log-detail-field-key">{key}</div>
+          <div className="settings-log-detail-field-value">{renderLogDetailValue(value)}</div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function summarizeLogEntry(entry: ParsedLogEntry): LogEntrySummary {
+  const detail = parseJsonObject(entry.detail);
+  const requestBody = asLogRecord(detail?.requestBody);
+  const responseJson = parseJsonObject(readString(detail, 'rawText'));
+  const responseUsage = asLogRecord(responseJson?.usage) ?? extractJsonObjectFromText(readString(detail, 'body'), 'usage');
+  const operation = readString(detail, 'operation');
+  const status = readNumber(detail, 'status');
+  const ok = typeof detail?.ok === 'boolean' ? String(detail.ok) : '';
+  const promptLength = readNumber(detail, 'promptLength');
+
+  const lowerMessage = entry.message.toLowerCase();
+  const kind = lowerMessage.includes('request')
+    ? 'request'
+    : lowerMessage.includes('response')
+      ? 'response'
+      : entry.message.includes('completed')
+        ? 'completed'
+        : entry.message.includes('failed')
+          ? 'failed'
+          : entry.message.includes('start')
+            ? 'start'
+            : entry.level || 'log';
+
+  const bodyText = readString(detail, 'body');
+  const modelFromBody = bodyText.match(/"model"\s*:\s*"([^"]+)"/)?.[1] ?? '';
+  const model =
+    readString(detail, 'model') ||
+    readString(requestBody, 'model') ||
+    readString(responseJson, 'model') ||
+    modelFromBody ||
+    '-';
+
+  const totalTokens = readNumber(responseUsage, 'total_tokens') ?? readNumber(asLogRecord(responseJson?.usage), 'total_tokens');
+  const summaryParts = [
+    operation || entry.scope || entry.message,
+    status ? `HTTP ${status}` : '',
+    ok ? `ok=${ok}` : '',
+    promptLength ? `prompt ${promptLength}` : '',
+    readNumber(detail, 'toolCount') !== undefined ? `tools ${readNumber(detail, 'toolCount')}` : '',
+    readNumber(detail, 'messageCount') !== undefined ? `messages ${readNumber(detail, 'messageCount')}` : '',
+    readNumber(detail, 'elapsedMs') !== undefined ? `${readNumber(detail, 'elapsedMs')}ms` : ''
+  ].filter(Boolean);
+
+  return {
+    kind,
+    model,
+    totalTokens: totalTokens !== undefined ? String(totalTokens) : '-',
+    summary: summaryParts.join(' · ') || entry.message
+  };
+}
+
+function LogsPanel() {
+  const [files, setFiles] = useState<OpenAgentLogFileInfo[]>([]);
+  const [selectedPath, setSelectedPath] = useState('');
+  const [rootPath, setRootPath] = useState('');
+  const [logResult, setLogResult] = useState<OpenAgentLogReadResult | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reading, setReading] = useState(false);
+  const [selectedLogRow, setSelectedLogRow] = useState<LogRow | null>(null);
+  const [logDetailExpanded, setLogDetailExpanded] = useState(false);
+  const [testingLogRequest, setTestingLogRequest] = useState(false);
+  const [logRequestTestResult, setLogRequestTestResult] = useState<OpenAgentLogRequestTestResult | null>(null);
+  const [showLogRequestEditor, setShowLogRequestEditor] = useState(false);
+  const [logRequestPromptDraft, setLogRequestPromptDraft] = useState('');
+
+  const loadLogs = async (preferredPath?: string) => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.listLogs) {
+      setFeedback({ type: 'error', text: '当前环境未挂载日志接口，请先重启桌面应用。' });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await desktopApi.listLogs();
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: `日志列表读取失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      const nextFiles = result.files ?? [];
+      setFiles(nextFiles);
+      setRootPath(result.rootPath ?? '');
+      const nextSelectedPath = preferredPath || (selectedPath && nextFiles.some((file) => file.path === selectedPath) ? selectedPath : nextFiles[0]?.path || '');
+      setSelectedPath(nextSelectedPath);
+      setFeedback(null);
+      if (nextSelectedPath) {
+        await readLog(nextSelectedPath);
+      } else {
+        setLogResult(null);
+      }
+    } catch (error) {
+      setFeedback({ type: 'error', text: `日志列表读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const readLog = async (filePath: string) => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.readLog) {
+      setFeedback({ type: 'error', text: '当前环境未挂载日志读取接口，请先重启桌面应用。' });
+      return;
+    }
+    if (!filePath) {
+      setLogResult(null);
+      return;
+    }
+
+    try {
+      setReading(true);
+      const result = await desktopApi.readLog({ path: filePath, maxBytes: 1024 * 1024 });
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: `日志读取失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      setLogResult(result);
+      setSelectedPath(filePath);
+      setSelectedLogRow(null);
+      setLogDetailExpanded(false);
+      setLogRequestTestResult(null);
+      setShowLogRequestEditor(false);
+      setLogRequestPromptDraft('');
+      setFeedback(null);
+    } catch (error) {
+      setFeedback({ type: 'error', text: `日志读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setReading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadLogs();
+  }, []);
+
+  const openLog = async (action: 'open' | 'reveal') => {
+    const desktopApi = window.desktopApi;
+    const pathToOpen = logResult?.path || selectedPath;
+    if (!desktopApi?.openLogFile || !pathToOpen) return;
+    try {
+      const result = await desktopApi.openLogFile({ path: pathToOpen, action });
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: `日志文件打开失败：${result.error ?? '未知错误'}` });
+      }
+    } catch (error) {
+      setFeedback({ type: 'error', text: `日志文件打开失败：${error instanceof Error ? error.message : '未知错误'}` });
+    }
+  };
+
+  const logRows = useMemo<LogRow[]>(() => parseLogEntries(logResult?.content || '').slice(-1000).map((entry) => ({
+    entry,
+    summary: summarizeLogEntry(entry)
+  })), [logResult?.content]);
+
+  const openLogRequestEditor = () => {
+    if (!selectedLogRow) return;
+    setLogRequestPromptDraft((current) => current || extractPromptFromLogEntry(selectedLogRow.entry));
+    setShowLogRequestEditor(true);
+  };
+
+  const testSelectedLogRequest = async () => {
+    const desktopApi = window.desktopApi;
+    if (!selectedLogRow || selectedLogRow.summary.kind !== 'request') return;
+    if (!desktopApi?.testLogRequest) {
+      setLogRequestTestResult({ ok: false, error: '当前环境未挂载日志请求测试接口，请先重启桌面应用。' });
+      return;
+    }
+    try {
+      setTestingLogRequest(true);
+      setLogRequestTestResult(null);
+      const result = await desktopApi.testLogRequest({ detail: selectedLogRow.entry.detail, promptOverride: logRequestPromptDraft });
+      setLogRequestTestResult(result);
+    } catch (error) {
+      setLogRequestTestResult({ ok: false, error: error instanceof Error ? error.message : '请求测试失败' });
+    } finally {
+      setTestingLogRequest(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedLogRow && !logRows.some((row) => row.entry.id === selectedLogRow.entry.id)) {
+      setSelectedLogRow(null);
+      setLogDetailExpanded(false);
+      setLogRequestTestResult(null);
+    }
+  }, [logRows, selectedLogRow]);
+
+  return (
+    <div className="settings-stack settings-log-viewer">
+      <section className="settings-card settings-log-card">
+        <div className="settings-card-header">
+          <div>
+            <div className="settings-section-title">日志</div>
+            <div className="settings-section-description">
+              查看 OpenAgent 当前写入的运行日志，默认读取大文件尾部 1MB，并最多展示最近 1000 条，避免界面卡顿。{rootPath ? `目录：${rootPath}` : ''}
+            </div>
+          </div>
+          <div className="inline-actions">
+            <button className="toolbar-button" type="button" onClick={() => void loadLogs(selectedPath)} disabled={loading || reading}>
+              <RefreshCw size={14} />
+              刷新
+            </button>
+            <button className="toolbar-button" type="button" onClick={() => void openLog('reveal')} disabled={!selectedPath}>
+              <FolderOpen size={14} />
+              定位
+            </button>
+            <button className="toolbar-button" type="button" onClick={() => void openLog('open')} disabled={!selectedPath}>
+              <FileText size={14} />
+              打开
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-log-layout">
+          <aside className="settings-log-list" aria-label="日志文件列表">
+            {files.length > 0 ? files.map((file) => (
+              <button
+                key={file.path}
+                type="button"
+                className={`settings-log-file ${selectedPath === file.path ? 'active' : ''}`}
+                onClick={() => void readLog(file.path)}
+              >
+                <span className="settings-log-file-name">{file.relativePath}</span>
+                <span className="settings-log-file-meta">{formatBytes(file.size)} · {new Date(file.updatedAt).toLocaleString()}</span>
+              </button>
+            )) : (
+              <div className="settings-log-empty">{loading ? '正在读取日志列表…' : '暂无 .log / .jsonl / .txt 日志文件。'}</div>
+            )}
+          </aside>
+
+          <section className="settings-log-content">
+            <div className="settings-log-content-header">
+              <div>
+                <div className="settings-log-title">{logResult?.relativePath || '选择日志文件'}</div>
+                <div className="settings-log-meta">
+                  {logResult?.size ? `${formatBytes(logResult.size)} · 更新于 ${new Date(logResult.updatedAt || '').toLocaleString()}` : '左侧选择一个日志文件后查看内容'}
+                  {logResult?.truncated ? ' · 已显示文件尾部 1MB' : ''}{logRows.length >= 1000 ? ' · 最近 1000 条' : ''}
+                </div>
+              </div>
+              {reading ? <span className="settings-provider-muted">读取中…</span> : null}
+            </div>
+            <div className="settings-log-table-wrap">
+              {logRows.length > 0 ? (
+                <table className="settings-log-table">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>类型</th>
+                      <th>Model</th>
+                      <th>Total tokens</th>
+                      <th>摘要</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logRows.map(({ entry, summary }, index) => (
+                      <tr
+                        key={entry.id || index}
+                        className={selectedLogRow?.entry.id === entry.id ? 'is-selected' : ''}
+                        title="点击查看详情"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelectedLogRow({ entry, summary });
+                          setLogDetailExpanded(false);
+                          setLogRequestTestResult(null);
+                          setShowLogRequestEditor(false);
+                          setLogRequestPromptDraft(extractPromptFromLogEntry(entry));
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setSelectedLogRow({ entry, summary });
+                            setLogDetailExpanded(false);
+                            setLogRequestTestResult(null);
+                            setShowLogRequestEditor(false);
+                            setLogRequestPromptDraft(extractPromptFromLogEntry(entry));
+                          }
+                        }}
+                      >
+                        <td className="settings-log-cell-time">{formatLogTimestamp(entry.timestamp)}</td>
+                        <td><span className={`settings-log-kind is-${summary.kind.toLowerCase()}`}>{summary.kind}</span></td>
+                        <td className="settings-log-cell-model">{summary.model}</td>
+                        <td className="settings-log-cell-number">{summary.totalTokens}</td>
+                        <td className="settings-log-cell-summary">
+                          <span className="settings-log-message">{entry.message}</span>
+                          <span className="settings-log-summary-detail">{summary.summary}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="settings-log-empty">{loading ? '正在加载…' : '暂无日志内容'}</div>
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+
+      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+
+      {selectedLogRow ? (
+        <div className="settings-modal-backdrop settings-log-detail-backdrop" role="presentation" onClick={() => setSelectedLogRow(null)}>
+          <div
+            className={`settings-modal panel panel-strong settings-log-detail-modal ${logDetailExpanded ? 'is-expanded' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-log-detail-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settings-modal-header settings-log-detail-header">
+              <div>
+                <div id="settings-log-detail-title" className="settings-log-detail-title">日志详情</div>
+                <div className="settings-log-meta">
+                  {formatLogTimestamp(selectedLogRow.entry.timestamp)} · {selectedLogRow.summary.kind} · {selectedLogRow.summary.model}
+                </div>
+              </div>
+              <div className="inline-actions">
+                {selectedLogRow.summary.kind === 'request' ? (
+                  <button className="toolbar-button is-accent" type="button" onClick={openLogRequestEditor}>
+                    测试请求
+                  </button>
+                ) : null}
+                <button className="toolbar-button" type="button" onClick={() => setLogDetailExpanded((value) => !value)}>
+                  {logDetailExpanded ? '还原' : '放大'}
+                </button>
+                <button className="settings-modal-close" type="button" onClick={() => setSelectedLogRow(null)} aria-label="关闭">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="settings-log-detail-modal-body">
+              <div className="settings-log-detail-grid">
+                <div><span>Level</span><strong>{selectedLogRow.entry.level || '-'}</strong></div>
+                <div><span>Scope</span><strong>{selectedLogRow.entry.scope || '-'}</strong></div>
+                <div><span>Model</span><strong>{selectedLogRow.summary.model}</strong></div>
+                <div><span>Total tokens</span><strong>{selectedLogRow.summary.totalTokens}</strong></div>
+              </div>
+              <div className="settings-log-detail-message">{selectedLogRow.entry.message}</div>
+              {selectedLogRow.summary.kind === 'request' && showLogRequestEditor ? (
+                <div className="settings-log-request-editor">
+                  <div className="settings-log-request-editor-header">
+                    <div>
+                      <strong>测试请求 Prompt</strong>
+                      <span>可先修改 prompt，再发送这条 request。</span>
+                    </div>
+                    <div className="inline-actions">
+                      <button className="toolbar-button" type="button" onClick={() => setLogRequestPromptDraft(extractPromptFromLogEntry(selectedLogRow.entry))}>还原</button>
+                      <button className="toolbar-button is-accent" type="button" onClick={() => void testSelectedLogRequest()} disabled={testingLogRequest}>
+                        {testingLogRequest ? '发送中…' : '发送测试请求'}
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    className="settings-log-request-prompt"
+                    value={logRequestPromptDraft}
+                    onChange={(event) => setLogRequestPromptDraft(event.target.value)}
+                    placeholder="未能从 request 中提取 prompt，可在这里手动输入。"
+                  />
+                </div>
+              ) : null}
+              {logRequestTestResult ? (
+                <div className={`settings-log-test-result ${logRequestTestResult.ok ? 'is-ok' : 'is-error'}`}>
+                  <div className="settings-log-test-result-header">
+                    <strong>{logRequestTestResult.ok ? '测试成功' : '测试失败'}</strong>
+                    <span>{logRequestTestResult.status ? `${logRequestTestResult.status} ${logRequestTestResult.statusText ?? ''}` : logRequestTestResult.error}</span>
+                  </div>
+                  {logRequestTestResult.url ? <div className="settings-log-test-url">{logRequestTestResult.method} {logRequestTestResult.url}</div> : null}
+                  {logRequestTestResult.responseBody ? <pre className="settings-log-detail-code">{logRequestTestResult.responseBody}</pre> : null}
+                </div>
+              ) : null}
+              {renderLogDetail(selectedLogRow.entry)}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AppConfigPanel() {
   const [settings, setSettings] = useState<OpenAgentAppSettings | null>(null);
   const [configPath, setConfigPath] = useState('');
@@ -4082,6 +4660,8 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
             ) : currentTab === 'config' ? (
               <AppConfigPanel />
+            ) : currentTab === 'logs' ? (
+              <LogsPanel />
             ) : currentTab === 'plugins' ? (
               <PluginPanel />
             ) : currentTab === 'skills' ? (
