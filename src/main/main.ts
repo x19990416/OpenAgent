@@ -28,12 +28,15 @@ const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173';
+const appId = 'com.openagent.desktop';
+const appIconPath = isDev ? path.resolve(__dirname, '../../build/icon.ico') : undefined;
 
 let mainWindow: BrowserWindow | null = null;
 const createdAt = new Date().toISOString();
 
 const activePiModelConfig = getOpenAgentPiModelConfig();
 const activeAgentId = 'main';
+const appRoot = app.getAppPath();
 const defaultWorkspaceRoot = resolveDefaultAgentWorkspaceRoot(activeAgentId);
 
 const pluginService = new PluginService();
@@ -50,6 +53,7 @@ const workspace = {
 
 const runtimeService = new RuntimeService({
   agentId: activeAgentId,
+  appRoot,
   workspaceName: workspace.name,
   workspaceRoot: workspace.rootPath,
   branch: workspace.branch,
@@ -658,6 +662,7 @@ async function createWindow() {
     minWidth: 1080,
     minHeight: 720,
     title: 'OpenAgent Desktop',
+    icon: appIconPath,
     backgroundColor: '#f5f5f7',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -677,6 +682,10 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(appId);
+  }
+
   await pluginService.initialize();
   registerIpc();
   await createWindow();

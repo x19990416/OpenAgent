@@ -63,7 +63,7 @@ export class RuntimeService {
     this.knowledgeService = new KnowledgeService(options.agentId);
     this.knowledgeContextRouter = new KnowledgeContextRouter();
     this.planService = new PlanService(options.agentId);
-    this.skillService = new SkillService({ agentId: options.agentId, workspaceRoot: options.workspaceRoot });
+    this.skillService = new SkillService({ agentId: options.agentId, workspaceRoot: options.workspaceRoot, appRoot: options.appRoot });
     this.soulManager = new SoulManager({
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,

@@ -11,11 +11,13 @@
     "typecheck": "tsc -p tsconfig.renderer.json --pretty false && tsc -p tsconfig.electron.json --pretty false --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "build:mac": "bash scripts/build-macos.sh",
-    "build:win": "bash scripts/build-windows.sh",
+    "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-installer.ps1",
+    "build:win:bash": "bash scripts/build-windows.sh",
     "build:all": "bash scripts/build-all.sh",
     "package:macos:app": "bash scripts/package-macos-app.sh",
     "package:macos:dmg": "bash scripts/package-macos-dmg.sh",
-    "package:windows:installer": "bash scripts/package-windows-installer.sh",
+    "package:windows:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows-installer.ps1",
+    "package:windows:installer:bash": "bash scripts/package-windows-installer.sh",
     "smoke:skills": "node scripts/smoke-skill-system.mjs",
     "build:main": "tsc -b tsconfig.electron.json --force",
     "e2e:skill-selected": "node scripts/e2e-skill-selected.mjs",
@@ -25,10 +27,39 @@
     "smoke:plugin-skills": "node scripts/smoke-plugin-skills.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.73.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1040.0",
+    "@google/genai": "1.51.0",
+    "@mariozechner/clipboard": "0.3.2",
+    "@mariozechner/jiti": "2.6.2",
     "@mariozechner/pi-agent-core": "0.64.0",
     "@mariozechner/pi-ai": "0.64.0",
     "@mariozechner/pi-coding-agent": "0.64.0",
-    "mermaid": "^11.15.0"
+    "@mariozechner/pi-tui": "0.64.0",
+    "@mistralai/mistralai": "1.14.1",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "@sinclair/typebox": "0.34.49",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "chalk": "5.6.2",
+    "cli-highlight": "2.1.11",
+    "diff": "8.0.2",
+    "extract-zip": "2.0.1",
+    "file-type": "21.1.1",
+    "glob": "13.0.1",
+    "hosted-git-info": "9.0.2",
+    "ignore": "7.0.5",
+    "marked": "15.0.12",
+    "mermaid": "^11.15.0",
+    "minimatch": "10.2.3",
+    "openai": "6.26.0",
+    "partial-json": "0.1.7",
+    "proper-lockfile": "4.1.2",
+    "proxy-agent": "6.5.0",
+    "strip-ansi": "7.1.0",
+    "undici": "7.19.1",
+    "yaml": "2.8.2",
+    "zod-to-json-schema": "3.25.2"
   },
   "devDependencies": {
     "@types/node": "latest",
@@ -51,5 +82,10 @@
   },
   "bin": {
     "openagent-skill": "scripts/openagent-skill.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
   }
 }

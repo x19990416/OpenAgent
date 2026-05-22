@@ -213,6 +213,7 @@ export interface AgentRuntimeAdapter {
 
 export interface RuntimeServiceOptions {
   agentId: string;
+  appRoot?: string;
   workspaceName: string;
   workspaceRoot: string;
   branch: string;

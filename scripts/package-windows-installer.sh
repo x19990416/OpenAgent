@@ -27,7 +27,7 @@ Environment:
   OPENAGENT_WIN_ARCH=x64|arm64  Default arch when --arch is not provided.
 
 Output:
-  release/*Setup*.exe
+  release/*Installer*.exe
 
 TODO(auto-update): keep this installer script as the stable baseline; add update feed
 metadata and publish configuration in a later auto-update task.
@@ -101,10 +101,10 @@ pnpm exec electron-builder \
 INSTALLERS=()
 while IFS= read -r artifact; do
   INSTALLERS+=("$artifact")
-done < <(find release -maxdepth 2 -type f -name '*Setup*.exe' | sort)
+done < <(find release -maxdepth 2 -type f -name '*Installer*.exe' | sort)
 
 if [[ "${#INSTALLERS[@]}" -eq 0 ]]; then
-  echo "Windows installer was not found under release/. Expected release/*Setup*.exe" >&2
+  echo "Windows installer was not found under release/. Expected release/*Installer*.exe" >&2
   exit 1
 fi
 
