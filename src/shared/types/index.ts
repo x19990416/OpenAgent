@@ -103,6 +103,38 @@ export interface PromptSubmissionResult {
   [key: string]: unknown;
 }
 
+
+export interface ModelUsageStatsRow {
+  providerId: string;
+  model: string;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  firstUsedAt: string;
+  lastUsedAt: string;
+}
+
+export interface ModelUsageStatsResult {
+  ok: boolean;
+  periodDays: number;
+  startedAt: string;
+  endedAt: string;
+  ledgerPath: string;
+  total: {
+    requestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cachedInputTokens: number;
+    reasoningOutputTokens: number;
+  };
+  rows: ModelUsageStatsRow[];
+  error?: string;
+}
+
 export interface OpenAgentAppSettings {
   schemaVersion: 'openagent.settings.v1';
   runtime: {
@@ -495,6 +527,8 @@ export interface DesktopApi {
   setActiveLlmProvider?: (payload: any) => Promise<any>;
   getAppSettings?: () => Promise<OpenAgentAppSettingsResult>;
   updateAppSettings?: (payload: Partial<{ runtime: Partial<OpenAgentAppSettings['runtime']> }>) => Promise<OpenAgentAppSettingsResult>;
+  getModelTokenUsageStats?: (payload?: { periodDays?: number }) => Promise<ModelUsageStatsResult>;
+  resetModelTokenUsageStats?: () => Promise<{ ok: boolean; ledgerPath?: string; resetAt?: string; error?: string }>;
   listLogs?: () => Promise<OpenAgentLogListResult>;
   readLog?: (payload: { path: string; maxBytes?: number }) => Promise<OpenAgentLogReadResult>;
   openLogFile?: (payload: { path: string; action?: 'open' | 'reveal' }) => Promise<{ ok: boolean; error?: string }>;

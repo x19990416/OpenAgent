@@ -9,6 +9,7 @@ import { PluginService } from './plugins/plugin-service.js';
 import { ScheduledTaskService } from './runtime/scheduled-task-service.js';
 import { getOpenAgentPath } from './runtime/openagent-home.js';
 import { getOpenAgentAppSettings, getOpenAgentAppSettingsPath, updateOpenAgentAppSettings } from './runtime/settings/openagent-settings.js';
+import { getModelUsageStats, resetModelUsageStats } from './runtime/model-usage-store.js';
 import {
   buildPiProviderCatalog,
   clearOpenAgentPiProviderApiKey,
@@ -934,6 +935,10 @@ function registerIpc() {
     settings: getOpenAgentAppSettings(),
     configPath: getOpenAgentAppSettingsPath()
   }));
+  ipcMain.handle('usage:get-model-token-stats', (_event, payload) => getModelUsageStats({
+    periodDays: typeof payload?.periodDays === 'number' ? payload.periodDays : 45
+  }));
+  ipcMain.handle('usage:reset-model-token-stats', () => resetModelUsageStats());
   ipcMain.handle('app-settings:update', (_event, payload) => {
     const settings = updateOpenAgentAppSettings(payload ?? {});
     const autoApproved = settings.runtime.autoApproveRuntimeApprovals

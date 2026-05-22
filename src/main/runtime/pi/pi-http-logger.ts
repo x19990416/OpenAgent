@@ -1,4 +1,5 @@
 import { appendLlmResponseLog } from '../runtime-info-logger.js';
+import { recordModelUsageFromResponse } from '../model-usage-store.js';
 
 export interface PiHttpLoggerInput {
   runId?: string;
@@ -82,6 +83,7 @@ function logFetchResponse(input: PiHttpLoggerInput, requestId: string, startedAt
 
   void cloned.text().then(
     (body) => {
+      const completedAtIso = completedAt();
       appendLlmResponseLog({
         scope: 'llm-http',
         message: 'Provider HTTP response',
@@ -89,7 +91,7 @@ function logFetchResponse(input: PiHttpLoggerInput, requestId: string, startedAt
           ...input,
           requestId,
           startedAt,
-          completedAt: completedAt(),
+          completedAt: completedAtIso,
           status: response.status,
           statusText: response.statusText,
           ok: response.ok,
@@ -98,6 +100,32 @@ function logFetchResponse(input: PiHttpLoggerInput, requestId: string, startedAt
           bodyLength: body.length
         }
       });
+      const usageRecord = recordModelUsageFromResponse({
+        source: 'pi-provider-http',
+        responseBody: body,
+        providerId: input.providerId,
+        model: input.model,
+        runId: input.runId,
+        threadId: input.threadId,
+        requestId,
+        status: response.status
+      });
+      if (usageRecord) {
+        appendLlmResponseLog({
+          scope: 'llm-http',
+          message: 'Provider HTTP token usage recorded',
+          data: {
+            ...input,
+            requestId,
+            createdAt: usageRecord.createdAt,
+            providerId: usageRecord.providerId,
+            model: usageRecord.model,
+            inputTokens: usageRecord.inputTokens,
+            outputTokens: usageRecord.outputTokens,
+            totalTokens: usageRecord.totalTokens
+          }
+        });
+      }
     },
     (error) => {
       appendLlmResponseLog({

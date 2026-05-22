@@ -89,6 +89,36 @@ export interface PromptSubmissionResult {
     error?: string;
     [key: string]: unknown;
 }
+
+export interface ModelUsageStatsRow {
+    providerId: string;
+    model: string;
+    requestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cachedInputTokens: number;
+    reasoningOutputTokens: number;
+    firstUsedAt: string;
+    lastUsedAt: string;
+}
+export interface ModelUsageStatsResult {
+    ok: boolean;
+    periodDays: number;
+    startedAt: string;
+    endedAt: string;
+    ledgerPath: string;
+    total: {
+        requestCount: number;
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        cachedInputTokens: number;
+        reasoningOutputTokens: number;
+    };
+    rows: ModelUsageStatsRow[];
+    error?: string;
+}
 export interface OpenAgentAppSettings {
     schemaVersion: 'openagent.settings.v1';
     runtime: {
@@ -386,6 +416,15 @@ export interface DesktopApi {
     updateAppSettings?: (payload: Partial<{
         runtime: Partial<OpenAgentAppSettings['runtime']>;
     }>) => Promise<OpenAgentAppSettingsResult>;
+    getModelTokenUsageStats?: (payload?: {
+        periodDays?: number;
+    }) => Promise<ModelUsageStatsResult>;
+    resetModelTokenUsageStats?: () => Promise<{
+        ok: boolean;
+        ledgerPath?: string;
+        resetAt?: string;
+        error?: string;
+    }>;
     listSkills?: () => Promise<SkillCatalogItem[]>;
     getSkillCatalog?: () => Promise<SkillCatalogItem[]>;
     refreshSkills?: () => Promise<SkillCatalogItem[]>;

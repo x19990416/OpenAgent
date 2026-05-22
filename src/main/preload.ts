@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
   setActiveLlmProvider: (payload: unknown) => ipcRenderer.invoke('llm:set-active', payload),
   getAppSettings: () => ipcRenderer.invoke('app-settings:get'),
   updateAppSettings: (payload: unknown) => ipcRenderer.invoke('app-settings:update', payload),
+  getModelTokenUsageStats: (payload?: unknown) => ipcRenderer.invoke('usage:get-model-token-stats', payload),
+  resetModelTokenUsageStats: () => ipcRenderer.invoke('usage:reset-model-token-stats'),
   listLogs: () => ipcRenderer.invoke('logs:list'),
   readLog: (payload: unknown) => ipcRenderer.invoke('logs:read', payload),
   openLogFile: (payload: unknown) => ipcRenderer.invoke('logs:open-file', payload),

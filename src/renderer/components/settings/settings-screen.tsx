@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Archive,
+  BarChart3,
   ArrowLeft,
   Bot,
   Box,
@@ -56,6 +57,7 @@ import type {
   OpenAgentLogFileInfo,
   OpenAgentLogReadResult,
   OpenAgentLogRequestTestResult,
+  ModelUsageStatsResult,
   PluginRegistrySnapshot,
   SkillCatalogItem,
   UpsertLlmProviderInput,
@@ -106,6 +108,7 @@ const navItems: Array<{
   icon: typeof Bot;
 }> = [
   { key: 'models', label: '模型', icon: Bot },
+  { key: 'usage', label: '统计', icon: BarChart3 },
   { key: 'config', label: '设置', icon: Settings2 },
   { key: 'logs', label: '日志', icon: FileText },
   { key: 'plugins', label: '插件', icon: Puzzle },
@@ -132,7 +135,7 @@ const pageTitles: Record<SettingsTab, string> = {
   workspace: '工作树',
   computer: '电脑使用',
   archived: '已归档聊天',
-  usage: '使用情况'
+  usage: 'Token 统计'
 };
 
 const pageRows: Record<SettingsTab, SettingRow[]> = {
@@ -4388,6 +4391,190 @@ function LogsPanel() {
   );
 }
 
+
+function ModelUsageStatsPanel() {
+  const [stats, setStats] = useState<ModelUsageStatsResult | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [resetting, setResetting] = useState(false);
+  const periodDays = 45;
+
+  const loadStats = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.getModelTokenUsageStats) {
+      setFeedback({ type: 'error', text: '当前环境未挂载模型 Token 统计接口，请先重启桌面应用。' });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await desktopApi.getModelTokenUsageStats({ periodDays });
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: `统计读取失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      setStats(result);
+      setFeedback(null);
+    } catch (error) {
+      setFeedback({ type: 'error', text: `统计读取失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const resetStats = async () => {
+    const desktopApi = window.desktopApi;
+    if (!desktopApi?.resetModelTokenUsageStats) {
+      setFeedback({ type: 'error', text: '当前环境未挂载模型 Token 统计重置接口，请先重启桌面应用。' });
+      return;
+    }
+
+    const confirmed = window.confirm('确认清空本机模型 Token 统计台账吗？该操作会重置当前统计数据，无法从统计页恢复。');
+    if (!confirmed) return;
+
+    try {
+      setResetting(true);
+      const result = await desktopApi.resetModelTokenUsageStats();
+      if (!result.ok) {
+        setFeedback({ type: 'error', text: `统计重置失败：${result.error ?? '未知错误'}` });
+        return;
+      }
+      setFeedback({ type: 'success', text: 'Token 统计已重置。' });
+      await loadStats();
+    } catch (error) {
+      setFeedback({ type: 'error', text: `统计重置失败：${error instanceof Error ? error.message : '未知错误'}` });
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadStats();
+  }, []);
+
+  const rows = stats?.rows ?? [];
+  const total = stats?.total ?? {
+    requestCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0
+  };
+
+  return (
+    <div className="settings-stack">
+      <section className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <div className="settings-section-title">模型 Token 消耗统计</div>
+            <div className="settings-section-description">
+              按提供方 / 模型统计最近 {periodDays} 天的模型请求 Token 消耗。新请求会自动记录到本机 JSONL 台账。
+            </div>
+          </div>
+          <div className="inline-actions">
+            <button className="toolbar-button" type="button" onClick={() => void loadStats()} disabled={loading || resetting}>
+              <RefreshCw size={14} />
+              刷新
+            </button>
+            <button className="danger-button" type="button" onClick={() => void resetStats()} disabled={loading || resetting}>
+              <RotateCcw size={14} />
+              {resetting ? '重置中…' : '重置'}
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-usage-summary-grid">
+          <div className="settings-provider-summary-item">
+            <span>总 Token</span>
+            <strong>{formatUsageNumber(total.totalTokens)}</strong>
+          </div>
+          <div className="settings-provider-summary-item">
+            <span>输入 Token</span>
+            <strong>{formatUsageNumber(total.inputTokens)}</strong>
+          </div>
+          <div className="settings-provider-summary-item">
+            <span>输出 Token</span>
+            <strong>{formatUsageNumber(total.outputTokens)}</strong>
+          </div>
+          <div className="settings-provider-summary-item">
+            <span>请求次数</span>
+            <strong>{formatUsageNumber(total.requestCount)}</strong>
+          </div>
+        </div>
+
+        <div className="settings-log-table-wrap settings-usage-table-wrap">
+          <table className="settings-log-table settings-usage-table">
+            <thead>
+              <tr>
+                <th>提供方 / 模型</th>
+                <th>请求</th>
+                <th>输入</th>
+                <th>输出</th>
+                <th>总量</th>
+                <th>最后使用</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length > 0 ? (
+                rows.map((row) => (
+                  <tr key={`${row.providerId}-${row.model}`}>
+                    <td>
+                      <div className="settings-usage-model-cell">
+                        <strong>{row.providerId}</strong>
+                        <code>{row.model}</code>
+                      </div>
+                    </td>
+                    <td className="settings-log-cell-number">{formatUsageNumber(row.requestCount)}</td>
+                    <td className="settings-log-cell-number">{formatUsageNumber(row.inputTokens)}</td>
+                    <td className="settings-log-cell-number">{formatUsageNumber(row.outputTokens)}</td>
+                    <td className="settings-log-cell-number">{formatUsageNumber(row.totalTokens)}</td>
+                    <td className="settings-log-cell-time">{formatUsageDate(row.lastUsedAt)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="settings-log-empty">
+                      {loading ? '正在读取统计…' : '暂无 Token 消耗记录。后续模型响应中包含 usage 字段时会自动写入统计台账。'}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="settings-card-row is-last">
+          <div className="settings-row">
+            <div className="settings-row-copy">
+              <div className="settings-row-title">统计周期与台账</div>
+              <div className="settings-row-description">
+                {stats ? `${formatUsageDate(stats.startedAt)} 至 ${formatUsageDate(stats.endedAt)}；${stats.ledgerPath}` : '统计周期固定为最近 45 天。'}
+              </div>
+            </div>
+            <span className="settings-provider-muted">本机记录</span>
+          </div>
+        </div>
+      </section>
+
+      {feedback ? <div className={`settings-inline-feedback ${feedback.type === 'success' ? 'success' : 'error'}`}>{feedback.text}</div> : null}
+    </div>
+  );
+}
+
+function formatUsageNumber(value: number) {
+  return new Intl.NumberFormat('zh-CN').format(value || 0);
+}
+
+function formatUsageDate(value: string) {
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return value || '-';
+  return new Date(time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 function AppConfigPanel() {
   const [settings, setSettings] = useState<OpenAgentAppSettings | null>(null);
   const [configPath, setConfigPath] = useState('');
@@ -4658,6 +4845,8 @@ export function SettingsScreen({ activeTab, onTabChange, onWorkspaceChange, onBa
 
             {currentTab === 'models' ? (
               <LlmProviderPanel onWorkspaceChange={onWorkspaceChange} />
+            ) : currentTab === 'usage' ? (
+              <ModelUsageStatsPanel />
             ) : currentTab === 'config' ? (
               <AppConfigPanel />
             ) : currentTab === 'logs' ? (
