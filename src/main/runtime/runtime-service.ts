@@ -1840,7 +1840,8 @@ function toPlanExecutionContext(plan: AgentPlan | null, selectedSkill?: SkillCat
     allowedTools: currentStep.allowedTools,
     riskLevel: currentStep.riskLevel,
     selectedSkillName: selectedSkill?.name,
-    selectedSkillHasScripts: Boolean(selectedSkill?.scripts.length)
+    selectedSkillHasScripts: Boolean(selectedSkill?.scripts.length),
+    selectedSkillSingleScriptPath: selectedSkill?.scripts.length === 1 ? selectedSkill.scripts[0].path : undefined
   };
 }
 
@@ -1852,7 +1853,8 @@ function toSelectedSkillExecutionContext(selectedSkill?: SkillCatalogItem | null
     mode: 'executing',
     riskLevel: selectedSkill.risk === 'destructive' ? 'high' : selectedSkill.risk === 'read' ? 'low' : 'medium',
     selectedSkillName: selectedSkill.name,
-    selectedSkillHasScripts: selectedSkill.scripts.length > 0
+    selectedSkillHasScripts: selectedSkill.scripts.length > 0,
+    selectedSkillSingleScriptPath: selectedSkill.scripts.length === 1 ? selectedSkill.scripts[0].path : undefined
   };
 }
 

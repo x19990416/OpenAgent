@@ -142,6 +142,7 @@ export interface PlanExecutionContext {
   riskLevel?: 'low' | 'medium' | 'high';
   selectedSkillName?: string;
   selectedSkillHasScripts?: boolean;
+  selectedSkillSingleScriptPath?: string;
 }
 
 export interface AgentRuntimeRunInput {

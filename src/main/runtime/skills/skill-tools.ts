@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import type { RuntimeTool, RuntimeToolPolicyDecision } from '../runtime-types.js';
+import type { PlanExecutionContext, RuntimeTool, RuntimeToolPolicyDecision } from '../runtime-types.js';
 import type { SkillCatalogItem } from './skill-types.js';
 import { appendSkillExecutionAuditLog } from './skill-audit-log.js';
 import { summarizeSkillMarkdown } from './skill-parser.js';
@@ -129,10 +129,22 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
       required: ['skillName', 'scriptPath'],
       additionalProperties: false
     },
-    policy: (toolInput) => decideSkillScriptPolicy(input, toolInput),
+    policy: (toolInput, planContext) => decideSkillScriptPolicy(input, toolInput, planContext),
     execute: async ({ input: toolInput, signal, context }) => {
       throwIfAborted(signal);
-      const args = asRecord(toolInput);
+      const planContext = context?.getPlanContext?.() ?? null;
+      const args = normalizeSelectedSkillScriptArgs(asRecord(toolInput), planContext);
+      if (args.__openagentAutoFilledSkillScript) {
+        context?.onLog?.({
+          scope: 'runtime',
+          message: 'skill_script selected-skill arguments auto-filled',
+          data: {
+            originalArgs: toolInput,
+            normalizedArgs: omitAutoFillMarker(args),
+            planContext
+          }
+        });
+      }
       const skill = input.requireSkill(String(args.skillName || ''));
       if (!skill.enabled) return { ok: false, content: `Skill is disabled: ${skill.name}` };
       const denied = enforceSkillAllowedTool(skill, 'skill_script');
@@ -291,9 +303,10 @@ function createSkillScriptTool(input: { requireSkill: (nameOrId: string) => Skil
 
 function decideSkillScriptPolicy(
   input: { requireSkill: (nameOrId: string) => SkillCatalogItem; workspaceRoot: string },
-  toolInput: unknown
+  toolInput: unknown,
+  planContext?: PlanExecutionContext | null
 ): RuntimeToolPolicyDecision {
-  const args = asRecord(toolInput);
+  const args = normalizeSelectedSkillScriptArgs(asRecord(toolInput), planContext ?? null);
   const skillName = String(args.skillName || '').trim();
   const scriptPath = String(args.scriptPath || '').trim();
   if (!skillName || !scriptPath) {
@@ -368,6 +381,35 @@ function decideSkillScriptPolicy(
 
 function hasScriptDependencies(script: SkillCatalogItem['scripts'][number] | null | undefined) {
   return Boolean(script?.dependencies?.pip?.length || script?.dependencies?.npm?.length || script?.dependencies?.system?.length);
+}
+
+function normalizeSelectedSkillScriptArgs(args: Record<string, unknown>, planContext?: PlanExecutionContext | null) {
+  const selectedSkillName = String(planContext?.selectedSkillName || '').trim();
+  const singleScriptPath = String(planContext?.selectedSkillSingleScriptPath || '').trim();
+  if (!selectedSkillName || !singleScriptPath) return args;
+
+  const next: Record<string, unknown> = { ...args };
+  let autoFilled = false;
+
+  if (isMissingSkillScriptValue(next.skillName)) {
+    next.skillName = selectedSkillName;
+    autoFilled = true;
+  }
+  if (isMissingSkillScriptValue(next.scriptPath)) {
+    next.scriptPath = singleScriptPath;
+    autoFilled = true;
+  }
+
+  return autoFilled ? { ...next, __openagentAutoFilledSkillScript: true } : next;
+}
+
+function isMissingSkillScriptValue(value: unknown) {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+function omitAutoFillMarker(args: Record<string, unknown>) {
+  const { __openagentAutoFilledSkillScript: _marker, ...rest } = args;
+  return rest;
 }
 
 function formatScriptDependencyLine(script: SkillCatalogItem['scripts'][number] | null | undefined) {

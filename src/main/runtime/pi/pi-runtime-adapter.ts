@@ -140,7 +140,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       const customTools = toPiToolDefinitions(
         input.tools,
         toolExecutor,
-        { onLog: input.onLog }
+        { onLog: input.onLog, getPlanContext: input.getPlanContext }
       );
 
       const { session, piSessionFile, agentDir } = await createOpenAgentPiSession({

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
-import type { RuntimeLogEntry, RuntimeTool } from '../runtime-types.js';
+import type { PlanExecutionContext, RuntimeLogEntry, RuntimeTool } from '../runtime-types.js';
 import { ToolExecutor } from '../tool-executor.js';
 import { normalizePiToolParametersWithReport } from './pi-tool-schema.js';
 
@@ -11,7 +11,7 @@ export function toPiToolDefinitionsPlaceholder(tools: RuntimeTool[]) {
   }));
 }
 
-export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor, options: { onLog?: (entry: RuntimeLogEntry) => void } = {}): ToolDefinition<any, unknown>[] {
+export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor, options: { onLog?: (entry: RuntimeLogEntry) => void; getPlanContext?: () => PlanExecutionContext | null } = {}): ToolDefinition<any, unknown>[] {
   const markerRepairIssued = new Set<string>();
   return tools.map((tool) => {
     const schema = normalizePiToolParametersWithReport(tool.parameters);
@@ -29,7 +29,15 @@ export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor
     promptSnippet: tool.description,
     parameters: schema.parameters as any,
     async execute(toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: (partialResult: { content: Array<{ type: 'text'; text: string }>; details: unknown }) => void) {
-      const jsonRetry = buildStructuredToolJsonRetry(tool.name, schema.parameters, params, {
+      const normalizedParams = normalizeSelectedSkillScriptParams(tool.name, params, options.getPlanContext?.() ?? null);
+      if (normalizedParams !== params) {
+        options.onLog?.({
+          scope: 'runtime',
+          message: 'structured tool call arguments normalized from selected skill context',
+          data: { toolName: tool.name, toolCallId, receivedParams: params, normalizedParams }
+        });
+      }
+      const jsonRetry = buildStructuredToolJsonRetry(tool.name, schema.parameters, normalizedParams, {
         allowMarkerRepair: !markerRepairIssued.has(tool.name)
       });
       if (jsonRetry) {
@@ -51,7 +59,7 @@ export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor
       const result = await executor.execute({
         toolName: tool.name,
         toolCallId,
-        args: params,
+        args: normalizedParams,
         signal: signal ?? new AbortController().signal
       });
       const toolResult = {
@@ -63,6 +71,25 @@ export function toPiToolDefinitions(tools: RuntimeTool[], executor: ToolExecutor
     }
   };
   });
+}
+
+function normalizeSelectedSkillScriptParams(toolName: string, params: unknown, planContext?: PlanExecutionContext | null) {
+  if (toolName !== 'skill_script' || !isPlainRecord(params)) return params;
+  const selectedSkillName = String(planContext?.selectedSkillName || '').trim();
+  const singleScriptPath = String(planContext?.selectedSkillSingleScriptPath || '').trim();
+  if (!selectedSkillName || !singleScriptPath) return params;
+
+  const next: Record<string, unknown> = { ...params };
+  let changed = false;
+  if (isMissingRequiredValue(next.skillName)) {
+    next.skillName = selectedSkillName;
+    changed = true;
+  }
+  if (isMissingRequiredValue(next.scriptPath)) {
+    next.scriptPath = singleScriptPath;
+    changed = true;
+  }
+  return changed ? next : params;
 }
 
 function buildStructuredToolJsonRetry(toolName: string, parameters: unknown, params: unknown, options: { allowMarkerRepair?: boolean } = {}) {
