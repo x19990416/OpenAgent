@@ -595,7 +595,7 @@ export interface SkillSummary {
 建议新增目录：
 
 ```text
-src/main/runtime/skills/
+packages/skill-runtime/src/
 ├── skill-service.ts
 ├── skill-discovery.ts
 ├── skill-parser.ts
@@ -781,7 +781,7 @@ type SkillUiEvent =
 
 ### M1：Skill 包发现与 Catalog
 
-- 新增 `src/main/runtime/skills/`。
+- 新增 `packages/skill-runtime/src/`。
 - 扫描 `~/.openagent/agents/<agentId>/skills/`。
 - 解析 `SKILL.md` frontmatter。
 - 实现 `skills:list` IPC，替换当前空数组。
@@ -836,8 +836,8 @@ type SkillUiEvent =
 - `docs/plugins.md`：继续负责插件标准；Plugin Skill 需要汇入本文定义的 SkillService。
 - `docs/knowledge.md`：继续负责 system wiki；Skill references 不自动进入 system wiki。
 - `docs/subagents.md`：`pi_coding_agent` 可以使用 Skill，但 Skill 不是子 agent。
-- `src/main/runtime/plugin-resolver.ts`：只保留插件 agent/tool 摘要；插件 skill 能力应通过 `PluginService.getSkillPackages()` 汇入 `SkillService`。
-- `src/main/main.ts`：`skills:list` 应返回 `SkillService` 的真实 catalog。
+- `apps/desktop/src/main/runtime/plugin-resolver.ts`：只保留插件 agent/tool 摘要；插件 skill 能力应通过 `PluginService.getSkillPackages()` 汇入 `SkillService`。
+- `apps/desktop/src/main/main.ts`：`skills:list` 应返回 `SkillService` 的真实 catalog。
 
 ## 22. 参考资料
 

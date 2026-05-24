@@ -99,7 +99,7 @@ stateDiagram-v2
 新增 runtime planning 模块：
 
 ```text
-src/main/runtime/planning/
+apps/desktop/src/main/runtime/planning/
 ├── plan-types.ts        # AgentPlan / AgentPlanStep / PlanMode 类型
 ├── plan-service.ts      # 创建、修订、确认、取消计划
 ├── plan-store.ts        # 持久化和恢复计划
@@ -405,7 +405,7 @@ Renderer 不应该：
 ### Phase 1：文档与类型骨架
 
 - 新增 `docs/plan-mode.md`。
-- 新增 `src/main/runtime/planning/plan-types.ts`。
+- 新增 `apps/desktop/src/main/runtime/planning/plan-types.ts`。
 - 扩展 shared UI event 类型，兼容当前 `plan.updated`。
 - 在 `agents.md` 中把 Plan Mode 路由到本文档。
 
@@ -519,7 +519,7 @@ Plan Mode 执行阶段必须区分 **真实结构化工具调用** 和 **模型�
 例如模型返回：
 
 ```text
-call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
+call:find{pattern:<|"|>apps/desktop/src/main/runtime/planning/*<|"|>}<tool_call|>
 ```
 
 说明 `find` 没有通过 OpenAgent `ToolExecutor` 执行。此时：

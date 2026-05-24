@@ -581,7 +581,7 @@ System prompt 只说明知识工具存在和使用边界：
 ### Phase 1：文档和抽象层
 
 - [ ] 将 `docs/knowledge.md` 升级为 Knowledge Compiler 设计文档。
-- [ ] 在 `src/main/runtime/knowledge/knowledge-types.ts` 定义 source、summary、concept、relation、article、provenance、compile item、provider descriptor。
+- [ ] 在 `apps/desktop/src/main/runtime/knowledge/knowledge-types.ts` 定义 source、summary、concept、relation、article、provenance、compile item、provider descriptor。
 - [ ] 将 `KnowledgeService` 调整为 provider registry + capability routing。
 - [x] 剔除旧 `SystemWikiProvider` 实现，新增 `openagent-system-compiler` provider 作为第一版实现。
 

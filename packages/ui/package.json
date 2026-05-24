@@ -1,0 +1,28 @@
+{
+  "name": "@openagent/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@openagent/shared-types": "workspace:*",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-markdown": "latest",
+    "remark-gfm": "latest",
+    "tailwind-merge": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "typescript": "latest"
+  }
+}

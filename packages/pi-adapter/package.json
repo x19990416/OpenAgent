@@ -1,0 +1,23 @@
+{
+  "name": "@openagent/pi-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.75.5",
+    "@openagent/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}

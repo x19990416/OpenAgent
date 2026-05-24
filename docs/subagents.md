@@ -234,8 +234,8 @@ UI 展示建议：
 
 ### Phase 2：最小 `pi_coding_agent` 子 agent
 
-- 新增 `src/main/runtime/subagents/pi-coding-agent.ts`。
-- 新增 `src/main/runtime/subagents/pi-coding-agent-tool.ts`。
+- 新增 `apps/desktop/src/main/runtime/subagents/pi-coding-agent.ts`。
+- 新增 `apps/desktop/src/main/runtime/subagents/pi-coding-agent-tool.ts`。
 - `SubagentService` 注册 `pi_coding`。
 - `RuntimeService` 注册 `createPiCodingAgentTool(...)`。
 - child session 使用 Pi SDK，复用 `PiRuntimeAdapter` 的 model/auth/session/tool adapter 能力，但不让 Pi SDK 类型泄漏到 renderer/shared。

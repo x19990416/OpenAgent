@@ -197,7 +197,7 @@ Renderer 收到后按 `id` upsert。
 - `tool.completed`
 - `tool.failed`
 
-建议在 `/src/main/runtime/tool-executor.ts` 中，在现有 tool event 旁边额外发 `runtime.activity`。
+建议在 `/apps/desktop/src/main/runtime/tool-executor.ts` 中，在现有 tool event 旁边额外发 `runtime.activity`。
 
 示例：
 
@@ -287,7 +287,7 @@ emitUiEvent?.('runtime.activity', {
 文件路径展示建议：
 
 - 优先显示 basename，例如 `pi.md`。
-- 如果 basename 不足以区分，可以显示相对路径，例如 `src/main/runtime/pi/pi-runtime-adapter.ts`。
+- 如果 basename 不足以区分，可以显示相对路径，例如 `packages/pi-adapter/src/pi-runtime-adapter.ts`。
 - 不默认显示完整绝对路径，避免 UI 太长。
 
 ## 10. Renderer 侧设计
@@ -355,7 +355,7 @@ runtimeActivities: RuntimeActivityItem[];
 文件：
 
 ```text
-src/shared/types/events.ts
+packages/shared-types/src/events.ts
 ```
 
 新增：
@@ -370,9 +370,9 @@ src/shared/types/events.ts
 文件：
 
 ```text
-src/renderer/types/workbench.ts
-src/renderer/mock/mock-data.ts
-src/renderer/hooks/use-ui-event-stream.ts
+apps/desktop/src/renderer/types/workbench.ts
+apps/desktop/src/renderer/mock/mock-data.ts
+apps/desktop/src/renderer/hooks/use-ui-event-stream.ts
 ```
 
 新增：
@@ -386,8 +386,8 @@ src/renderer/hooks/use-ui-event-stream.ts
 文件：
 
 ```text
-src/renderer/components/layout/right-panel.tsx
-src/renderer/components/panels/plan-panel.tsx
+apps/desktop/src/renderer/components/layout/right-panel.tsx
+apps/desktop/src/renderer/components/panels/plan-panel.tsx
 ```
 
 新增：
@@ -401,8 +401,8 @@ src/renderer/components/panels/plan-panel.tsx
 文件：
 
 ```text
-src/main/runtime/tool-executor.ts
-src/main/runtime/runtime-service.ts
+apps/desktop/src/main/runtime/tool-executor.ts
+apps/desktop/src/main/runtime/runtime-service.ts
 ```
 
 新增：

@@ -10,7 +10,7 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 
 - Renderer 已具备工作台式 UI：会话、消息、任务、审批、Git、上下文、记忆、日志等区域。
 - Main 进程已接入 `RuntimeService`、`AgentRuntimeAdapter`、Embedded Pi `AgentSession`、OpenAgent tools、streaming/runtime events、transcript 与 compaction。
-- local demo loop 只作为显式 `OPENAGENT_RUNTIME_ENGINE=local-demo` 的调试 fallback，不是默认主路径。
+- Runtime 默认且唯一走 Embedded Pi 主路径；不再维护 local demo stub。
 
 ## 2. 必读文档
 
@@ -32,10 +32,12 @@ OpenAgent 是一个基于 Electron + Vite + React + TypeScript 的桌面 Agent �
 ## 3. 当前目录职责
 
 ```text
-src/
+apps/desktop/src/
 ├── main/                 # Electron 主进程、IPC handler、后续 runtime 接入点
-├── renderer/             # React UI 工作台
-└── shared/types/         # preload / renderer / main 共享类型契约
+└── renderer/             # React UI 工作台
+
+packages/
+└── shared-types/src      # preload / renderer / main 共享类型契约
 
 docs/
 ├── architecture.md       # 当前系统架构与模块边界
@@ -49,7 +51,7 @@ docs/
 └── feishu-cli-integration.md # 飞书 CLI 插件集成设计
 ```
 
-### `src/main`
+### `apps/desktop/src/main`
 
 当前职责：
 
@@ -59,7 +61,7 @@ docs/
 - 默认调用 Embedded Pi Runtime Adapter，并把 runtime 事件转成 UI events。
 - 保留 local demo loop 作为显式调试 fallback。
 
-### `src/renderer`
+### `apps/desktop/src/renderer`
 
 职责：
 
@@ -67,7 +69,7 @@ docs/
 - 不直接依赖 Node、Electron main 内部实现或 Pi SDK 类型。
 - UI 状态通过 `useUiEventStream()` 聚合。
 
-### `src/shared/types`
+### `packages/shared-types/src`
 
 职责：
 
@@ -80,37 +82,38 @@ docs/
 
 1. **UI 与 runtime 解耦**：Renderer 不感知 Pi、OpenAI、Codex 等具体 agent engine。
 2. **Runtime Adapter 优先**：先定义 OpenAgent 自己的 `AgentRuntimeAdapter`，Pi 只是其中一种实现。
-3. **不要包壳 Pi CLI**：优先嵌入 `@mariozechner/pi-coding-agent`，通过 `createAgentSession()` 管理 agent loop。
+3. **不要包壳 Pi CLI**：优先嵌入 `@earendil-works/pi-coding-agent`，通过 `createAgentSession()` 管理 agent loop。
 4. **工具统一由 OpenAgent 管理**：不要直接暴露 Pi 默认工具绕过 OpenAgent 的审批、sandbox、日志和 UI 状态。
 5. **事件必须可观测**：run、message、tool、approval、patch、terminal、memory 都要能映射到 UI event。
 6. **session 可恢复**：thread/session transcript 应落地到 JSONL，并由 UI 元数据建立索引。
 7. **prompt 不无脑膨胀**：skills、plugins、memory、docs 只注入必要摘要，长内容走按需检索。
 8. **知识库收敛**：当前只保留 llm-wiki-agent 风格 system wiki 作为系统公共知识库；runtime 只能通过 OpenAgent KnowledgeProvider/Tool 访问。
 
-## 5. 建议新增 runtime 结构
+## 5. 当前 runtime / packages 结构
 
-实现 Pi runtime 时，优先按下面结构推进：
+OpenAgent 已迁移为 monorepo workspace。桌面 app 只保留 Electron 宿主、IPC、settings、窗口和组合入口；可复用 runtime 能力放在 `packages/*`。
 
 ```text
-src/main/runtime/
-├── runtime-service.ts          # prompt/run 总入口
-├── run-state.ts                # active run、取消、状态机
-├── event-bus.ts                # UI event 分发
-├── session-store.ts            # thread/session 文件定位与元数据
-├── planning/                   # Agent Plan Mode、计划审批、分步执行
-├── subagents/                  # shell_agent / knowledge_agent / pi_coding_agent
-├── knowledge/                  # agent brain / system wiki provider 与工具
-└── pi/
-    ├── pi-runtime-adapter.ts   # OpenAgent -> Pi 主适配层
-    ├── pi-session.ts           # createAgentSession / SessionManager
-    ├── pi-events.ts            # Pi events -> OpenAgent UiEvent
-    ├── pi-tools.ts             # OpenAgent tools -> Pi ToolDefinition
-    ├── pi-system-prompt.ts     # 系统提示词构建
-    ├── pi-model.ts             # provider/model/auth 解析
-    └── pi-errors.ts            # failover、abort、context overflow 分类
+apps/desktop/src/main/runtime/
+├── runtime-service.ts          # desktop prompt/run 编排入口
+├── runtime-host.ts             # desktop-only runtime adapter/settings 绑定
+├── pi-adapter-factory.ts       # desktop settings/logging/tool executor 注入 Pi adapter
+├── memory/soul-manager.ts      # desktop agent soul bootstrap/proposals
+├── planning/plan-llm.ts        # desktop LLM-backed plan generator
+└── settings/openagent-settings.ts
+
+packages/runtime/src/          # runtime core contracts、run/session、tools、policy、logs
+packages/planning/src/         # Agent Plan Mode service/store/executor/helpers
+packages/pi-adapter/src/       # OpenAgent -> Pi 主适配层
+packages/skill-runtime/src/    # skill discovery/injection/script/tools
+packages/knowledge/src/        # system wiki / knowledge provider 与工具
+packages/plugin-runtime/src/   # plugin manifest/runtime/registry/loader/config
+packages/subagents/src/        # shell_agent / knowledge_agent / pi_coding_agent
+packages/shared-types/src/     # preload / renderer / main 共享类型契约
+packages/ui/src/               # reusable React workbench UI
 ```
 
-如果实际落地需要拆分，可以调整，但不要让 Pi SDK 类型向 renderer 或共享 UI 类型层泄漏。
+不要让 Pi SDK 类型向 renderer、`packages/shared-types` 或纯 UI 层泄漏。desktop-only 的 settings、Electron API、safeStorage、窗口和 packaging 逻辑不要反向塞进 packages。
 
 ## 6. IPC / UI Event 约定
 
@@ -122,7 +125,7 @@ src/main/runtime/
 
 新增能力时：
 
-- 优先扩展 `src/shared/types`。
+- 优先扩展 `packages/shared-types/src`，renderer 侧通过 `@shared-types/*` alias 引用。
 - IPC handler 保持薄层，复杂逻辑下沉到 service。
 - streaming 不要只等最终完成；应补充 delta 或 runtime task 事件。
 - 失败需要写入 run log，并返回可定位的错误摘要。
@@ -211,22 +214,22 @@ pnpm build
 - 不要让 renderer 直接 import Pi SDK。
 - 不要在系统 prompt 中全量注入所有 skills、docs、memory。
 - 不要绕过 OpenAgent policy 直接执行 Pi 默认 shell/write/edit 工具。
-- 不要把 local demo stub 当作最终 runtime 设计。
+- 不要重新引入 local demo stub 作为 runtime 分支。
 
 ## 13. 快速判断任务入口
 
 | 用户任务 | 优先查看/修改 |
 | --- | --- |
-| UI 样式、布局、交互 | `src/renderer` |
-| IPC、新 desktopApi 能力 | `src/main/preload.ts`、`src/shared/types`、`src/main/main.ts` |
-| agent loop / Pi 集成 | `docs/pi.md`，然后新增 `src/main/runtime` |
-| 子 agent / `shell_agent` / `pi_coding_agent` | `docs/subagents.md`，然后修改 `src/main/runtime/subagents` |
-| Agent Plan Mode / 计划审批 / 分步执行 | `docs/plan-mode.md`，然后新增 `src/main/runtime/planning` |
-| session/thread 持久化 | `src/main/runtime/session-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
+| UI 样式、布局、交互 | `apps/desktop/src/renderer` |
+| IPC、新 desktopApi 能力 | `apps/desktop/src/main/preload.ts`、`packages/shared-types/src`、`apps/desktop/src/main/main.ts` |
+| agent loop / Pi 集成 | `docs/pi.md`，然后优先看 `packages/pi-adapter/src` 与 `apps/desktop/src/main/runtime/pi-adapter-factory.ts` |
+| 子 agent / `shell_agent` / `pi_coding_agent` | `docs/subagents.md`，然后修改 `packages/subagents/src` |
+| Agent Plan Mode / 计划审批 / 分步执行 | `docs/plan-mode.md`，然后修改 `packages/planning/src`，desktop LLM 入口在 `apps/desktop/src/main/runtime/planning/plan-llm.ts` |
+| session/thread 持久化 | `packages/runtime/src/session-store.ts`、`packages/runtime/src/transcript-store.ts` 及 `~/.openagent/agents/<agentId>/sessions` 设计 |
 | tool/approval/sandbox | `docs/pi.md` 的 Tool 和 Sandbox 章节，审批 scope 另见 `docs/approval-scope.md` |
 | model/provider 配置 | 后续 model config store，避免写死在 Pi adapter |
 | Skill 包 / SKILL.md / scripts | `docs/skills.md`，按 Claude Code 包结构与 OpenAgent policy 设计发现、注入和脚本执行 |
-| plugin/skill 注入 | `docs/plugins.md` + `docs/skills.md`，先设计 enabled/loaded/relevant 过滤，再进入 prompt |
+| plugin/skill 注入 | `docs/plugins.md` + `docs/skills.md`，优先看 `packages/plugin-runtime/src`、`packages/skill-runtime/src`，先设计 enabled/loaded/relevant 过滤，再进入 prompt |
 | 飞书 CLI 集成 | `docs/plugins.md` + `docs/feishu-cli-integration.md`，按 FeishuClient adapter、channel、tools、policy、remote UI 分层实现 |
 | 飞书/Slack/企业微信等外部入口 | `docs/plugins.md`，按 channel + tools + remote UI 插件实现 |
-| agent brain / system wiki / 知识库 | `docs/knowledge.md`，然后 `src/main/runtime/knowledge` |
+| agent brain / system wiki / 知识库 | `docs/knowledge.md`，然后 `packages/knowledge/src` |

@@ -50,7 +50,7 @@ flowchart LR
 建议新增目录：
 
 ```text
-src/main/runtime/
+apps/desktop/src/main/runtime/
 ├── runtime-service.ts          # prompt/run 总入口
 ├── run-state.ts                # active run、取消、状态机
 ├── event-bus.ts                # 统一 UI 事件分发
@@ -218,7 +218,7 @@ flowchart TD
 OpenAgent 只承认 provider / Pi runtime 产生的结构化工具调用事件。模型在普通文本里输出的内容，例如：
 
 ```text
-call:find{pattern:<|"|>src/main/runtime/planning/*<|"|>}<tool_call|>
+call:find{pattern:<|"|>apps/desktop/src/main/runtime/planning/*<|"|>}<tool_call|>
 <|tool_call>call:ls{path:<|"|>..<|"|>}<tool_call|>
 ```
 
@@ -620,7 +620,7 @@ OpenAgent 不要把 provider/model 解析写死在 Pi Adapter 中。
 
 - Pi ModelRegistry 作为默认模型目录和 provider 选择来源
 - Pi AuthStorage 作为默认认证来源，OpenAgent 仅提供 `~/.openagent/settings/pi-auth.json` 路径与环境变量注入
-- local demo 仅作为显式 `OPENAGENT_RUNTIME_ENGINE=local-demo` 的调试 fallback
+- local demo runtime 已移除；默认且唯一维护 Embedded Pi 主路径
 
 ## 11. Sandbox / Approval
 
@@ -642,7 +642,7 @@ Pi 工具执行前必须经过 OpenAgent policy：
 - 确定 Runtime Adapter 接口。
 - 新增 session 文件布局。
 - 明确 UI event 类型。
-- 保留当前 local-demo runtime。
+- 不保留 demo runtime。
 
 ### M2：最小 Pi Run
 

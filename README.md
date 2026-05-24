@@ -16,7 +16,7 @@ pnpm build
 
 ## 目录
 
-- `src/main`：Electron 主进程与 preload 桥接。
-- `src/renderer`：React UI。
-- `src/shared/types`：renderer 与 preload 共用的类型契约。
+- `apps/desktop/src/main`：Electron 主进程与 preload 桥接。
+- `apps/desktop/src/renderer`：React UI。
+- `packages/shared-types/src`：renderer 与 preload 共用的类型契约（迁移期通过 `@shared-types/*` alias 使用）。
 - `参照`：原始 UI 参考目录，保留不改。

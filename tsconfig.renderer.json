@@ -24,16 +24,29 @@
     "baseUrl": ".",
     "paths": {
       "@/*": [
-        "src/renderer/*"
+        "apps/desktop/src/renderer/*"
       ],
       "@shared-types/*": [
-        "src/shared/types/*"
+        "packages/shared-types/src/*"
+      ],
+      "@openagent/ui": [
+        "packages/ui/src/index.ts"
+      ],
+      "@openagent/shared-types": [
+        "packages/shared-types/src/index.ts"
+      ],
+      "@openagent/shared-types/index": [
+        "packages/shared-types/src/index.ts"
+      ],
+      "@openagent/shared-types/events": [
+        "packages/shared-types/src/events.ts"
       ]
     },
     "ignoreDeprecations": "6.0"
   },
   "include": [
-    "src/renderer",
-    "src/shared"
+    "apps/desktop/src/renderer",
+    "packages/shared-types/src",
+    "packages/ui/src"
   ]
 }

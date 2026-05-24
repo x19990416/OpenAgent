@@ -290,7 +290,7 @@ https://<cloudflared-domain>/openagent/plugins/feishu/events
 当前仓库内置飞书插件已经声明了 `channel` capability，但实际代码还没有注册可启动的 `FeishuChannel`。落地时优先补下面结构：
 
 ```text
-src/main/plugins/builtins/feishu/
+apps/desktop/src/main/plugins/builtins/feishu/
 ├── feishu-channel.ts          # registerChannel 的具体实现
 ├── feishu-webhook-server.ts   # 本地 webhook server / route
 ├── feishu-event-normalizer.ts # 飞书事件 -> NormalizedFeishuEvent
@@ -777,22 +777,22 @@ approvalPolicySnapshot
 后续实现时建议新增/扩展：
 
 ```text
-src/main/plugins/plugin-types.ts
+apps/desktop/src/main/plugins/plugin-types.ts
   - PluginManifest.agents
   - PluginProvidedAgent
 
-src/main/plugins/plugin-service.ts
+apps/desktop/src/main/plugins/plugin-service.ts
   - getPluginProvidedAgents()
   - 启用插件时同步刷新 agent 声明
 
-src/main/runtime/subagents/
+apps/desktop/src/main/runtime/subagents/
   - subagent-registry.ts
   - plugin-subagent-adapter.ts
 
-src/main/runtime/plugin-resolver.ts
+apps/desktop/src/main/runtime/plugin-resolver.ts
   - 按 prompt 返回 relevant plugin tools + relevant plugin agents
 
-src/main/runtime/runtime-service.ts
+apps/desktop/src/main/runtime/runtime-service.ts
   - 在 system prompt / routing context 注入可用插件 subagent 摘要
   - 委派仍必须通过 OpenAgent run state、approval、logs
 ```

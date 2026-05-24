@@ -91,7 +91,7 @@ flowchart LR
 
 ## 4. 插件目录与 manifest
 
-OpenAgent 主程序只内置插件系统能力，不再把具体业务插件写死在 `src/main/plugins/builtins`。
+OpenAgent 主程序只内置插件系统能力，不再把具体业务插件写死在 `apps/desktop/src/main/plugins/builtins`。
 仓库随附但不进入发布包的第一方插件放在：
 
 ```text
@@ -557,13 +557,13 @@ Plugin Tool -> OpenAgent RuntimeTool -> ToolRegistry -> ToolExecutor -> Pi ToolD
 
 - 插件直接调用 `createAgentSession()`。
 - 插件直接构造 Pi tool 绕过 OpenAgent `ToolPolicy`。
-- 插件把外部 SDK 类型泄漏到 renderer 或 `src/shared/types`。
+- 插件把外部 SDK 类型泄漏到 renderer 或 `packages/shared-types/src`。
 - 插件把 secret、完整外部文档或大体量工具 schema 全量塞给模型。
 
 ## 15. OpenAgent core 目录建议
 
 ```text
-src/main/plugins/
+apps/desktop/src/main/plugins/
 ├── plugin-types.ts
 ├── plugin-manifest.ts
 ├── plugin-registry.ts
@@ -579,7 +579,7 @@ src/main/plugins/
 Renderer 侧建议：
 
 ```text
-src/renderer/features/plugins/
+apps/desktop/src/renderer/features/plugins/
 ├── plugins-screen.tsx
 ├── plugin-list.tsx
 ├── plugin-detail.tsx
@@ -653,7 +653,7 @@ discover -> validate -> install -> load -> register -> configure -> authorize ->
 ### M1：文档与类型
 
 - [ ] 完成 `docs/plugins.md`。
-- [ ] 新增 `src/main/plugins/plugin-types.ts`。
+- [ ] 新增 `packages/plugin-runtime/src/plugin-types.ts`。
 - [ ] 定义 manifest、capability、context、channel、remote UI、policy 类型。
 
 ### M2：内置注册表

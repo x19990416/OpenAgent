@@ -63,9 +63,9 @@ flowchart TD
 
 主要目录：
 
-- `src/renderer/App.tsx`
-- `src/renderer/hooks/use-ui-event-stream.ts`
-- `src/renderer/components/`
+- `apps/desktop/src/renderer/App.tsx`
+- `apps/desktop/src/renderer/hooks/use-ui-event-stream.ts`
+- `apps/desktop/src/renderer/components/`
 
 职责：
 
@@ -79,8 +79,8 @@ flowchart TD
 
 主要文件：
 
-- `src/main/preload.ts`
-- `src/main/main.ts`
+- `apps/desktop/src/main/preload.ts`
+- `apps/desktop/src/main/main.ts`
 
 职责：
 
@@ -110,11 +110,11 @@ Renderer submitPrompt()
 
 核心文件：
 
-- `src/main/runtime/runtime-service.ts`
-- `src/main/runtime/runtime-types.ts`
-- `src/main/runtime/context-builder.ts`
-- `src/main/runtime/run-state.ts`
-- `src/main/runtime/event-bus.ts`
+- `apps/desktop/src/main/runtime/runtime-service.ts`
+- `apps/desktop/src/main/runtime/runtime-types.ts`
+- `apps/desktop/src/main/runtime/context-builder.ts`
+- `apps/desktop/src/main/runtime/run-state.ts`
+- `apps/desktop/src/main/runtime/event-bus.ts`
 
 职责：
 
@@ -139,10 +139,10 @@ Renderer submitPrompt()
 
 核心文件：
 
-- `src/main/runtime/pi/pi-runtime-adapter.ts`
-- `src/main/runtime/pi/pi-model-registry.ts`
-- `src/main/runtime/pi/pi-tools.ts`
-- `src/main/runtime/pi/pi-errors.ts`
+- `packages/pi-adapter/src/pi-runtime-adapter.ts`
+- `packages/pi-adapter/src/pi-model-registry.ts`
+- `packages/pi-adapter/src/pi-tools.ts`
+- `packages/pi-adapter/src/pi-errors.ts`
 
 职责：
 
@@ -164,11 +164,11 @@ Renderer submitPrompt()
 
 核心文件：
 
-- `src/main/runtime/tool-registry.ts`
-- `src/main/runtime/tool-executor.ts`
-- `src/main/runtime/tool-policy.ts`
-- `src/main/runtime/path-policy.ts`
-- `src/main/runtime/approval-service.ts`
+- `apps/desktop/src/main/runtime/tool-registry.ts`
+- `apps/desktop/src/main/runtime/tool-executor.ts`
+- `apps/desktop/src/main/runtime/tool-policy.ts`
+- `apps/desktop/src/main/runtime/path-policy.ts`
+- `apps/desktop/src/main/runtime/approval-service.ts`
 
 默认工具包括：
 
@@ -207,9 +207,9 @@ Pi tool call
 
 核心文件：
 
-- `src/main/runtime/planning/plan-service.ts`
-- `src/main/runtime/planning/plan-executor.ts`
-- `src/main/runtime/planning/plan-store.ts`
+- `apps/desktop/src/main/runtime/planning/plan-service.ts`
+- `apps/desktop/src/main/runtime/planning/plan-executor.ts`
+- `apps/desktop/src/main/runtime/planning/plan-store.ts`
 - `docs/plan-mode.md`
 
 职责：
@@ -231,7 +231,7 @@ Pi tool call
 
 核心目录：
 
-- `src/main/runtime/subagents/`
+- `apps/desktop/src/main/runtime/subagents/`
 - `docs/subagents.md`
 
 当前规划/实现方向：
@@ -246,7 +246,7 @@ Pi tool call
 
 核心文件：
 
-- `src/main/runtime/memory/soul-manager.ts`
+- `apps/desktop/src/main/runtime/memory/soul-manager.ts`
 - `docs/memory.md`
 
 本地布局：
@@ -279,9 +279,9 @@ Pi tool call
 
 核心文件：
 
-- `src/main/runtime/knowledge/knowledge-service.ts`
-- `src/main/runtime/knowledge/knowledge-tools.ts`
-- `src/main/runtime/knowledge/providers/system-knowledge-provider.ts`
+- `apps/desktop/src/main/runtime/knowledge/knowledge-service.ts`
+- `apps/desktop/src/main/runtime/knowledge/knowledge-tools.ts`
+- `apps/desktop/src/main/runtime/knowledge/providers/system-knowledge-provider.ts`
 - `docs/knowledge.md`
 
 当前结论：
@@ -309,9 +309,9 @@ Pi tool call
 
 核心文件：
 
-- `src/main/runtime/session-store.ts`
-- `src/main/runtime/transcript-store.ts`
-- `src/main/runtime/runtime-info-logger.ts`
+- `apps/desktop/src/main/runtime/session-store.ts`
+- `apps/desktop/src/main/runtime/transcript-store.ts`
+- `apps/desktop/src/main/runtime/runtime-info-logger.ts`
 
 当前边界：
 
@@ -337,7 +337,7 @@ Pi 内部 session:
 
 核心文件：
 
-- `src/main/runtime/pi/pi-model-registry.ts`
+- `packages/pi-adapter/src/pi-model-registry.ts`
 
 职责：
 
@@ -350,8 +350,8 @@ Pi 内部 session:
 
 核心文件：
 
-- `src/main/runtime/scheduled-task-service.ts`
-- `src/main/main.ts`
+- `apps/desktop/src/main/runtime/scheduled-task-service.ts`
+- `apps/desktop/src/main/main.ts`
 
 职责：
 

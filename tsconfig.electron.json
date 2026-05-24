@@ -13,12 +13,25 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "outDir": "dist/main",
-    "rootDir": "src/main",
+    "rootDir": "apps/desktop/src/main",
     "types": [
       "node"
-    ]
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@openagent/runtime": [
+        "packages/runtime/dist/index.d.ts"
+      ],
+      "@openagent/planning": [
+        "packages/planning/dist/index.d.ts"
+      ],
+      "@openagent/subagents": [
+        "packages/subagents/dist/index.d.ts"
+      ]
+    },
+    "ignoreDeprecations": "6.0"
   },
   "include": [
-    "src/main"
+    "apps/desktop/src/main"
   ]
 }

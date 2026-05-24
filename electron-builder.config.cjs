@@ -32,7 +32,9 @@ function copyRuntimePackage(projectDir, asarRoot, packageJsonPath, visited) {
   if (visited.has(relativePackageDir)) return;
   visited.add(relativePackageDir);
 
-  fs.cpSync(packageDir, path.join(asarRoot, relativePackageDir), {
+  const targetPackageDir = path.join(asarRoot, relativePackageDir);
+  fs.rmSync(targetPackageDir, { recursive: true, force: true });
+  fs.cpSync(packageDir, targetPackageDir, {
     recursive: true,
     dereference: false,
     filter: (source) => {

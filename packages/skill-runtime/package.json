@@ -1,0 +1,23 @@
+{
+  "name": "@openagent/skill-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@openagent/runtime": "workspace:*",
+    "@openagent/planning": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}

@@ -210,7 +210,7 @@ low confidence    -> 3 次出现后提升
 
 scope: /Users/guolimin/Desktop/project-git/gitlab/openagent
 
-- runtime 入口优先看 `src/main/runtime/`。
+- runtime 入口优先看 `apps/desktop/src/main/runtime/`。
 - Pi runtime 设计文档在 `docs/pi.md`。
 - Renderer 不应直接依赖 Pi SDK。
 - 模型配置应走 `~/.openagent/settings/`。
@@ -303,7 +303,7 @@ topic: memory, soul, user profile, bootstrap
 例如：
 
 ```text
-OpenAgent 的 Pi runtime 主入口在 src/main/runtime/runtime-service.ts。
+OpenAgent 的 Pi runtime 主入口在 apps/desktop/src/main/runtime/runtime-service.ts。
 ```
 
 这是项目经验，应放入 `MEMORY.md`。

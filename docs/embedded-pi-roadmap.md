@@ -88,28 +88,23 @@ flowchart TD
 
 ### 4.1 现状
 
-当前默认 adapter 已经是 `PiRuntimeAdapter`，但仓库里仍有一些容易造成误解的历史结构：
+当前默认 adapter 已经是 `PiRuntimeAdapter`，历史 demo runtime 已清理：
 
-- `src/main/runtime/agent-loop.ts` 中的 `LocalDemoAgentLoop`
-- `src/main/runtime/pi/pi-session.ts` 中的 placeholder
+- `packages/pi-adapter/src/pi-session.ts` 中的 placeholder
 
 ### 4.2 修改目标
 
 - 保留 `AgentRuntimeAdapter` 契约。
 - 明确 `PiRuntimeAdapter` 是正式默认主实现。
-- 将 `LocalDemoAgentLoop` 从主线文档和默认认知中移除。
+- demo runtime 已从主线文档和默认认知中移除。
 - 处理 `pi-session.ts` placeholder，避免看起来像 Pi session 仍未实现。
 
 ### 4.3 建议修改
 
-1. `LocalDemoAgentLoop` 处理方式三选一：
-   - 删除；
-   - 移到 `src/main/runtime/dev/`；
-   - 保留但明确标记为 legacy demo fallback。
-2. `pi-session.ts` 改造成真实 session factory：
+1. `pi-session.ts` 改造成真实 session factory：
    - `createOpenAgentPiSession(input)`
    - 内部封装 `SettingsManager.create()`、`SessionManager.open()`、`DefaultResourceLoader`、`createAgentSession()`。
-3. `PiRuntimeAdapter` 不再直接散落所有 session 创建细节，而是调用 `pi-session.ts`。
+2. `PiRuntimeAdapter` 不再直接散落所有 session 创建细节，而是调用 `pi-session.ts`。
 
 ### 4.4 验收标准
 
@@ -144,7 +139,7 @@ RuntimeService -> PiRuntimeAdapter -> createAgentSession()
 ### 5.3 建议结构
 
 ```text
-src/main/runtime/pi/
+packages/pi-adapter/src/
 ├── pi-runtime-adapter.ts   # run 主流程，负责串联
 ├── pi-session.ts           # createAgentSession / manager / loader
 ├── pi-events.ts            # Pi event -> OpenAgent event/log
@@ -193,13 +188,13 @@ src/main/runtime/pi/
 
 ### 6.4 需要改的区域
 
-- `src/main/runtime/pi/pi-events.ts`
-- `src/main/runtime/pi/pi-runtime-adapter.ts`
-- `src/main/runtime/event-bus.ts`
-- `src/shared/types/events.ts`
-- `src/renderer/hooks/use-ui-event-stream.ts`
-- `src/renderer/components/panels/plan-panel.tsx`
-- `src/renderer/components/chat/tool-timeline.tsx`
+- `packages/pi-adapter/src/pi-events.ts`
+- `packages/pi-adapter/src/pi-runtime-adapter.ts`
+- `apps/desktop/src/main/runtime/event-bus.ts`
+- `packages/shared-types/src/events.ts`
+- `apps/desktop/src/renderer/hooks/use-ui-event-stream.ts`
+- `apps/desktop/src/renderer/components/panels/plan-panel.tsx`
+- `apps/desktop/src/renderer/components/chat/tool-timeline.tsx`
 
 ### 6.5 验收标准
 
@@ -233,7 +228,7 @@ Pi custom tool -> ToolExecutor -> ToolPolicy -> RuntimeTool.execute()
 新增：
 
 ```text
-src/main/runtime/pi/pi-tool-schema.ts
+packages/pi-adapter/src/pi-tool-schema.ts
 ```
 
 职责：
@@ -445,13 +440,13 @@ pnpm build
 
 已完成：
 
-- 将 Pi session 创建逻辑从 `pi-runtime-adapter.ts` 抽到 `src/main/runtime/pi/pi-session.ts`。
+- 将 Pi session 创建逻辑从 `pi-runtime-adapter.ts` 抽到 `packages/pi-adapter/src/pi-session.ts`。
 - `pi-session.ts` 不再是 placeholder，提供：
   - `createOpenAgentPiSession()`
   - `resolveAgentDir()`
   - `resolvePiSessionFile()`
-- 将 OpenAgent prompt wrapper 从 `pi-runtime-adapter.ts` 抽到 `src/main/runtime/pi/pi-system-prompt.ts`。
-- 将 Pi session prompt、turn event 订阅、assistant text 收集、abort/maxIterations 处理从 `pi-runtime-adapter.ts` 抽到 `src/main/runtime/pi/pi-events.ts`。
+- 将 OpenAgent prompt wrapper 从 `pi-runtime-adapter.ts` 抽到 `packages/pi-adapter/src/pi-system-prompt.ts`。
+- 将 Pi session prompt、turn event 订阅、assistant text 收集、abort/maxIterations 处理从 `pi-runtime-adapter.ts` 抽到 `packages/pi-adapter/src/pi-events.ts`。
 - `PiRuntimeAdapter` 现在主要负责 orchestration：
   1. 解析 model context。
   2. 构建 OpenAgent `ToolExecutor` 和 Pi custom tools。
@@ -459,7 +454,7 @@ pnpm build
   4. 构建 request body。
   5. 调用 Pi prompt session。
   6. 归一化 assistant result。
-- `LocalDemoAgentLoop` 已标注为 legacy explicit fallback，只在 `OPENAGENT_RUNTIME_ENGINE=local-demo` 时使用。
+- demo runtime 分支已移除，不再维护。
 - `RuntimeService` 默认主路径继续是 `PiRuntimeAdapter`。
 
 验证：
@@ -507,7 +502,7 @@ pnpm typecheck
 
 已完成：
 
-- 新增 `src/main/runtime/pi/pi-tool-schema.ts`，在 RuntimeTool 转 Pi ToolDefinition 前执行参数 schema normalize。
+- 新增 `packages/pi-adapter/src/pi-tool-schema.ts`，在 RuntimeTool 转 Pi ToolDefinition 前执行参数 schema normalize。
 - `toPiToolDefinitions()` 现在通过 `normalizePiToolParameters()` 输出更稳定的 Pi tool schema。
 - schema normalize 当前处理：
   - 保留常用 JSON Schema 字段。
