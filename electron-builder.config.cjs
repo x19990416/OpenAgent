@@ -34,14 +34,14 @@ function copyRuntimePackage(projectDir, asarRoot, packageJsonPath, visited) {
 
   const targetPackageDir = path.join(asarRoot, relativePackageDir);
   fs.rmSync(targetPackageDir, { recursive: true, force: true });
-  fs.cpSync(packageDir, targetPackageDir, {
-    recursive: true,
-    dereference: false,
-    filter: (source) => {
-      const name = path.basename(source);
-      return name !== '.cache' && name !== '.vite' && name !== '.vite-temp';
-    },
-  });
+  fs.mkdirSync(targetPackageDir, { recursive: true });
+  for (const entry of fs.readdirSync(packageDir)) {
+    if (entry === 'node_modules' || entry === '.cache' || entry === '.vite' || entry === '.vite-temp') continue;
+    fs.cpSync(path.join(packageDir, entry), path.join(targetPackageDir, entry), {
+      recursive: true,
+      dereference: false,
+    });
+  }
 
   const packageJson = readJson(packageJsonPath);
   const dependencies = {
@@ -56,6 +56,13 @@ function copyRuntimePackage(projectDir, asarRoot, packageJsonPath, visited) {
     }
   }
 }
+
+
+function isWindowsTargetBuild() {
+  return process.argv.some((arg) => arg === '--win' || arg === 'win' || arg.startsWith('--win='));
+}
+
+const localElectronDist = isWindowsTargetBuild() ? undefined : 'node_modules/electron/dist';
 
 async function bundleRuntimeDependencyClosure(context) {
   const resourcesDir = context.electronPlatformName === 'darwin'
@@ -93,7 +100,7 @@ async function bundleRuntimeDependencyClosure(context) {
 module.exports = {
   appId: 'com.openagent.desktop',
   productName: 'OpenAgent',
-  electronDist: 'node_modules/electron/dist',
+  ...(localElectronDist ? { electronDist: localElectronDist } : {}),
   directories: {
     output: 'release',
     buildResources: 'build',

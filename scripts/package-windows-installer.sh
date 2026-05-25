@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export HTTP_PROXY=http://127.0.0.1:7890
-export HTTPS_PROXY=http://127.0.0.1:7890
-export ALL_PROXY=socks5://127.0.0.1:7890
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 TARGET_ARCH="${OPENAGENT_WIN_ARCH:-x64}"
 SKIP_BUILD=0
 CLEAN=0
+USE_LOCAL_PROXY="${OPENAGENT_USE_LOCAL_PROXY:-0}"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/package-windows-installer.sh [--arch x64|arm64] [--skip-build] [--clean]
+Usage: bash scripts/package-windows-installer.sh [--arch x64|arm64] [--skip-build] [--clean] [--use-local-proxy]
 
 Build OpenAgent and package a Windows NSIS installer (.exe).
 
@@ -22,9 +19,11 @@ Options:
   --arch <arch>    Target CPU arch. Defaults to x64.
   --skip-build     Skip `pnpm build` and package the existing dist/.
   --clean          Remove release/ before packaging.
+  --use-local-proxy Use local proxy at 127.0.0.1:7890 for downloads.
 
 Environment:
-  OPENAGENT_WIN_ARCH=x64|arm64  Default arch when --arch is not provided.
+  OPENAGENT_WIN_ARCH=x64|arm64      Default arch when --arch is not provided.
+  OPENAGENT_USE_LOCAL_PROXY=1        Enable local proxy at 127.0.0.1:7890.
 
 Output:
   release/*Installer*.exe
@@ -46,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clean)
       CLEAN=1
+      shift
+      ;;
+    --use-local-proxy)
+      USE_LOCAL_PROXY=1
       shift
       ;;
     --)
@@ -70,6 +73,12 @@ case "$TARGET_ARCH" in
     exit 2
     ;;
 esac
+
+if [[ "$USE_LOCAL_PROXY" == "1" ]]; then
+  export HTTP_PROXY=http://127.0.0.1:7890
+  export HTTPS_PROXY=http://127.0.0.1:7890
+  export ALL_PROXY=socks5://127.0.0.1:7890
+fi
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pnpm is required but was not found in PATH." >&2
