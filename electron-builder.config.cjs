@@ -93,6 +93,7 @@ async function bundleRuntimeDependencyClosure(context) {
 module.exports = {
   appId: 'com.openagent.desktop',
   productName: 'OpenAgent',
+  electronDist: 'node_modules/electron/dist',
   directories: {
     output: 'release',
     buildResources: 'build',

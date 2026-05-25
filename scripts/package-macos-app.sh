@@ -90,6 +90,11 @@ if [[ ! -d node_modules ]]; then
   pnpm install --frozen-lockfile
 fi
 
+if [[ ! -x node_modules/electron/dist/Electron.app/Contents/MacOS/Electron ]]; then
+  echo "Electron runtime dist not found; installing Electron runtime..."
+  node node_modules/electron/install.js
+fi
+
 if [[ "$CLEAN" == "1" ]]; then
   rm -rf release
 fi

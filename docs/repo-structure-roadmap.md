@@ -52,7 +52,7 @@ openagent/
 
 主要问题是：
 
-1. `src/main/runtime` 已经变成 OpenAgent runtime 平台核心，不只是 Electron main 的附属代码。
+1. `packages/runtime/src` 已经变成 OpenAgent runtime 平台核心，不只是 Electron main 的附属代码。
 2. `src/main/plugins`、`skills/`、`openagent-plugins/` 三类概念混在根目录附近，但语义不同。
 3. renderer、runtime、shared types 之间的边界还停留在源码目录级别，没有 package 级别边界。
 4. 未来如果增加 Web UI、CLI、remote channel、plugin SDK，当前结构会越来越拥挤。
@@ -109,7 +109,7 @@ src/
 ### 推荐短期动作
 
 1. 将 Electron app/window/ipc 相关代码逐步从 `src/main/main.ts` 拆到 `src/main/app/`。
-2. 保持 `src/main/runtime/` 作为 runtime 聚合点，但内部按领域继续分层。
+2. 保持 `packages/runtime/src/` 作为 runtime 聚合点，但内部按领域继续分层。
 3. Renderer 新增 `features/`，逐步把大组件按功能域迁移。
 4. 将 shared IPC 类型从普通 shared types 中拆出来。
 5. README 和 AGENTS.md 同步更新目录说明。

@@ -6,7 +6,7 @@
 
 OpenClaw 的关键做法不是把 `pi` 当成外部 CLI 子进程来调用，而是把 Pi SDK 嵌入到应用运行时中：
 
-- 使用 `@mariozechner/pi-coding-agent` 提供的 `createAgentSession()` 创建 `AgentSession`。
+- 使用 `@earendil-works/pi-coding-agent` 提供的 `createAgentSession()` 创建 `AgentSession`。
 - 使用 `SessionManager` 管理 JSONL transcript、历史、分支和压缩。
 - 由应用自己的 Gateway / Runtime 负责：会话路由、工具注入、权限策略、事件转发、UI 状态同步。
 - Pi 负责核心 agent loop：LLM 调用、tool call、streaming、turn 生命周期。
@@ -218,7 +218,7 @@ flowchart TD
 OpenAgent 只承认 provider / Pi runtime 产生的结构化工具调用事件。模型在普通文本里输出的内容，例如：
 
 ```text
-call:find{pattern:<|"|>apps/desktop/src/main/runtime/planning/*<|"|>}<tool_call|>
+call:find{pattern:<|"|>packages/planning/src/*<|"|>}<tool_call|>
 <|tool_call>call:ls{path:<|"|>..<|"|>}<tool_call|>
 ```
 

@@ -59,7 +59,6 @@ docs/
 - 注册 IPC handler，并通过 preload 暴露稳定 `desktopApi`。
 - 承载 `RuntimeService`、run 状态、transcript、tool registry、tool policy、subagents、knowledge 和模型配置。
 - 默认调用 Embedded Pi Runtime Adapter，并把 runtime 事件转成 UI events。
-- 保留 local demo loop 作为显式调试 fallback。
 
 ### `apps/desktop/src/renderer`
 

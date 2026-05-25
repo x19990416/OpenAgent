@@ -65,7 +65,7 @@ flowchart TD
 
 - `apps/desktop/src/renderer/App.tsx`
 - `apps/desktop/src/renderer/hooks/use-ui-event-stream.ts`
-- `apps/desktop/src/renderer/components/`
+- `packages/ui/src/components/`
 
 职责：
 
@@ -111,10 +111,10 @@ Renderer submitPrompt()
 核心文件：
 
 - `apps/desktop/src/main/runtime/runtime-service.ts`
-- `apps/desktop/src/main/runtime/runtime-types.ts`
-- `apps/desktop/src/main/runtime/context-builder.ts`
-- `apps/desktop/src/main/runtime/run-state.ts`
-- `apps/desktop/src/main/runtime/event-bus.ts`
+- `packages/runtime/src/runtime-types.ts`
+- `packages/runtime/src/context-builder.ts`
+- `packages/runtime/src/run-state.ts`
+- `packages/runtime/src/event-bus.ts`
 
 职责：
 
@@ -147,7 +147,7 @@ Renderer submitPrompt()
 职责：
 
 - 基于 OpenAgent 的 `AgentRuntimeAdapter` 契约适配 Pi。
-- 使用 `@mariozechner/pi-coding-agent` 的 `createAgentSession()` 创建 AgentSession。
+- 使用 `@earendil-works/pi-coding-agent` 的 `createAgentSession()` 创建 AgentSession。
 - 使用 Pi 的 `SessionManager`、`SettingsManager`、`DefaultResourceLoader`。
 - 使用 Pi 的 `ModelRegistry` / `AuthStorage` 解析模型和认证。
 - 将 OpenAgent tools 转成 Pi custom tools。
@@ -164,11 +164,11 @@ Renderer submitPrompt()
 
 核心文件：
 
-- `apps/desktop/src/main/runtime/tool-registry.ts`
-- `apps/desktop/src/main/runtime/tool-executor.ts`
-- `apps/desktop/src/main/runtime/tool-policy.ts`
-- `apps/desktop/src/main/runtime/path-policy.ts`
-- `apps/desktop/src/main/runtime/approval-service.ts`
+- `packages/runtime/src/tool-registry.ts`
+- `packages/runtime/src/tool-executor.ts`
+- `packages/runtime/src/tool-policy.ts`
+- `packages/runtime/src/path-policy.ts`
+- `packages/runtime/src/approval-service.ts`
 
 默认工具包括：
 
@@ -207,9 +207,9 @@ Pi tool call
 
 核心文件：
 
-- `apps/desktop/src/main/runtime/planning/plan-service.ts`
-- `apps/desktop/src/main/runtime/planning/plan-executor.ts`
-- `apps/desktop/src/main/runtime/planning/plan-store.ts`
+- `packages/planning/src/plan-service.ts`
+- `packages/planning/src/plan-executor.ts`
+- `packages/planning/src/plan-store.ts`
 - `docs/plan-mode.md`
 
 职责：
@@ -231,7 +231,7 @@ Pi tool call
 
 核心目录：
 
-- `apps/desktop/src/main/runtime/subagents/`
+- `packages/subagents/src/`
 - `docs/subagents.md`
 
 当前规划/实现方向：
@@ -279,9 +279,9 @@ Pi tool call
 
 核心文件：
 
-- `apps/desktop/src/main/runtime/knowledge/knowledge-service.ts`
-- `apps/desktop/src/main/runtime/knowledge/knowledge-tools.ts`
-- `apps/desktop/src/main/runtime/knowledge/providers/system-knowledge-provider.ts`
+- `packages/knowledge/src/knowledge-service.ts`
+- `packages/knowledge/src/knowledge-tools.ts`
+- `packages/knowledge/src/providers/system-knowledge-provider.ts`
 - `docs/knowledge.md`
 
 当前结论：
@@ -309,9 +309,9 @@ Pi tool call
 
 核心文件：
 
-- `apps/desktop/src/main/runtime/session-store.ts`
-- `apps/desktop/src/main/runtime/transcript-store.ts`
-- `apps/desktop/src/main/runtime/runtime-info-logger.ts`
+- `packages/runtime/src/session-store.ts`
+- `packages/runtime/src/transcript-store.ts`
+- `packages/runtime/src/runtime-info-logger.ts`
 
 当前边界：
 
@@ -350,7 +350,7 @@ Pi 内部 session:
 
 核心文件：
 
-- `apps/desktop/src/main/runtime/scheduled-task-service.ts`
+- `packages/runtime/src/scheduled-task-service.ts`
 - `apps/desktop/src/main/main.ts`
 
 职责：

@@ -785,11 +785,11 @@ apps/desktop/src/main/plugins/plugin-service.ts
   - getPluginProvidedAgents()
   - 启用插件时同步刷新 agent 声明
 
-apps/desktop/src/main/runtime/subagents/
+packages/subagents/src/
   - subagent-registry.ts
   - plugin-subagent-adapter.ts
 
-apps/desktop/src/main/runtime/plugin-resolver.ts
+packages/runtime/src/plugin-resolver.ts
   - 按 prompt 返回 relevant plugin tools + relevant plugin agents
 
 apps/desktop/src/main/runtime/runtime-service.ts

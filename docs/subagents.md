@@ -8,7 +8,7 @@
 
 - `shell_agent`：OpenAgent 自己实现的只读 shell 型子 agent，支持文件统计、文件查找、文件名+内容查找。
 - `knowledge_agent`：OpenAgent 自己实现的知识库型子 agent，支持 system wiki / knowledge base 查询、写入、编译等。
-- `PiRuntimeAdapter`：主 agent loop，嵌入 `@mariozechner/pi-coding-agent` 的 `createAgentSession()`。
+- `PiRuntimeAdapter`：主 agent loop，嵌入 `@earendil-works/pi-coding-agent` 的 `createAgentSession()`。
 
 近期问题暴露出两个边界混淆：
 
@@ -53,7 +53,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | `shell_agent` | 确定性 bash/read-only 命令封装 | 快速统计文件、查找文件、按文件名+内容搜索 | 写文件、执行用户脚本、安装依赖、多步修错 |
 | `knowledge_agent` | OpenAgent KnowledgeService | 查询、写入、编译、检查 system wiki / knowledge base | 处理普通代码执行、绕过 knowledge policy |
-| `pi_coding_agent` | 子级 `@mariozechner/pi-coding-agent` AgentSession | 写代码、写脚本、运行脚本、调用 API、生成复杂文件、根据错误迭代修复 | 绕过 OpenAgent tools/policy；调用自身形成递归 |
+| `pi_coding_agent` | 子级 `@earendil-works/pi-coding-agent` AgentSession | 写代码、写脚本、运行脚本、调用 API、生成复杂文件、根据错误迭代修复 | 绕过 OpenAgent tools/policy；调用自身形成递归 |
 
 ### 3.1 为什么不合并 `shell_agent` 和 `pi_coding_agent`
 
@@ -137,7 +137,7 @@ Main run
 
 执行约束：
 
-1. child session 仍使用 `@mariozechner/pi-coding-agent/createAgentSession()`。
+1. child session 仍使用 `@earendil-works/pi-coding-agent/createAgentSession()`。
 2. child session 的 `tools` 必须传空数组，避免启用 Pi 内置 `bash/write/edit/read`。
 3. child session 只能通过 `customTools` 使用 OpenAgent 注入的 tools。
 4. child tools 不能包含 `pi_coding_agent` 本身，避免递归。
@@ -234,8 +234,8 @@ UI 展示建议：
 
 ### Phase 2：最小 `pi_coding_agent` 子 agent
 
-- 新增 `apps/desktop/src/main/runtime/subagents/pi-coding-agent.ts`。
-- 新增 `apps/desktop/src/main/runtime/subagents/pi-coding-agent-tool.ts`。
+- 新增 `packages/subagents/src/pi-coding-agent.ts`。
+- 新增 `packages/subagents/src/pi-coding-agent-tool.ts`。
 - `SubagentService` 注册 `pi_coding`。
 - `RuntimeService` 注册 `createPiCodingAgentTool(...)`。
 - child session 使用 Pi SDK，复用 `PiRuntimeAdapter` 的 model/auth/session/tool adapter 能力，但不让 Pi SDK 类型泄漏到 renderer/shared。

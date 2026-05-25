@@ -197,7 +197,7 @@ Renderer 收到后按 `id` upsert。
 - `tool.completed`
 - `tool.failed`
 
-建议在 `/apps/desktop/src/main/runtime/tool-executor.ts` 中，在现有 tool event 旁边额外发 `runtime.activity`。
+建议在 `/packages/runtime/src/tool-executor.ts` 中，在现有 tool event 旁边额外发 `runtime.activity`。
 
 示例：
 
@@ -370,7 +370,7 @@ packages/shared-types/src/events.ts
 文件：
 
 ```text
-apps/desktop/src/renderer/types/workbench.ts
+packages/ui/src/types/workbench.ts
 apps/desktop/src/renderer/mock/mock-data.ts
 apps/desktop/src/renderer/hooks/use-ui-event-stream.ts
 ```
@@ -386,8 +386,8 @@ apps/desktop/src/renderer/hooks/use-ui-event-stream.ts
 文件：
 
 ```text
-apps/desktop/src/renderer/components/layout/right-panel.tsx
-apps/desktop/src/renderer/components/panels/plan-panel.tsx
+packages/ui/src/components/layout/right-panel.tsx
+packages/ui/src/components/panels/plan-panel.tsx
 ```
 
 新增：
@@ -401,7 +401,7 @@ apps/desktop/src/renderer/components/panels/plan-panel.tsx
 文件：
 
 ```text
-apps/desktop/src/main/runtime/tool-executor.ts
+packages/runtime/src/tool-executor.ts
 apps/desktop/src/main/runtime/runtime-service.ts
 ```
 

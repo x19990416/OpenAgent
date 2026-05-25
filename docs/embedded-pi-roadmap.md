@@ -190,11 +190,11 @@ packages/pi-adapter/src/
 
 - `packages/pi-adapter/src/pi-events.ts`
 - `packages/pi-adapter/src/pi-runtime-adapter.ts`
-- `apps/desktop/src/main/runtime/event-bus.ts`
+- `packages/runtime/src/event-bus.ts`
 - `packages/shared-types/src/events.ts`
 - `apps/desktop/src/renderer/hooks/use-ui-event-stream.ts`
-- `apps/desktop/src/renderer/components/panels/plan-panel.tsx`
-- `apps/desktop/src/renderer/components/chat/tool-timeline.tsx`
+- `packages/ui/src/components/panels/plan-panel.tsx`
+- `packages/ui/src/components/chat/tool-timeline.tsx`
 
 ### 6.5 验收标准
 
@@ -573,7 +573,7 @@ pnpm typecheck
 
 已完成：
 
-- 确认当前 `@mariozechner/pi-coding-agent@0.64.0` 已导出 compaction 能力：
+- 确认当前 `@earendil-works/pi-coding-agent@0.75.5` 已导出 compaction 能力：
   - `AgentSession.compact(customInstructions?)`
   - `AgentSession.abortCompaction()`
   - `compaction_start` / `compaction_end` session event
