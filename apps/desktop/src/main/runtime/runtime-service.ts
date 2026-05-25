@@ -1,18 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeApprovalRequest, RuntimeAttachment, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot, RuntimeThread } from '@openagent/runtime';
+import type { AgentRuntimeAdapter, PromptSubmissionInput, RuntimeMessage, RuntimeServiceOptions, RuntimeSnapshot } from '@openagent/runtime';
 import { RuntimeEventBus } from '@openagent/runtime';
 import { RunStateStore } from '@openagent/runtime';
 import { SessionStore } from '@openagent/runtime';
 import { TranscriptStore } from '@openagent/runtime';
 import { createDefaultToolRegistry } from '@openagent/runtime';
-import { PromptValidationError, errorToMessage } from '@openagent/runtime';
-import { summarizeRunResult } from '@openagent/runtime';
-import { appendLlmResponseLog, appendRuntimeInfoLog } from '@openagent/runtime';
+import { PromptValidationError } from '@openagent/runtime';
+import { appendLlmResponseLog } from '@openagent/runtime';
 import { sortThreadsForDisplay } from '@openagent/runtime';
 import { SoulManager } from './memory/soul-manager.js';
 import { SubagentService, createShellAgentTool, createKnowledgeAgentTool, createPiCodingAgentTool } from '@openagent/subagents';
 import { KnowledgeContextRouter, KnowledgeService, configureKnowledgeLoggerHooks, createKnowledgeTools } from '@openagent/knowledge';
-import { formatPlanApprovalDescription, shouldContinueProgressOnlyReply, shouldRetryPlanToolExecution, type AgentPlan } from '@openagent/planning';
 import { SkillService } from '@openagent/skill-runtime';
 import { createDesktopRuntimeHost, type DesktopRuntimeHost } from './runtime-host.js';
 import { RuntimeThreadController } from './runtime-thread-controller.js';
@@ -21,10 +19,11 @@ import { RuntimeAttachmentController } from './runtime-attachment-controller.js'
 import { RuntimeCompactionController } from './runtime-compaction-controller.js';
 import { RuntimeApprovalController } from './runtime-approval-controller.js';
 import { RuntimePlanController } from './runtime-plan-controller.js';
-import { RuntimeProgressController } from './runtime-progress-controller.js';
-import { MAX_PROGRESS_CONTINUATION_ATTEMPTS, RuntimeAgentLoopController } from './runtime-agent-loop-controller.js';
+import { RuntimeAgentLoopController } from './runtime-agent-loop-controller.js';
 import { RuntimeRunInputBuilder } from './runtime-run-input-builder.js';
 import { RuntimeContextUpdateController } from './runtime-context-update-controller.js';
+import { RuntimeRunFinalizer } from './runtime-run-finalizer.js';
+import { RuntimePromptRunExecutor } from './runtime-prompt-run-executor.js';
 
 configureKnowledgeLoggerHooks({ appendLlmResponseLog });
 
@@ -49,6 +48,8 @@ export class RuntimeService {
   private readonly agentLoopController: RuntimeAgentLoopController;
   private readonly runInputBuilder: RuntimeRunInputBuilder;
   private readonly contextUpdateController: RuntimeContextUpdateController;
+  private readonly runFinalizer: RuntimeRunFinalizer;
+  private readonly promptRunExecutor: RuntimePromptRunExecutor;
 
   constructor(
     private options: RuntimeServiceOptions,
@@ -111,6 +112,19 @@ export class RuntimeService {
       this.eventBus,
       this.approvalController,
       () => this.getAgentBootstrapSnapshot()
+    );
+    this.runFinalizer = new RuntimeRunFinalizer(this.runState, this.eventBus, this.threadController, this.approvalController);
+    this.promptRunExecutor = new RuntimePromptRunExecutor(
+      this.runState,
+      this.eventBus,
+      this.planController,
+      this.approvalController,
+      this.runInputBuilder,
+      this.agentLoopController,
+      this.contextUpdateController,
+      this.compactionController,
+      this.threadController,
+      this.runFinalizer
     );
   }
 
@@ -222,9 +236,6 @@ export class RuntimeService {
     return this.approvalController.resolveRuntimeApproval({ approvalId, decision, scope });
   }
 
-  private async requestToolApproval(request: Omit<RuntimeApprovalRequest, 'id'> & { id?: string }) {
-    return this.approvalController.requestToolApproval(request);
-  }
 
   autoApprovePendingApprovals(reason = 'settings') {
     return this.approvalController.autoApprovePendingApprovals(reason);
@@ -369,7 +380,7 @@ export class RuntimeService {
       });
     }
 
-    const runPromise = this.executePromptRun({
+    const runPromise = this.promptRunExecutor.executePromptRun({
       prompt,
       runId,
       thread,
@@ -389,264 +400,6 @@ export class RuntimeService {
     return { ok: true, runId, status: 'running' };
   }
 
-  private async executePromptRun(input: {
-    prompt: string;
-    runId: string;
-    thread: RuntimeThread;
-    transcript: TranscriptStore;
-    sessionFile: string;
-    abortSignal: AbortSignal;
-    attachments: RuntimeAttachment[];
-    selectedSkillId?: string | null;
-    plan?: AgentPlan | null;
-  }) {
-    const { prompt, runId, thread, transcript, sessionFile, abortSignal, attachments } = input;
-    let activePlan = input.plan ?? null;
-    let planExecutor: ReturnType<RuntimePlanController['createExecutor']> | null = null;
-    const startedAt = Date.now();
-    const progressController = new RuntimeProgressController(runId, this.eventBus, () => Boolean(activePlan));
-
-    try {
-      appendRuntimeInfoLog({
-        scope: 'context',
-        message: 'executePromptRun entered',
-        data: { runId, threadId: thread.threadId, elapsedMs: Date.now() - startedAt, hasPlan: Boolean(activePlan) }
-      });
-      if (activePlan) {
-        if (activePlan.approvalRequired) {
-          this.runState.update(runId, { status: 'waiting_approval', summary: '等待用户确认 Agent Plan。' });
-          this.planController.emitApprovalRequired(activePlan, '请确认是否按该计划执行。');
-          const decision = await this.requestToolApproval({
-            title: '执行 Agent Plan',
-            risk: activePlan.riskLevel,
-            description: formatPlanApprovalDescription(activePlan),
-            actionType: 'agent-plan.execute',
-            access: 'execute',
-            scope: 'once',
-            payloadPreview: formatPlanApprovalDescription(activePlan),
-            runId,
-            threadId: thread.threadId
-          });
-          if (decision !== 'approved') {
-            activePlan = this.planController.reject(activePlan);
-            this.planController.emit('plan.failed', activePlan, '用户取消了 Agent Plan。');
-            this.runState.finish(runId, { status: 'cancelled', summary: '用户取消了 Agent Plan。' });
-            this.eventBus.emit('run.cancelled', { runId, summary: '用户取消了 Agent Plan。' });
-            return { ok: false, runId, status: 'cancelled', error: '用户取消了 Agent Plan。' };
-          }
-        }
-        activePlan = this.planController.approve(activePlan);
-        planExecutor = this.planController.createExecutor(activePlan, (nextPlan, reason, changedStepId) => {
-          activePlan = nextPlan;
-          this.planController.emit('plan.updated', nextPlan, reason, changedStepId);
-        });
-        this.runState.update(runId, { status: 'running', summary: activePlan.approvalRequired ? 'Agent Plan 已确认，开始执行。' : 'Agent Plan 自动进入执行。' });
-        if (activePlan.approvalRequired) {
-          this.planController.emitApprovalResolved(activePlan, '用户已确认 Agent Plan。');
-        }
-        this.planController.emit('plan.updated', activePlan, activePlan.approvalRequired ? '用户已确认计划，开始执行。' : 'LLM classifier 判定无需人工确认，自动执行计划。');
-      }
-
-      const runInput = await this.runInputBuilder.build({
-        prompt,
-        runId,
-        thread,
-        transcript,
-        sessionFile,
-        abortSignal,
-        attachments,
-        selectedSkillId: input.selectedSkillId ?? null,
-        getActivePlan: () => activePlan,
-        progressController,
-        startedAt
-      });
-      planExecutor?.completeAndStart(
-        'plan-step-inspect',
-        '已完成运行上下文、长期记忆和知识库上下文检查。',
-        'plan-step-design',
-        '正在固化本轮执行约束与计划步骤。'
-      );
-
-      planExecutor?.completeAndStartFirstKind(
-        'plan-step-design',
-        '已将 active plan 注入本轮系统提示词并确认执行约束。',
-        'execute',
-        '正在进入 agent loop 执行计划主体。'
-      );
-      progressController.append('调用模型并等待 agent loop 返回');
-      const result = await this.agentLoopController.runWithRetries({
-        runInput,
-        prompt,
-        activePlan,
-        onPlanRetry: (reason) => {
-          if (activePlan) this.planController.emit('plan.updated', activePlan, reason);
-        }
-      });
-      if (abortSignal.aborted) {
-        const summary = '运行已停止。';
-        if (activePlan) {
-          activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-          this.planController.emit('plan.failed', activePlan, summary);
-        }
-        this.runState.finish(runId, { status: 'cancelled', summary });
-        this.eventBus.emit('run.cancelled', { runId, summary });
-        return { ok: false, runId, status: 'cancelled', error: summary };
-      }
-      let summary = summarizeRunResult(result);
-
-      if (shouldContinueProgressOnlyReply(activePlan, result)) {
-        summary = '运行未完成：模型连续返回“请稍等/我将继续”等进度型文本，但没有真正执行后续工具调用。请重试，或切换/配置更稳定支持工具调用的模型。';
-        appendRuntimeInfoLog({
-          scope: 'agent-loop',
-          message: 'progress-only assistant continuation exhausted',
-          data: {
-            runId,
-            threadId: thread.threadId,
-            maxAttempts: MAX_PROGRESS_CONTINUATION_ATTEMPTS,
-            assistantMessageId: result.assistantMessage?.id,
-            assistantTextPreview: result.assistantMessage?.content.slice(0, 500)
-          }
-        });
-        if (activePlan) {
-          activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-          this.planController.emit('plan.failed', activePlan, summary);
-        }
-        this.emitFailureAssistantMessage(thread, transcript, summary);
-        this.runState.finish(runId, { status: 'failed', summary });
-        this.eventBus.emit('run.failed', { summary, details: summary });
-        return { ok: false, runId, status: 'failed', error: summary };
-      }
-
-      if (shouldRetryPlanToolExecution(activePlan, result)) {
-        summary = '计划执行未完成：模型没有发起计划要求的 OpenAgent 工具调用。请重试，或让模型改用明确的工具调用完成任务。';
-        if (activePlan) {
-          activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-          this.planController.emit('plan.failed', activePlan, summary);
-        }
-        this.emitFailureAssistantMessage(thread, transcript, summary);
-        this.runState.finish(runId, { status: 'failed', summary });
-        this.eventBus.emit('run.failed', { summary, details: summary });
-        return { ok: false, runId, status: 'failed', error: summary };
-      }
-
-      if (result.status === 'completed' && result.assistantMessage) {
-        const llmRawResponseLog = {
-          scope: 'agent-loop',
-          message: 'LLM raw response body',
-          data: {
-            runId,
-            threadId: thread.threadId,
-            assistantMessageId: result.assistantMessage.id,
-            content: result.assistantMessage.content,
-            contentLength: result.assistantMessage.content.length
-          }
-        } as const;
-        appendLlmResponseLog(llmRawResponseLog);
-        runInput.onLog?.({
-          scope: 'agent-loop',
-          message: 'LLM raw response body saved to log file',
-          data: {
-            runId,
-            threadId: thread.threadId,
-            assistantMessageId: result.assistantMessage.id,
-            contentLength: result.assistantMessage.content.length
-          }
-        });
-        const { metadata, cleanContent } = this.contextUpdateController.extractAssistantMessage({ content: result.assistantMessage.content });
-        const assistantMessage = {
-          ...result.assistantMessage,
-          content: cleanContent
-        };
-        summary = assistantMessage.content || summary;
-        this.threadController.messages.push(assistantMessage);
-        transcript.appendMessage(assistantMessage);
-        const finalTranscriptStats = transcript.getStats();
-        this.compactionController.maybeAutoCompactThread({ threadId: thread.threadId, transcriptMessageCount: finalTranscriptStats.messageCount, runId });
-        this.eventBus.emit('message.completed', assistantMessage);
-        if (activePlan) {
-          planExecutor?.completeKindAndStartFirstKind(
-            'execute',
-            'agent loop 已返回最终助手消息。',
-            'finalize',
-            '正在保存 transcript、处理结构化元数据并收尾。'
-          );
-        } else {
-          progressController.completeAll();
-        }
-        this.threadController.finishThread(thread, prompt);
-        this.runState.finish(runId, { status: 'completed', summary });
-        await this.contextUpdateController.applyMetadata({
-          metadata,
-          prompt,
-          runId,
-          threadId: thread.threadId,
-          runInput
-        });
-        if (activePlan) {
-          planExecutor?.completeKind('finalize', 'transcript、长期上下文候选和最终状态处理完成。');
-          activePlan = this.planController.markCompleted(planExecutor?.currentPlan ?? activePlan, summary);
-          this.planController.emit('plan.completed', activePlan, 'Agent Plan 执行完成。');
-          this.planController.emit('plan.updated', activePlan, 'Agent Plan 执行完成。');
-        }
-        this.eventBus.emit('run.completed', { runId, summary });
-        return { ok: true, runId, status: 'completed' };
-      }
-
-      if (result.status === 'cancelled') {
-        if (activePlan) {
-          activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-          this.planController.emit('plan.failed', activePlan, summary);
-        }
-        this.runState.finish(runId, { status: 'cancelled', summary });
-        this.eventBus.emit('run.cancelled', { runId, summary });
-        return { ok: false, runId, status: 'cancelled', error: summary };
-      }
-
-      if (activePlan) {
-        activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-        this.planController.emit('plan.failed', activePlan, summary);
-      }
-      this.emitFailureAssistantMessage(thread, transcript, summary);
-      this.runState.finish(runId, { status: 'failed', summary });
-      this.eventBus.emit('run.failed', { summary, details: result.error });
-      return { ok: false, runId, status: 'failed', error: summary };
-    } catch (error) {
-      const message = errorToMessage(error);
-      if (abortSignal.aborted) {
-        const summary = '运行已停止。';
-        if (activePlan) {
-          activePlan = planExecutor?.failCurrent(summary) ?? this.planController.markFailed(activePlan, summary);
-          this.planController.emit('plan.failed', activePlan, summary);
-        }
-        this.runState.finish(runId, { status: 'cancelled', summary });
-        this.eventBus.emit('run.cancelled', { runId, summary });
-        return { ok: false, runId, status: 'cancelled', error: summary };
-      }
-      if (activePlan) {
-        activePlan = planExecutor?.failCurrent(message) ?? this.planController.markFailed(activePlan, message);
-        this.planController.emit('plan.failed', activePlan, message);
-      }
-      this.emitFailureAssistantMessage(thread, transcript, message);
-      this.runState.finish(runId, { status: 'failed', summary: message });
-      this.eventBus.emit('run.failed', { summary: message, details: message });
-      return { ok: false, runId, status: 'failed', error: message };
-    }
-  }
-
-  private emitFailureAssistantMessage(thread: RuntimeThread, transcript: TranscriptStore, summary: string) {
-    const content = summary.trim();
-    if (!content) return;
-    const assistantMessage: RuntimeMessage = {
-      id: `assistant-${randomUUID()}`,
-      role: 'assistant',
-      content,
-      createdAt: new Date().toISOString()
-    };
-    this.threadController.messages.push(assistantMessage);
-    transcript.appendMessage(assistantMessage);
-    this.threadController.finishThread(thread, content);
-    this.eventBus.emit('message.completed', assistantMessage);
-  }
 
 
   async compactThread(threadId = this.threadController.activeThreadId) {
@@ -654,25 +407,7 @@ export class RuntimeService {
   }
 
   stopRun(runId?: string) {
-    const stoppedRunIds = this.runState.stop(runId);
-    const rejectedApprovals = this.approvalController.rejectPendingForRun(runId);
-    for (const request of rejectedApprovals) {
-      this.eventBus.emit('approval.resolved', {
-        approvalId: request.id,
-        decision: 'rejected',
-        scope: request.scope,
-        summary: '任务已停止，待审批操作已取消。'
-      });
-    }
-    const targetRunIds = stoppedRunIds.length > 0
-      ? stoppedRunIds
-      : rejectedApprovals.map((request) => request.runId).filter((id): id is string => Boolean(id));
-    for (const stoppedRunId of new Set(targetRunIds)) {
-      const summary = '运行已停止。';
-      this.runState.finish(stoppedRunId, { status: 'cancelled', summary });
-      this.eventBus.emit('run.cancelled', { runId: stoppedRunId, summary });
-    }
-    return { ok: stoppedRunIds.length > 0 || rejectedApprovals.length > 0 };
+    return this.runFinalizer.stopRun(runId);
   }
 
   createThread(input?: { agentId?: string; title?: string }) {
