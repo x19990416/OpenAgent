@@ -3894,6 +3894,29 @@ function formatLogTimestamp(value?: string) {
   return date.toLocaleString();
 }
 
+function getLogFilePresentation(relativePath?: string) {
+  const fileName = relativePath?.split('/').pop() || '';
+  if (fileName === 'runtime-info.log') {
+    return {
+      title: '运行事件',
+      description: 'Agent run、工具、知识检索、上下文整理等可观测事件',
+      badge: 'Runtime'
+    };
+  }
+  if (fileName === 'llm-response.log') {
+    return {
+      title: '模型审计',
+      description: '最终发给模型的 request、response 与 token 用量',
+      badge: 'LLM'
+    };
+  }
+  return {
+    title: relativePath || '日志文件',
+    description: '原始日志文件',
+    badge: 'Log'
+  };
+}
+
 function asLogRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -4169,6 +4192,7 @@ function LogsPanel() {
     entry,
     summary: summarizeLogEntry(entry)
   })), [logResult?.content]);
+  const selectedLogPresentation = useMemo(() => getLogFilePresentation(logResult?.relativePath), [logResult?.relativePath]);
 
   const openLogRequestEditor = () => {
     if (!selectedLogRow) return;
@@ -4208,9 +4232,9 @@ function LogsPanel() {
       <section className="settings-card settings-log-card">
         <div className="settings-card-header">
           <div>
-            <div className="settings-section-title">日志</div>
+            <div className="settings-section-title">运行与模型审计</div>
             <div className="settings-section-description">
-              查看 OpenAgent 当前写入的运行日志，默认读取大文件尾部 1MB，并最多展示最近 1000 条，避免界面卡顿。{rootPath ? `目录：${rootPath}` : ''}
+              将 OpenAgent 的两类日志按用途归并：运行事件看流程，模型审计查请求。默认读取大文件尾部 1MB，并最多展示最近 1000 条。{rootPath ? `目录：${rootPath}` : ''}
             </div>
           </div>
           <div className="inline-actions">
@@ -4231,17 +4255,27 @@ function LogsPanel() {
 
         <div className="settings-log-layout">
           <aside className="settings-log-list" aria-label="日志文件列表">
-            {files.length > 0 ? files.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                className={`settings-log-file ${selectedPath === file.path ? 'active' : ''}`}
-                onClick={() => void readLog(file.path)}
-              >
-                <span className="settings-log-file-name">{file.relativePath}</span>
-                <span className="settings-log-file-meta">{formatBytes(file.size)} · {new Date(file.updatedAt).toLocaleString()}</span>
-              </button>
-            )) : (
+            <div className="settings-log-list-heading">日志类型</div>
+            {files.length > 0 ? files.map((file) => {
+              const presentation = getLogFilePresentation(file.relativePath);
+              return (
+                <button
+                  key={file.path}
+                  type="button"
+                  className={`settings-log-file ${selectedPath === file.path ? 'active' : ''}`}
+                  onClick={() => void readLog(file.path)}
+                >
+                  <span className="settings-log-file-topline">
+                    <span className="settings-log-file-name">{presentation.title}</span>
+                    <span className="settings-log-file-badge">{presentation.badge}</span>
+                  </span>
+                  <span className="settings-log-file-description">{presentation.description}</span>
+                  <span className="settings-log-file-meta">
+                    {file.relativePath} · {formatBytes(file.size)} · {new Date(file.updatedAt).toLocaleString()}
+                  </span>
+                </button>
+              );
+            }) : (
               <div className="settings-log-empty">{loading ? '正在读取日志列表…' : '暂无 .log / .jsonl / .txt 日志文件。'}</div>
             )}
           </aside>
@@ -4249,9 +4283,13 @@ function LogsPanel() {
           <section className="settings-log-content">
             <div className="settings-log-content-header">
               <div>
-                <div className="settings-log-title">{logResult?.relativePath || '选择日志文件'}</div>
+                <div className="settings-log-title-row">
+                  <span className="settings-log-title">{logResult ? selectedLogPresentation.title : '选择日志类型'}</span>
+                  {logResult ? <span className="settings-log-file-badge">{selectedLogPresentation.badge}</span> : null}
+                </div>
+                {logResult ? <div className="settings-log-description">{selectedLogPresentation.description}</div> : null}
                 <div className="settings-log-meta">
-                  {logResult?.size ? `${formatBytes(logResult.size)} · 更新于 ${new Date(logResult.updatedAt || '').toLocaleString()}` : '左侧选择一个日志文件后查看内容'}
+                  {logResult?.size ? `${logResult.relativePath} · ${formatBytes(logResult.size)} · 更新于 ${new Date(logResult.updatedAt || '').toLocaleString()}` : '左侧选择一个日志类型后查看内容'}
                   {logResult?.truncated ? ' · 已显示文件尾部 1MB' : ''}{logRows.length >= 1000 ? ' · 最近 1000 条' : ''}
                 </div>
               </div>
@@ -4296,7 +4334,7 @@ function LogsPanel() {
                       >
                         <td className="settings-log-cell-time">{formatLogTimestamp(entry.timestamp)}</td>
                         <td><span className={`settings-log-kind is-${summary.kind.toLowerCase()}`}>{summary.kind}</span></td>
-                        <td className="settings-log-cell-model">{summary.model}</td>
+                        <td className="settings-log-cell-model" title={summary.model}>{summary.model}</td>
                         <td className="settings-log-cell-number">{summary.totalTokens}</td>
                         <td className="settings-log-cell-summary">
                           <span className="settings-log-message">{entry.message}</span>
@@ -4398,6 +4436,7 @@ function LogsPanel() {
 
 function ModelUsageStatsPanel() {
   const [stats, setStats] = useState<ModelUsageStatsResult | null>(null);
+  const [providerCatalog, setProviderCatalog] = useState<LlmProviderCatalog>(emptyProviderCatalog);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [resetting, setResetting] = useState(false);
@@ -4413,12 +4452,21 @@ function ModelUsageStatsPanel() {
 
     try {
       setLoading(true);
-      const result = await desktopApi.getModelTokenUsageStats({ periodDays });
+      const catalogPromise = desktopApi.getLlmProviderCatalog
+        ? desktopApi.getLlmProviderCatalog().catch(() => null)
+        : Promise.resolve(null);
+      const [result, catalog] = await Promise.all([
+        desktopApi.getModelTokenUsageStats({ periodDays }),
+        catalogPromise
+      ]);
       if (!result.ok) {
         setFeedback({ type: 'error', text: `统计读取失败：${result.error ?? '未知错误'}` });
         return;
       }
       setStats(result);
+      if (catalog) {
+        setProviderCatalog(catalog);
+      }
       setFeedback(null);
     } catch (error) {
       setFeedback({ type: 'error', text: `统计读取失败：${error instanceof Error ? error.message : '未知错误'}` });
@@ -4459,6 +4507,7 @@ function ModelUsageStatsPanel() {
   }, []);
 
   const rows = stats?.rows ?? [];
+  const providerNameById = useMemo(() => new Map(providerCatalog.providers.map((provider) => [provider.id, provider.name])), [providerCatalog.providers]);
   const total = stats?.total ?? {
     requestCount: 0,
     inputTokens: 0,
@@ -4523,21 +4572,24 @@ function ModelUsageStatsPanel() {
             </thead>
             <tbody>
               {rows.length > 0 ? (
-                rows.map((row) => (
-                  <tr key={`${row.providerId}-${row.model}`}>
-                    <td>
-                      <div className="settings-usage-model-cell">
-                        <strong>{row.providerId}</strong>
-                        <code>{row.model}</code>
-                      </div>
-                    </td>
+                rows.map((row) => {
+                  const providerName = providerNameById.get(row.providerId) || row.providerId;
+                  return (
+                    <tr key={`${row.providerId}-${row.model}`}>
+                      <td>
+                        <div className="settings-usage-model-cell">
+                          <strong title={providerName}>{providerName}</strong>
+                          <code title={row.model}>{row.model}</code>
+                        </div>
+                      </td>
                     <td className="settings-log-cell-number">{formatUsageNumber(row.requestCount)}</td>
                     <td className="settings-log-cell-number">{formatUsageNumber(row.inputTokens)}</td>
                     <td className="settings-log-cell-number">{formatUsageNumber(row.outputTokens)}</td>
                     <td className="settings-log-cell-number">{formatUsageNumber(row.totalTokens)}</td>
                     <td className="settings-log-cell-time">{formatUsageDate(row.lastUsedAt)}</td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={6}>

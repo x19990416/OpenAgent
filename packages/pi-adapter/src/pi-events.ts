@@ -1,5 +1,5 @@
 import type { AgentRuntimeRunInput, RuntimeAttachment } from '@openagent/runtime';
-import { CancelledError } from '@openagent/runtime';
+import { CancelledError, recordModelUsage } from '@openagent/runtime';
 import { installPiHttpLogger } from './pi-http-logger.js';
 
 export interface PiPromptSessionResult {
@@ -127,6 +127,28 @@ export async function promptOpenAgentPiSession(input: {
         message: `LLM loop #${resolvedLoop} reply completed`,
         data: buildTurnReplySnapshot(event, assistantText, resolvedLoop)
       });
+      const usageRecord = recordPiMessageUsage({
+        message: event?.message,
+        runId,
+        threadId,
+        providerId,
+        model
+      });
+      if (usageRecord) {
+        onLog?.({
+          scope: 'agent-loop',
+          message: 'Pi message token usage recorded',
+          data: {
+            loopNumber: resolvedLoop,
+            createdAt: usageRecord.createdAt,
+            providerId: usageRecord.providerId,
+            model: usageRecord.model,
+            inputTokens: usageRecord.inputTokens,
+            outputTokens: usageRecord.outputTokens,
+            totalTokens: usageRecord.totalTokens
+          }
+        });
+      }
       activeLoop = resolvedLoop;
       return;
     }
@@ -756,6 +778,50 @@ function buildTurnReplySnapshot(event: any, assistantText: string, loopNumber: n
     message: summarizeSessionMessage(event?.message),
     toolResults: Array.isArray(event?.toolResults) ? event.toolResults.map((item: any) => summarizeToolResult(item)) : []
   };
+}
+
+function recordPiMessageUsage(input: {
+  message: any;
+  runId?: string;
+  threadId?: string;
+  providerId?: string;
+  model?: string;
+}) {
+  const message = input.message;
+  const usage = message?.usage;
+  if (!usage || typeof usage !== 'object') return null;
+
+  const messageProvider = typeof message?.provider === 'string' ? message.provider : input.providerId;
+  const messageApi = typeof message?.api === 'string' ? message.api : '';
+  const shouldRecordFromMessage = messageProvider === 'openai-codex' || messageApi === 'openai-codex-responses';
+  if (!shouldRecordFromMessage) {
+    return null;
+  }
+
+  return recordModelUsage({
+    source: 'pi-session-message',
+    providerId: messageProvider,
+    model: typeof message?.model === 'string' ? message.model : input.model,
+    runId: input.runId,
+    threadId: input.threadId,
+    requestId: typeof message?.responseId === 'string'
+      ? message.responseId
+      : typeof message?.id === 'string'
+        ? message.id
+        : undefined,
+    usage: {
+      input: readUsageNumber(usage, 'input'),
+      output: readUsageNumber(usage, 'output'),
+      cacheRead: readUsageNumber(usage, 'cacheRead'),
+      cacheWrite: readUsageNumber(usage, 'cacheWrite'),
+      totalTokens: readUsageNumber(usage, 'totalTokens')
+    }
+  });
+}
+
+function readUsageNumber(usage: Record<string, unknown>, key: string) {
+  const value = usage[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function summarizeSessionMessages(messages: any[]) {

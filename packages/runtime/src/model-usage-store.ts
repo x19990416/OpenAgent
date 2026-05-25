@@ -45,21 +45,35 @@ export interface ModelUsageStatsResult {
   error?: string;
 }
 
-export function getModelUsageLedgerPath() {
-  return getOpenAgentPath('state', 'model-usage.jsonl');
-}
-
-export function recordModelUsageFromResponse(input: {
+export interface RecordModelUsageInput {
   source: string;
-  responseBody: string;
   providerId?: string;
   model?: string;
   runId?: string;
   threadId?: string;
   requestId?: string;
   status?: number;
-}) {
-  const usage = extractTokenUsage(input.responseBody);
+  usage: {
+    model?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cachedInputTokens?: number;
+    reasoningOutputTokens?: number;
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    reasoning?: number;
+  };
+}
+
+export function getModelUsageLedgerPath() {
+  return getOpenAgentPath('state', 'model-usage.jsonl');
+}
+
+export function recordModelUsage(input: RecordModelUsageInput) {
+  const usage = normalizeDirectTokenUsage(input.usage);
   if (!usage) return null;
 
   const record: ModelTokenUsageRecord = {
@@ -82,6 +96,31 @@ export function recordModelUsageFromResponse(input: {
 
   appendModelUsageRecord(record);
   return record;
+}
+
+export function recordModelUsageFromResponse(input: {
+  source: string;
+  responseBody: string;
+  providerId?: string;
+  model?: string;
+  runId?: string;
+  threadId?: string;
+  requestId?: string;
+  status?: number;
+}) {
+  const usage = extractTokenUsage(input.responseBody);
+  if (!usage) return null;
+
+  return recordModelUsage({
+    source: input.source,
+    providerId: input.providerId,
+    model: usage.model || input.model,
+    runId: input.runId,
+    threadId: input.threadId,
+    requestId: input.requestId,
+    status: input.status,
+    usage
+  });
 }
 
 
@@ -203,6 +242,24 @@ function extractTokenUsage(responseBody: string) {
     };
   }
   return null;
+}
+
+function normalizeDirectTokenUsage(usage: RecordModelUsageInput['usage']) {
+  const rawInputTokens = firstNumber(usage.inputTokens, usage.input);
+  const cachedInputTokens = firstNumber(usage.cachedInputTokens, usage.cacheRead, usage.cacheWrite);
+  const inputTokens = typeof usage.inputTokens === 'number' ? rawInputTokens : rawInputTokens + cachedInputTokens;
+  const outputTokens = firstNumber(usage.outputTokens, usage.output);
+  const totalTokens = firstNumber(usage.totalTokens, inputTokens + outputTokens);
+  if (totalTokens <= 0 && inputTokens <= 0 && outputTokens <= 0) return null;
+
+  return {
+    model: usage.model,
+    inputTokens,
+    outputTokens,
+    totalTokens: totalTokens > 0 ? totalTokens : inputTokens + outputTokens,
+    cachedInputTokens,
+    reasoningOutputTokens: firstNumber(usage.reasoningOutputTokens, usage.reasoning)
+  };
 }
 
 function parseResponseCandidates(responseBody: string): unknown[] {

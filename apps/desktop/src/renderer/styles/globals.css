@@ -8629,6 +8629,15 @@ html.is-electron .topbar-brand {
   padding: 10px;
 }
 
+.settings-log-list-heading {
+  padding: 4px 6px 10px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .settings-log-file {
   width: 100%;
   border: 1px solid transparent;
@@ -8640,6 +8649,14 @@ html.is-electron .topbar-brand {
   gap: 4px;
   color: var(--text);
   cursor: pointer;
+}
+
+.settings-log-file-topline,
+.settings-log-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .settings-log-file:hover {
@@ -8660,6 +8677,28 @@ html.is-electron .topbar-brand {
   white-space: nowrap;
   font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-sm);
+}
+
+.settings-log-file-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.settings-log-file-description,
+.settings-log-description {
+  color: var(--text-soft);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
 }
 
 .settings-log-file-meta,
@@ -8696,6 +8735,10 @@ html.is-electron .topbar-brand {
   font-weight: var(--font-weight-semibold);
   color: var(--text);
   line-height: 1.4;
+}
+
+.settings-log-title-row {
+  margin-bottom: 3px;
 }
 
 .settings-log-pre {
@@ -8889,6 +8932,11 @@ html.is-electron .topbar-brand {
   color: #64748b;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.settings-log-cell-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-log-cell-model,
