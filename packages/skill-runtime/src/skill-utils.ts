@@ -65,6 +65,15 @@ export function safeFileName(input: string) {
   return input.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+export function resolveBundledPathCandidates(appRoot: string | undefined, ...parts: string[]) {
+  const root = path.resolve(appRoot ?? process.cwd());
+  const candidates = [path.join(root, ...parts)];
+  if (root.endsWith('.asar')) {
+    candidates.unshift(path.join(`${root}.unpacked`, ...parts));
+  }
+  return candidates;
+}
+
 export function escapeXml(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

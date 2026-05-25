@@ -90,6 +90,7 @@ async function bundleRuntimeDependencyClosure(context) {
     fs.rmSync(`${asarPath}.unpacked`, { recursive: true, force: true });
     await asar.createPackageWithOptions(tempRoot, asarPath, {
       unpack: '**/*.node',
+      unpackDir: 'skills',
     });
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -106,6 +107,9 @@ module.exports = {
     buildResources: 'build',
   },
   afterPack: bundleRuntimeDependencyClosure,
+  asarUnpack: [
+    'skills/**',
+  ],
   files: [
     'dist{,/**/*}',
     'skills{,/**/*}',
