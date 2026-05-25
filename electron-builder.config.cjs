@@ -62,7 +62,10 @@ function isWindowsTargetBuild() {
   return process.argv.some((arg) => arg === '--win' || arg === 'win' || arg.startsWith('--win='));
 }
 
-const localElectronDist = isWindowsTargetBuild() ? undefined : 'node_modules/electron/dist';
+const candidateElectronDist = path.join(__dirname, 'node_modules', 'electron', 'dist');
+const localElectronDist = !isWindowsTargetBuild() && fs.existsSync(candidateElectronDist)
+  ? candidateElectronDist
+  : undefined;
 
 async function bundleRuntimeDependencyClosure(context) {
   const resourcesDir = context.electronPlatformName === 'darwin'
