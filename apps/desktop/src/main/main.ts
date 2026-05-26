@@ -664,7 +664,7 @@ async function createWindow() {
     title: 'OpenAgent Desktop',
     icon: appIconPath,
     backgroundColor: '#f5f5f7',
-    titleBarStyle: 'hiddenInset',
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -703,6 +703,30 @@ app.on('window-all-closed', () => {
 
 function registerIpc() {
   ipcMain.handle('workspace:get-meta', () => workspace);
+  ipcMain.handle('window:control', (event, payload) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!targetWindow) return { ok: false, error: 'Window not found' };
+
+    const action = String(payload?.action || '');
+    if (action === 'minimize') {
+      targetWindow.minimize();
+      return { ok: true };
+    }
+    if (action === 'maximize') {
+      if (targetWindow.isMaximized()) {
+        targetWindow.unmaximize();
+      } else {
+        targetWindow.maximize();
+      }
+      return { ok: true, maximized: targetWindow.isMaximized() };
+    }
+    if (action === 'close') {
+      targetWindow.close();
+      return { ok: true };
+    }
+
+    return { ok: false, error: `Unsupported window action: ${action}` };
+  });
   ipcMain.handle('agent:get-bootstrap', () => runtimeService.getAgentBootstrapSnapshot());
   ipcMain.handle('soul:list-proposals', (_event, payload) => runtimeService.listSoulProposals(payload?.status));
   ipcMain.handle('soul:create-proposal', (_event, payload) => runtimeService.createSoulProposal(payload ?? {}));

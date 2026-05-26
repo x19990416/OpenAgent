@@ -191,13 +191,38 @@ button {
   padding: 0 20px;
   background: rgba(255, 255, 255, 0.96);
   border-bottom: 1px solid #e5e7eb;
+  -webkit-app-region: drag;
 }
 
 .topbar-brand {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
+}
+
+.topbar-run-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+}
+
+.topbar-run-dot.is-running {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.topbar-run-dot.is-succeeded {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+}
+
+.topbar-run-dot.is-failed {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
 }
 
 .topbar-branch-name,
@@ -2288,7 +2313,7 @@ button {
 
 .workspace-main {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   background: transparent;
   position: relative;
   overflow: hidden;
@@ -2296,7 +2321,7 @@ button {
 
 .workspace-shell {
   display: grid;
-  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   background: transparent;
   overflow: hidden;
 }
@@ -3836,6 +3861,7 @@ button {
   gap: 6px;
   flex-wrap: nowrap;
   overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 .topbar-button,
@@ -3858,6 +3884,7 @@ button {
   font-size: 12px;
   line-height: 1;
   transition: 160ms ease;
+  -webkit-app-region: no-drag;
 }
 
 .topbar-button:hover {
@@ -3888,6 +3915,75 @@ button {
 .topbar-button-icon:focus-visible {
   outline: 2px solid rgba(37, 99, 235, 0.18);
   outline-offset: 2px;
+}
+
+.window-controls {
+  position: fixed;
+  top: 6px;
+  left: 14px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.window-control-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  color: rgba(15, 23, 42, 0.72);
+  line-height: 1;
+  transition: 150ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.window-control-button svg {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.window-controls:hover .window-control-button svg,
+.window-control-button:focus-visible svg {
+  opacity: 1;
+}
+
+.window-control-close {
+  background: #ff5f57;
+  border-color: #e0443e;
+}
+
+.window-control-minimize {
+  background: #febc2e;
+  border-color: #dea123;
+}
+
+.window-control-maximize {
+  background: #28c840;
+  border-color: #1aaa31;
+}
+
+.window-control-button:hover {
+  filter: brightness(0.97);
+}
+
+.window-control-button:active {
+  filter: brightness(0.92);
+}
+
+.window-control-button:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  outline-offset: 1px;
 }
 
 .inspector-tabs {

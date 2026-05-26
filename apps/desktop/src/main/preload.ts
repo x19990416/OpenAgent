@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('desktopApi', {
   getWorkspaceMeta: () => ipcRenderer.invoke('workspace:get-meta'),
+  windowControl: (payload: unknown) => ipcRenderer.invoke('window:control', payload),
   getActiveAgentBootstrap: () => ipcRenderer.invoke('agent:get-bootstrap'),
   listSoulProposals: (payload?: unknown) => ipcRenderer.invoke('soul:list-proposals', payload),
   createSoulProposal: (payload: unknown) => ipcRenderer.invoke('soul:create-proposal', payload),

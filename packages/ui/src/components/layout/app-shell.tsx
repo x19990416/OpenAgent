@@ -1,7 +1,6 @@
 import { LeftSidebar } from './left-sidebar';
 import { RightPanel } from './right-panel';
 import { TopBar } from './top-bar';
-import { BottomStatusStrip } from './bottom-status-strip';
 import { ConversationPane } from '../chat/conversation-pane';
 import { PromptComposer } from '../chat/prompt-composer';
 import { ScheduledTasksScreen } from '../scheduled/scheduled-tasks-screen';
@@ -87,6 +86,7 @@ export function AppShell(props: AppShellProps) {
         <TopBar
           workspace={viewModel.workspace}
           sessionTitle={viewModel.threads.find((thread) => thread.threadId === viewModel.activeThreadId)?.title || viewModel.latestSessionSummary}
+          runStatus={viewModel.runStatus}
           inspectorVisible={inspectorVisible}
           onToggleInspector={onToggleInspector}
         />
@@ -136,8 +136,6 @@ export function AppShell(props: AppShellProps) {
             </div>
           </section>
         )}
-
-        <BottomStatusStrip viewModel={viewModel} />
       </section>
     </main>
   );

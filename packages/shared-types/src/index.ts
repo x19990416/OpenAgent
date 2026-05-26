@@ -477,6 +477,7 @@ export interface StateSnapshot {
 
 export interface DesktopApi {
   getWorkspaceMeta: () => Promise<WorkspaceMeta>;
+  windowControl?: (payload: { action: 'minimize' | 'maximize' | 'close' }) => Promise<{ ok: boolean; maximized?: boolean; error?: string }>;
   getActiveAgentBootstrap: () => Promise<any>;
   listSoulProposals?: (payload?: { status?: SoulChangeProposal['status'] }) => Promise<SoulChangeProposal[]>;
   createSoulProposal?: (payload: { title?: string; reason?: string; targetSection?: string; proposedText: string; riskLevel?: SoulChangeProposal['riskLevel'] }) => Promise<any>;
