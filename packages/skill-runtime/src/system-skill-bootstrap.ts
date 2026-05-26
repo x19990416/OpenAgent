@@ -10,7 +10,11 @@ export function ensureOpenAgentSystemSkills(openAgentRoot: string, appRoot?: str
   const systemSkillsDir = path.join(userSkillsDir, '.system');
   mkdirSync(systemSkillsDir, { recursive: true });
 
-  const bundledSkillsDirs = resolveBundledPathCandidates(appRoot, 'skills', '.system');
+  const bundledSkillsDirs = [
+    ...resolveBundledPathCandidates(appRoot, 'skills', '.system'),
+    ...resolveAncestorPathCandidates(appRoot, 'skills', '.system'),
+    ...resolveAncestorPathCandidates(process.cwd(), 'skills', '.system')
+  ];
   const backupSkillsDir = path.join(os.homedir(), '.openagent-bk', 'agents', 'main', 'skills');
   for (const skillName of BUILTIN_SKILL_NAMES) {
     const sourceDir = resolveSourceSkillDir(skillName, [...bundledSkillsDirs, backupSkillsDir]);
@@ -19,6 +23,19 @@ export function ensureOpenAgentSystemSkills(openAgentRoot: string, appRoot?: str
     rmSync(targetDir, { recursive: true, force: true });
     cpSync(sourceDir, targetDir, { recursive: true });
   }
+}
+
+function resolveAncestorPathCandidates(start: string | undefined, ...parts: string[]) {
+  if (!start) return [];
+  const candidates: string[] = [];
+  let current = path.resolve(start);
+  while (true) {
+    candidates.push(path.join(current, ...parts));
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return candidates;
 }
 
 function resolveSourceSkillDir(skillName: (typeof BUILTIN_SKILL_NAMES)[number], sourceRoots: string[]) {

@@ -123,6 +123,7 @@ function formatFastPathResult(input: {
     `scriptPath: ${input.initScriptPath}`,
     `targetSkillName: ${input.scaffold.slug}`,
     `displayName: ${input.scaffold.displayName}`,
+    'If the user requested a complete executable skill, continue now with write_file to add scripts/templates/references and update SKILL.md plus skill.json. The scaffold only creates the minimal package.',
     `ok: ${input.result.ok}`,
     'result:',
     input.result.content.slice(0, 2000)

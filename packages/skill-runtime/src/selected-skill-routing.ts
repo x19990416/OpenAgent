@@ -39,6 +39,8 @@ export function filterToolsForSelectedSkill(tools: RuntimeTool[], selectedSkill?
   }
   if (selectedSkill.name !== 'skill-creator') {
     allowed.add('pi_coding_agent');
+    allowed.add('write_file');
+    allowed.add('shell_exec');
   }
   const alwaysAllowedReadOnlyTools = new Set([
     'ls',

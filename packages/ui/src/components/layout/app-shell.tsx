@@ -86,14 +86,9 @@ export function AppShell(props: AppShellProps) {
       <section className="shell-main workspace-shell">
         <TopBar
           workspace={viewModel.workspace}
-          agentBootstrap={viewModel.agentBootstrap}
-          runStatus={viewModel.runStatus}
-          latestSessionSummary={viewModel.latestSessionSummary}
-          sidebarVisible={sidebarVisible}
+          sessionTitle={viewModel.threads.find((thread) => thread.threadId === viewModel.activeThreadId)?.title || viewModel.latestSessionSummary}
           inspectorVisible={inspectorVisible}
-          onToggleSidebar={onToggleSidebar}
           onToggleInspector={onToggleInspector}
-          onOpenSettings={onOpenSettings}
         />
 
         {leftTab === 'schedules' ? (

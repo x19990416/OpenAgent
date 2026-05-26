@@ -187,20 +187,47 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--topbar-height);
   padding: 0 20px;
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .topbar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  min-width: 0;
 }
 
-.topbar-title {
-  font-weight: var(--font-weight-bold);
-  font-size: var(--font-size-md);
+.topbar-branch-name,
+.topbar-session-name {
+  color: var(--text);
+  line-height: 1.15;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-branch-name {
+  max-width: 88px;
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.topbar-divider {
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.topbar-session-name {
+  display: inline-block;
+  max-width: min(280px, 38vw);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
 }
 
 .topbar-subtitle {
@@ -2271,6 +2298,7 @@ button {
   display: grid;
   grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
   background: transparent;
+  overflow: hidden;
 }
 
 .chat-shell {
@@ -3802,15 +3830,64 @@ button {
 }
 
 .topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-wrap: nowrap;
   overflow: hidden;
 }
 
-.topbar-actions .status-badge,
-.toolbar-button,
+.topbar-button,
 .composer-model-button,
 .inspector-tab {
   white-space: nowrap;
+}
+
+.topbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  transition: 160ms ease;
+}
+
+.topbar-button:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.topbar-button:active {
+  background: #f3f4f6;
+}
+
+.topbar-button-icon {
+  width: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.topbar-button-icon:hover {
+  background: rgba(15, 23, 42, 0.04);
+  border: none;
+}
+
+.topbar-button-icon:active {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.topbar-button-icon:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  outline-offset: 2px;
 }
 
 .inspector-tabs {
